@@ -1,0 +1,12 @@
+### 3. `.cursorrules` (AI Coding Instructions)
+
+```markdown
+# Coding Guidelines (TESS Engine)
+
+You are an expert in Python backend development and AI agent architectures. You must strictly adhere to the following rules for this project:
+
+1. **Production-Ready Code:** Always use Type Hints and Pydantic models for data validation.
+2. **Asynchronous First:** Always use `async`/`await` for FastAPI routes and WebSocket endpoints.
+3. **Modularity:** Do not dump everything into `main.py`. Keep API routes, agent logic, and configurations in their respective directories (e.g., `app/api`, `app/agents`, `app/core`).
+4. **Celery Delegation:** Heavy AI computations (LangGraph execution, LLM API calls) MUST run in Celery workers, never blocking the main FastAPI thread.
+5. **Language & Documentation:** Write all code comments, documentation, and user-facing mock data in English.

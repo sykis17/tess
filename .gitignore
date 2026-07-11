@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.py[cod]
+.env
+.env.prod
+deploy/Caddyfile.active
+
+# Frontend
+frontend/node_modules/
+frontend/dist/

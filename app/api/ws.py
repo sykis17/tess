@@ -1,0 +1,77 @@
+import asyncio
+import json
+import logging
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from redis.asyncio.client import PubSub
+
+from app.core.redis import create_async_redis, session_channel
+from app.worker import process_user_input
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+
+async def _forward_redis_messages(pubsub: PubSub, websocket: WebSocket) -> None:
+    """Listen to Redis Pub/Sub and forward messages to the WebSocket client."""
+    try:
+        async for message in pubsub.listen():
+            if message["type"] != "message":
+                continue
+
+            try:
+                payload = json.loads(message["data"])
+            except json.JSONDecodeError:
+                logger.warning("Skipping invalid JSON from Redis: %s", message["data"])
+                continue
+
+            await websocket.send_json(payload)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("Redis listener failed")
+        try:
+            await websocket.send_json(
+                {"type": "error", "message": "Redis subscription failed."}
+            )
+        except Exception:
+            pass
+
+
+@router.websocket("/ws/{session_id}")
+async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
+    """Stream Panels to the client and dispatch user input to Celery."""
+    await websocket.accept()
+    channel = session_channel(session_id)
+    redis_client = create_async_redis()
+    pubsub = redis_client.pubsub()
+    redis_task: asyncio.Task[None] | None = None
+
+    try:
+        await pubsub.subscribe(channel)
+        redis_task = asyncio.create_task(_forward_redis_messages(pubsub, websocket))
+
+        while True:
+            user_message = await websocket.receive_text()
+
+            try:
+                process_user_input.delay(user_message, session_id)
+            except Exception as exc:
+                logger.exception("Failed to dispatch Celery task for session %s", session_id)
+                await websocket.send_json(
+                    {"type": "error", "message": f"Failed to dispatch task: {exc}"}
+                )
+    except WebSocketDisconnect:
+        logger.info("Client disconnected from session %s", session_id)
+    finally:
+        if redis_task is not None:
+            redis_task.cancel()
+            try:
+                await redis_task
+            except asyncio.CancelledError:
+                pass
+
+        await pubsub.unsubscribe(channel)
+        await pubsub.aclose()
+        await redis_client.aclose()

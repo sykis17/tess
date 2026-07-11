@@ -23,6 +23,16 @@ class AgentTrace(BaseModel):
     output_preview: str | None = None
 
 
+class MayorData(BaseModel):
+    """Raw output from a topic agent before combiner stages."""
+
+    source_agent: str
+    content: str
+    topic: str | None = None
+    depth: str | None = None
+    citations: list[str] = Field(default_factory=list)
+
+
 class Panel(BaseModel):
     """WebSocket payload streamed to the frontend when a processing segment completes."""
 

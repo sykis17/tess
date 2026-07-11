@@ -3,7 +3,7 @@ from typing import Annotated
 
 from typing_extensions import TypedDict
 
-from app.graph.schemas import AgentTrace, Panel
+from app.graph.schemas import AgentTrace, MayorData, Panel
 from app.llm.types import LLMMessage
 
 
@@ -14,6 +14,7 @@ class GraphState(TypedDict):
     current_task: str
     active_agents: list[str]
     collected_data: Annotated[list[str], operator.add]
+    mayor_data: Annotated[list[MayorData], operator.add]
     conversation_history: list[LLMMessage]
     interruption_flag: bool
     panels: Annotated[list[Panel], operator.add]
@@ -32,6 +33,7 @@ def build_initial_state(
         "current_task": "",
         "active_agents": [],
         "collected_data": [],
+        "mayor_data": [],
         "conversation_history": conversation_history or [],
         "interruption_flag": False,
         "panels": [],

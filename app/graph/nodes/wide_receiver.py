@@ -22,6 +22,14 @@ def _resolve_folder_path_for_agent(agent_name: str) -> str:
         return get_agent(DEFAULT_AGENT_NAME).folder_path
 
 
+def _format_routing_message(agent_names: list[str]) -> str:
+    """Build the processing Panel content for one or more alarmed agents."""
+    display_names = [format_agent_display_name(name) for name in agent_names]
+    if len(display_names) == 1:
+        return f"Routing to {display_names[0]}…"
+    return f"Routing to {' + '.join(display_names)}…"
+
+
 async def wide_receiver_node(state: GraphState) -> dict[str, Any]:
     """Analyze user input and produce a routing decision for specialist agents."""
     user_input = state["user_input"]
@@ -46,25 +54,30 @@ async def wide_receiver_node(state: GraphState) -> dict[str, Any]:
         decision.current_task,
     )
 
-    routed_agent = decision.active_agents[0]
-    routed_display = format_agent_display_name(routed_agent)
+    routed_agents = decision.active_agents
+    routed_display = ", ".join(routed_agents)
     turn_count = conversation_turn_count(conversation_history)
 
     wr_trace = AgentTrace(
         agent_name="wide_receiver",
         inputs_seen=["user_input", format_history_input(turn_count)],
         task_summary=decision.current_task,
-        output_preview=f"Routed to: {routed_agent} — {decision.current_task}",
+        output_preview=f"Routed to: {routed_display} — {decision.current_task}",
     )
+
+    agents_involved = [
+        "Wide Receiver",
+        *[format_agent_display_name(name) for name in routed_agents],
+    ]
 
     processing_panel = Panel(
         panel_id=state["panel_id"],
-        folder_path=_resolve_folder_path_for_agent(routed_agent),
+        folder_path=_resolve_folder_path_for_agent(routed_agents[0]),
         status="processing",
         content_type="markdown",
-        content=f"Routing to {routed_display}…",
+        content=_format_routing_message(routed_agents),
         follow_up_options=[],
-        agents_involved=["Wide Receiver"],
+        agents_involved=agents_involved,
         agent_traces=[wr_trace],
     )
 

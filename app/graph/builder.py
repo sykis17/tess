@@ -7,7 +7,7 @@ from app.graph.nodes.general_assistant import general_assistant_node
 from app.graph.nodes.presenter import presenter_node
 from app.graph.nodes.researcher import researcher_node
 from app.graph.nodes.wide_receiver import wide_receiver_node
-from app.graph.routing import route_after_wr
+from app.graph.routing import fan_out_to_specialists
 from app.graph.state import GraphState
 
 _SPECIALIST_NODES = {
@@ -24,14 +24,12 @@ def build_graph() -> CompiledStateGraph:
     builder.add_node("wide_receiver", wide_receiver_node)
     builder.add_node("presenter", presenter_node)
 
-    specialist_routes: dict[str, str] = {}
     for name in AGENT_REGISTRY:
         builder.add_node(name, _SPECIALIST_NODES[name])
-        specialist_routes[name] = name
         builder.add_edge(name, "presenter")
 
     builder.add_edge(START, "wide_receiver")
-    builder.add_conditional_edges("wide_receiver", route_after_wr, specialist_routes)
+    builder.add_conditional_edges("wide_receiver", fan_out_to_specialists)
     builder.add_edge("presenter", END)
 
     return builder.compile()

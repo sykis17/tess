@@ -22,7 +22,7 @@ celery_app = Celery(
     backend=settings.redis_url,
 )
 
-_REDUCER_KEYS = frozenset({"collected_data", "panels", "agent_traces"})
+_REDUCER_KEYS = frozenset({"collected_data", "mayor_data", "panels", "agent_traces"})
 
 
 def _publish_error(redis_client, channel: str, message: str) -> None:
@@ -48,6 +48,15 @@ def _merge_node_output(merged: dict[str, Any], node_output: dict[str, Any]) -> N
 
 def _extract_assistant_content(result: dict[str, Any]) -> str:
     """Extract the assistant response from graph state."""
+    panels: list[Panel] = result.get("panels", [])
+    for panel in reversed(panels):
+        if panel.status == "completed":
+            return panel.content
+
+    mayor_data = result.get("mayor_data", [])
+    if mayor_data:
+        return "\n\n".join(entry.content for entry in mayor_data)
+
     collected_data: list[str] = result.get("collected_data", [])
     if not collected_data:
         raise ValueError("Graph completed with no collected data.")
@@ -73,7 +82,7 @@ async def _run_graph_with_streaming(
     return merged
 
 
-@celery_app.task(name="process_user_input", soft_time_limit=180, time_limit=190)
+@celery_app.task(name="process_user_input", soft_time_limit=300, time_limit=310)
 def process_user_input(user_input: str, session_id: str) -> None:
     """Run the LangGraph chain and stream resulting Panels via Redis Pub/Sub."""
     channel = session_channel(session_id)

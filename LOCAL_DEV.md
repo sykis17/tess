@@ -68,11 +68,15 @@ Open `http://localhost:5173` in your browser.
 1. Hard-refresh the browser (`Ctrl+Shift+R`) to clear any stale panels from before a rebuild
 2. Use the current Vite URL from the terminal (e.g. `http://localhost:5175`) — not the production server at `5.78.186.223`
 3. Send a message such as *"What is 2+2?"*
-4. Wait for the response — the **first** Ollama call can take 30–60 seconds while the model loads; Phase 8 runs two LLM calls (routing + specialist), so allow up to 3 minutes; a "TESS is thinking…" indicator appears during this time
-5. A new Panel should appear with a real LLM answer from the General Assistant specialist
-6. Status should be `completed`, folder path `Assistant/General`
+4. Wait for the response — the **first** Ollama call can take 30–60 seconds while the model loads; Phase 10 runs 1 WR + 1–3 parallel specialist calls, so allow up to 5 minutes; a "TESS is thinking…" indicator appears during this time
+5. A processing Panel may appear first (e.g. `Routing to Coder + Researcher…`), then update to `completed` with the full answer
+6. Expand **Agent details** to see WR → specialist → Presenter traces
+7. Try routing: coding question → `Coding/Projects`; research question → `Research/Topics`; casual chat → `Assistant/General`
+8. Try parallel routing: *"Compare async Python and explain photosynthesis"* → processing Panel shows Coder + Researcher badges; completed Panel has two sections
 
 If you still see `System/Processing` / `Task analyzed: ...`, that is an **old stub panel** from a previous session — scroll down for newer panels or refresh the page.
+
+For the full target architecture, see [AI_MAP.md](AI_MAP.md).
 
 ## 6. Verify conversation history
 

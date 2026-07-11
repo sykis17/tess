@@ -2,7 +2,7 @@ import logging
 from typing import Any
 
 from app.agents.registry import get_agent
-from app.graph.schemas import AgentTrace, OUTPUT_PREVIEW_MAX_CHARS
+from app.graph.schemas import AgentTrace, MayorData, OUTPUT_PREVIEW_MAX_CHARS
 from app.graph.state import GraphState
 from app.graph.trace_utils import conversation_turn_count, format_history_input, truncate_preview
 from app.llm.factory import create_llm
@@ -58,7 +58,14 @@ async def run_specialist(state: GraphState, agent_name: str) -> dict[str, Any]:
         output_preview=truncate_preview(response.content, OUTPUT_PREVIEW_MAX_CHARS),
     )
 
+    mayor_entry = MayorData(
+        source_agent=agent_name,
+        content=response.content,
+        topic=agent.description,
+    )
+
     return {
         "collected_data": [response.content],
+        "mayor_data": [mayor_entry],
         "agent_traces": [specialist_trace],
     }

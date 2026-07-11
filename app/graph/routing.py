@@ -88,3 +88,10 @@ def fan_out_from_wr(state: dict) -> list[Send]:
 def fan_out_to_specialists(state: dict) -> list[Send]:
     """Deprecated alias for fan_out_from_wr."""
     return fan_out_from_wr(state)
+
+
+def route_after_fan_in(state: dict) -> str:
+    """Route to combiners or directly to presenter after parallel fan-in."""
+    if state.get("combiners_bypassed"):
+        return "presenter"
+    return "combiner_mayor"

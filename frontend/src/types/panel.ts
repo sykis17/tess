@@ -1,5 +1,6 @@
 export type PanelStatus = "processing" | "review_passed" | "completed";
 export type ContentType = "markdown" | "code" | "image";
+export type DataTier = "mayor" | "micro" | "usable" | "final";
 
 export interface AgentTrace {
   agent_name: string;
@@ -17,6 +18,7 @@ export interface Panel {
   follow_up_options: string[];
   agents_involved?: string[];
   agent_traces?: AgentTrace[];
+  data_tier?: DataTier;
 }
 
 export interface WorkerError {
@@ -48,6 +50,11 @@ export function formatAgentDisplayName(registryKey: string): string {
   const overrides: Record<string, string> = {
     wide_receiver: "Wide Receiver",
     presenter: "Presenter",
+    resource_finder: "Resource Finder",
+    resource_reader: "Resource Reader",
+    combiner_mayor: "Combiner Mayor",
+    combiner_micro: "Combiner Micro",
+    collector: "Collector",
   };
   if (overrides[registryKey]) {
     return overrides[registryKey];

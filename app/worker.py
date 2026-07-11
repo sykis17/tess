@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.core.conversation import append_conversation_turn, load_conversation_history
 from app.core.redis import create_sync_redis, session_channel
 from app.graph import compiled_graph
+from app.graph.combiner_utils import format_usable_answers_markdown
 from app.graph.schemas import Panel
 from app.graph.state import GraphState, build_initial_state
 
@@ -55,6 +56,10 @@ def _extract_assistant_content(result: dict[str, Any]) -> str:
         if panel.status == "completed":
             return panel.content
 
+    usable_answers = result.get("usable_answers") or []
+    if usable_answers:
+        return format_usable_answers_markdown(usable_answers)
+
     mayor_data = result.get("mayor_data", [])
     if mayor_data:
         return "\n\n".join(entry.content for entry in mayor_data)
@@ -86,7 +91,7 @@ async def _run_graph_with_streaming(
     return merged
 
 
-@celery_app.task(name="process_user_input", soft_time_limit=360, time_limit=370)
+@celery_app.task(name="process_user_input", soft_time_limit=420, time_limit=430)
 def process_user_input(user_input: str, session_id: str) -> None:
     """Run the LangGraph chain and stream resulting Panels via Redis Pub/Sub."""
     channel = session_channel(session_id)

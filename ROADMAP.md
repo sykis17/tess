@@ -13,20 +13,13 @@
 - [x] **Phase 9:** Agent visibility (`agents_involved`, `agent_traces`, processing Panel); Coder + Researcher specialists; dynamic WR routing.
 - [x] **Phase 10:** Parallel topic agents — WR alarms 1–3 specialists; LangGraph `Send` fan-out/fan-in; `MayorData` in graph state; multi-agent processing Panel.
 - [x] **Phase 11:** Search layer — resource finder (DuckDuckGo / Tavily) + resource reader; `search_queries` on WR routing; grounded excerpts in `mayor_data` with citations; optional Redis search cache.
+- [x] **Phase 12:** Combiners + Collector — Combiner Mayor/Micro LLM synthesis; deterministic Collector; bypass for single-agent fast path; `MicroData` / `UsableAnswer` live; optional `data_tier` on intermediate Panels.
 
 ---
 
 ## Next — Full AI Chain
 
 Phases below map to the [target architecture](AI_MAP.md#target-ai-chain-full-vision). Each phase should keep backward-compatible Panels and deployable increments.
-
-### Phase 12 — Combiners + Collector
-
-- **Combiner Mayor** — aggregate mayor data → micro data.
-- **Combiner Micro** — micro data → usable answers.
-- **Collector** — sort and sequence usable answers.
-- Presenter reads collector output instead of single `collected_data` list.
-- Stream intermediate Panels at mayor/micro stages (optional, for visibility).
 
 ### Phase 13 — Defense layer
 

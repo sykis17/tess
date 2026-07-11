@@ -2,6 +2,7 @@ import logging
 from typing import Any
 
 from app.agents.registry import format_agent_display_name, get_agent
+from app.graph.combiner_utils import combiner_pipeline_names, should_predict_combiners
 from app.graph.prompts import WIDE_RECEIVER_SYSTEM_PROMPT
 from app.graph.routing import parse_routing_decision
 from app.graph.schemas import AgentTrace, Panel
@@ -81,6 +82,8 @@ async def wide_receiver_node(state: GraphState) -> dict[str, Any]:
     ]
     if search_queries:
         agents_involved.append("Resource Finder")
+    if should_predict_combiners(routed_agents, search_queries):
+        agents_involved.extend(combiner_pipeline_names())
 
     processing_panel = Panel(
         panel_id=state["panel_id"],

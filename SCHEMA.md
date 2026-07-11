@@ -43,13 +43,18 @@ Streamed to the frontend when a processing segment completes or updates.
 
 Clients should treat missing optional fields as empty lists.
 
+### Live Panel fields (Phase 12)
+
+| Field | Type | Status | Description |
+|-------|------|--------|-------------|
+| `data_tier` | `str` | Live (Phase 12) | `mayor`, `micro`, `usable`, `final` — for intermediate stream Panels |
+
 ### Planned Panel fields
 
 | Field | Type | Phase | Description |
 |-------|------|-------|-------------|
 | `output_level` | `str` | 17 | Chain profile used (`L0`–`L4`) for research comparison |
 | `product_mode` | `str` | 16 | `research`, `planner`, `coding`, `builder` |
-| `data_tier` | `str` | 12 | `mayor`, `micro`, `usable`, `final` — for intermediate stream Panels |
 
 ---
 
@@ -105,7 +110,7 @@ Wide Receiver routing JSON. Supports 1–3 agents per message (capped at 3) and 
 
 ## 4. Data pipeline types
 
-Internal graph state types for the full chain. `MayorData` is live in Phase 10; others are planned.
+Internal graph state types for the full chain. `MayorData` is live in Phase 10–11; `MicroData` and `UsableAnswer` are live in Phase 12.
 
 ### MayorData (live — Phase 10–11)
 
@@ -121,7 +126,7 @@ Raw output from a topic agent, specialist, or search reader. Stored in graph sta
 }
 ```
 
-### MicroData
+### MicroData (live — Phase 12)
 
 Combiner Mayor output — cross-topic synthesis.
 
@@ -135,7 +140,7 @@ Combiner Mayor output — cross-topic synthesis.
 }
 ```
 
-### UsableAnswer
+### UsableAnswer (live — Phase 12)
 
 Combiner Micro output — refined segment ready for collection.
 

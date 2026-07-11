@@ -119,12 +119,19 @@ Each mode influences WR routing (which topic/specialist agents to alarm) and whi
 
 ---
 
-## Current Implementation (Phase 11)
+## Current Implementation (Phase 12)
 
-What is **built and deployed today** is a parallel multi-specialist chain with an optional search sub-pipeline. WR can alarm 1–3 specialists and optionally trigger web search; they run concurrently via LangGraph `Send` fan-out and merge at Presenter.
+What is **built and deployed today** is a parallel multi-specialist chain with optional search and combiner synthesis. WR can alarm 1–3 specialists and optionally trigger web search; they run concurrently via LangGraph `Send` fan-out. Multi-agent or search-grounded paths pass through Combiner Mayor → Combiner Micro → Collector before Presenter.
 
 ```
-START → wide_receiver → [parallel: coder | researcher | general_assistant] + [optional: resource_finder → resource_reader] → presenter → END
+START → wide_receiver → [parallel: coder | researcher | general_assistant] + [optional: resource_finder → resource_reader]
+      → post_fan_in → [bypass → presenter | combiners → presenter] → END
+```
+
+Combiner chain (when not bypassed):
+
+```
+post_fan_in → combiner_mayor → combiner_micro → collector → presenter
 ```
 
 | Node | Status | Notes |
@@ -133,10 +140,13 @@ START → wide_receiver → [parallel: coder | researcher | general_assistant] +
 | Topic Agents (subjects) | 🟡 Partial | Coder / Researcher run in parallel as early stand-ins, not full subject matrix |
 | Specialist Agents (media) | ⬜ Planned | |
 | Search | ✅ Live | Resource finder (DuckDuckGo / Tavily) → resource reader; feeds `mayor_data` with citations |
-| Combiner Mayor / Micro | ⬜ Planned | Presenter merges `mayor_data` directly for now |
-| Collector | ⬜ Planned | |
-| Defense | ⬜ Planned | |
-| Presenter | ✅ Live | Merges multi-agent `mayor_data` + `## Sources` section when search ran |
+| Combiner Mayor | ✅ Live | Aggregates `mayor_data` → `micro_data` (cross-topic synthesis) |
+| Combiner Micro | ✅ Live | Refines `micro_data` → `usable_answers` (3–5 segments) |
+| Collector | ✅ Live | Deterministic sort by `order_hint` |
+| Defense | ⬜ Planned | Phase 13 |
+| Presenter | ✅ Live | Reads `usable_answers` from collector path; bypass path merges `mayor_data` directly |
+
+**Bypass rule:** Skip combiners when `len(mayor_data) <= 1` and no `resource_reader` entry — single-agent prompts stay fast (Phase 11 UX).
 
 ### Live Specialist Agents
 
@@ -153,7 +163,8 @@ Config pattern: `app/agents/<name>/config.py` + `prompt.py`, registered in `app/
 - **`AgentTrace`** — per-node record (`agent_name`, `inputs_seen`, `task_summary`, `output_preview`)
 - **`agents_involved`** — human-readable pipeline on each Panel (all parallel agents + search when active)
 - **`MayorData`** — per-specialist raw output in graph state before combiner stages; `resource_reader` populates `citations`
-- **Processing Panel** — WR streams `status: processing` immediately with all alarmed agent badges; Presenter updates same `panel_id` to `completed`
+- **`MicroData`** / **`UsableAnswer`** — combiner pipeline types; Presenter reads ordered `usable_answers` on synthesis path
+- **Processing Panel** — WR streams `status: processing` immediately with all alarmed agent badges (including combiners when predicted); combiner nodes may emit intermediate Panels with `data_tier`
 - Worker uses `astream(stream_mode="updates")` for incremental Redis publish
 - Parallel fan-out via LangGraph `Send` API; fan-in at Presenter (max 3 agents + optional search)
 - Search provider: DuckDuckGo default; Tavily when `TAVILY_API_KEY` is set
@@ -194,6 +205,8 @@ A high-value research feature: let the user **select an output level** and compa
 | Area | Path |
 |------|------|
 | Graph definition | `app/graph/builder.py` |
+| Combiner nodes | `app/graph/nodes/combiner_mayor.py`, `combiner_micro.py`, `collector.py`, `post_fan_in.py` |
+| Combiner utilities | `app/graph/combiner_utils.py` |
 | WR routing | `app/graph/nodes/wide_receiver.py`, `app/graph/routing.py` |
 | Search nodes | `app/graph/nodes/resource_finder.py`, `app/graph/nodes/resource_reader.py` |
 | Search utilities | `app/search/provider.py`, `app/search/fetcher.py`, `app/search/extractor.py` |

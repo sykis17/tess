@@ -1,6 +1,8 @@
 import asyncio
 import json
 import logging
+import uuid
+from typing import Any
 
 from celery import Celery
 from celery.exceptions import SoftTimeLimitExceeded
@@ -10,7 +12,7 @@ from app.core.conversation import append_conversation_turn, load_conversation_hi
 from app.core.redis import create_sync_redis, session_channel
 from app.graph import compiled_graph
 from app.graph.schemas import Panel
-from app.graph.state import build_initial_state
+from app.graph.state import GraphState, build_initial_state
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +21,8 @@ celery_app = Celery(
     broker=settings.redis_url,
     backend=settings.redis_url,
 )
+
+_REDUCER_KEYS = frozenset({"collected_data", "panels", "agent_traces"})
 
 
 def _publish_error(redis_client, channel: str, message: str) -> None:
@@ -33,12 +37,40 @@ def _publish_panels(redis_client, channel: str, panels: list[Panel]) -> None:
         redis_client.publish(channel, panel.model_dump_json())
 
 
-def _extract_assistant_content(result: dict) -> str:
+def _merge_node_output(merged: dict[str, Any], node_output: dict[str, Any]) -> None:
+    """Merge a node update into the running graph state."""
+    for key, value in node_output.items():
+        if key in _REDUCER_KEYS:
+            merged[key] = [*merged.get(key, []), *value]
+        else:
+            merged[key] = value
+
+
+def _extract_assistant_content(result: dict[str, Any]) -> str:
     """Extract the assistant response from graph state."""
     collected_data: list[str] = result.get("collected_data", [])
     if not collected_data:
         raise ValueError("Graph completed with no collected data.")
     return collected_data[-1]
+
+
+async def _run_graph_with_streaming(
+    initial_state: GraphState,
+    redis_client,
+    channel: str,
+) -> dict[str, Any]:
+    """Run the graph and publish Panels incrementally as nodes complete."""
+    merged: dict[str, Any] = dict(initial_state)
+
+    async for update in compiled_graph.astream(initial_state, stream_mode="updates"):
+        for _node_name, node_output in update.items():
+            _merge_node_output(merged, node_output)
+
+            panels = node_output.get("panels", [])
+            if panels:
+                _publish_panels(redis_client, channel, panels)
+
+    return merged
 
 
 @celery_app.task(name="process_user_input", soft_time_limit=180, time_limit=190)
@@ -49,8 +81,11 @@ def process_user_input(user_input: str, session_id: str) -> None:
 
     try:
         history = load_conversation_history(session_id)
-        initial_state = build_initial_state(user_input, history)
-        result = asyncio.run(compiled_graph.ainvoke(initial_state))
+        panel_id = str(uuid.uuid4())
+        initial_state = build_initial_state(user_input, history, panel_id=panel_id)
+        result = asyncio.run(
+            _run_graph_with_streaming(initial_state, redis_client, channel)
+        )
         panels: list[Panel] = result.get("panels", [])
 
         if not panels:
@@ -60,7 +95,6 @@ def process_user_input(user_input: str, session_id: str) -> None:
 
         assistant_content = _extract_assistant_content(result)
         append_conversation_turn(session_id, user_input, assistant_content)
-        _publish_panels(redis_client, channel, panels)
     except SoftTimeLimitExceeded:
         logger.error("Task timed out for session %s", session_id)
         _publish_error(

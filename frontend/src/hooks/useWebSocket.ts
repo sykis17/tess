@@ -43,7 +43,10 @@ export function useWebSocket(sessionId: string) {
         }
 
         if (isPanel(data)) {
-          setIsProcessing(false);
+          if (data.status === "completed") {
+            setIsProcessing(false);
+          }
+
           setPanels((previous) => {
             const existingIndex = previous.findIndex(
               (panel) => panel.panel_id === data.panel_id,

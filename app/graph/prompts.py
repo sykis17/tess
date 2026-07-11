@@ -9,10 +9,12 @@ Available specialist agents:
 {list_agents_for_prompt()}
 
 Respond with JSON only, using this exact shape:
-{{"active_agents": ["general_assistant"], "current_task": "<concise task summary>"}}
+{{"active_agents": ["<agent_name>"], "current_task": "<concise task summary>"}}
 
 Rules:
-- Choose one or more agent names from the available agents list.
+- Choose exactly one agent name from the available agents list for each request.
+- Route coding tasks to "coder" and research or explanation tasks to "researcher".
+- Route casual conversation and general tasks to "general_assistant".
 - Summarize the user's intent in current_task so the specialist can act on it.
 - Use conversation history to interpret follow-ups such as "continue with this".
 - If unsure, route to "general_assistant".

@@ -1,13 +1,25 @@
 import logging
 from typing import Any
 
+from app.agents.registry import format_agent_display_name, get_agent
 from app.graph.prompts import WIDE_RECEIVER_SYSTEM_PROMPT
 from app.graph.routing import parse_routing_decision
+from app.graph.schemas import AgentTrace, Panel
 from app.graph.state import GraphState
+from app.graph.trace_utils import conversation_turn_count, format_history_input, truncate_preview
 from app.llm.factory import create_llm
 from app.llm.types import LLMMessage, LLMRequest
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_folder_path_for_agent(agent_name: str) -> str:
+    try:
+        return get_agent(agent_name).folder_path
+    except KeyError:
+        from app.agents.registry import DEFAULT_AGENT_NAME
+
+        return get_agent(DEFAULT_AGENT_NAME).folder_path
 
 
 async def wide_receiver_node(state: GraphState) -> dict[str, Any]:
@@ -34,7 +46,31 @@ async def wide_receiver_node(state: GraphState) -> dict[str, Any]:
         decision.current_task,
     )
 
+    routed_agent = decision.active_agents[0]
+    routed_display = format_agent_display_name(routed_agent)
+    turn_count = conversation_turn_count(conversation_history)
+
+    wr_trace = AgentTrace(
+        agent_name="wide_receiver",
+        inputs_seen=["user_input", format_history_input(turn_count)],
+        task_summary=decision.current_task,
+        output_preview=f"Routed to: {routed_agent} — {decision.current_task}",
+    )
+
+    processing_panel = Panel(
+        panel_id=state["panel_id"],
+        folder_path=_resolve_folder_path_for_agent(routed_agent),
+        status="processing",
+        content_type="markdown",
+        content=f"Routing to {routed_display}…",
+        follow_up_options=[],
+        agents_involved=["Wide Receiver"],
+        agent_traces=[wr_trace],
+    )
+
     return {
         "current_task": decision.current_task,
         "active_agents": decision.active_agents,
+        "agent_traces": [wr_trace],
+        "panels": [processing_panel],
     }

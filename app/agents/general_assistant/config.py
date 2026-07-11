@@ -5,8 +5,8 @@ GENERAL_ASSISTANT_CONFIG = AgentConfig(
     name="general_assistant",
     folder_path="Assistant/General",
     description=(
-        "Handles general questions, explanations, brainstorming, summaries, "
-        "and everyday conversational tasks."
+        "Handles casual conversation, brainstorming, and general tasks that do not "
+        "require dedicated coding or research specialists."
     ),
     system_prompt=GENERAL_ASSISTANT_SYSTEM_PROMPT,
 )

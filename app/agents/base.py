@@ -2,7 +2,9 @@ import logging
 from typing import Any
 
 from app.agents.registry import get_agent
+from app.graph.schemas import AgentTrace, OUTPUT_PREVIEW_MAX_CHARS
 from app.graph.state import GraphState
+from app.graph.trace_utils import conversation_turn_count, format_history_input, truncate_preview
 from app.llm.factory import create_llm
 from app.llm.types import LLMMessage, LLMRequest
 
@@ -25,6 +27,7 @@ async def run_specialist(state: GraphState, agent_name: str) -> dict[str, Any]:
     agent = get_agent(agent_name)
     conversation_history = state["conversation_history"]
     user_message = _build_specialist_user_message(state)
+    turn_count = conversation_turn_count(conversation_history)
 
     logger.info("Specialist %s handling task: %s", agent_name, state["current_task"])
 
@@ -44,4 +47,18 @@ async def run_specialist(state: GraphState, agent_name: str) -> dict[str, Any]:
         response.model,
     )
 
-    return {"collected_data": [response.content]}
+    specialist_trace = AgentTrace(
+        agent_name=agent_name,
+        inputs_seen=[
+            "user_input",
+            "current_task",
+            format_history_input(turn_count),
+        ],
+        task_summary=state["current_task"],
+        output_preview=truncate_preview(response.content, OUTPUT_PREVIEW_MAX_CHARS),
+    )
+
+    return {
+        "collected_data": [response.content],
+        "agent_traces": [specialist_trace],
+    }

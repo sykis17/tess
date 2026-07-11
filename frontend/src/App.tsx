@@ -62,6 +62,8 @@ function App() {
                 contentType={panel.content_type}
                 content={panel.content}
                 followUpOptions={panel.follow_up_options}
+                agentsInvolved={panel.agents_involved}
+                agentTraces={panel.agent_traces}
                 onFollowUp={sendMessage}
               />
             ))}

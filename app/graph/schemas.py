@@ -11,6 +11,17 @@ DEFAULT_FOLLOW_UP_OPTIONS: list[str] = [
     "Discard",
 ]
 
+OUTPUT_PREVIEW_MAX_CHARS = 200
+
+
+class AgentTrace(BaseModel):
+    """Per-agent visibility record for what an agent saw and produced."""
+
+    agent_name: str
+    inputs_seen: list[str]
+    task_summary: str | None = None
+    output_preview: str | None = None
+
 
 class Panel(BaseModel):
     """WebSocket payload streamed to the frontend when a processing segment completes."""
@@ -21,3 +32,5 @@ class Panel(BaseModel):
     content_type: ContentType
     content: str
     follow_up_options: list[str] = Field(default_factory=lambda: list(DEFAULT_FOLLOW_UP_OPTIONS))
+    agents_involved: list[str] = Field(default_factory=list)
+    agent_traces: list[AgentTrace] = Field(default_factory=list)

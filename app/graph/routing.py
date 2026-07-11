@@ -49,7 +49,7 @@ def parse_routing_decision(raw: str, fallback_task: str) -> RoutingDecision:
 
 def route_after_wr(state: dict) -> str:
     """Route from Wide Receiver to the first supported specialist agent."""
-    agents = state.get("active_agents") or []
-    if "general_assistant" in agents:
-        return "general_assistant"
-    return "general_assistant"
+    for agent in state.get("active_agents") or []:
+        if agent in AGENT_REGISTRY:
+            return agent
+    return DEFAULT_AGENT_NAME

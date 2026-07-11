@@ -4,13 +4,16 @@ from typing import Any
 from app.graph.schemas import DEFAULT_FOLLOW_UP_OPTIONS, Panel
 from app.graph.state import GraphState
 
-DEFAULT_FOLDER_PATH = "System/Processing"
+DEFAULT_FOLDER_PATH = "Assistant/Chat"
 
 
 def _format_collected_data(collected_data: list[str]) -> str:
     """Turn collected data entries into markdown content for the Panel."""
     if not collected_data:
-        return "No data collected yet."
+        return "No response generated."
+
+    if len(collected_data) == 1:
+        return collected_data[0]
 
     lines = ["## Collected Data", ""]
     lines.extend(f"- {entry}" for entry in collected_data)
@@ -25,7 +28,7 @@ def presenter_node(state: GraphState) -> dict[str, Any]:
     panel = Panel(
         panel_id=str(uuid.uuid4()),
         folder_path=DEFAULT_FOLDER_PATH,
-        status="processing",
+        status="completed",
         content_type="markdown",
         content=content,
         follow_up_options=list(DEFAULT_FOLLOW_UP_OPTIONS),

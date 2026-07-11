@@ -1,9 +1,11 @@
+import asyncio
 import json
 import logging
 
 from celery import Celery
 
 from app.core.config import settings
+from app.core.conversation import append_conversation_turn, load_conversation_history
 from app.core.redis import create_sync_redis, session_channel
 from app.graph import compiled_graph
 from app.graph.schemas import Panel
@@ -30,6 +32,14 @@ def _publish_panels(redis_client, channel: str, panels: list[Panel]) -> None:
         redis_client.publish(channel, panel.model_dump_json())
 
 
+def _extract_assistant_content(result: dict) -> str:
+    """Extract the assistant response from graph state."""
+    collected_data: list[str] = result.get("collected_data", [])
+    if not collected_data:
+        raise ValueError("Graph completed with no collected data.")
+    return collected_data[-1]
+
+
 @celery_app.task(name="process_user_input")
 def process_user_input(user_input: str, session_id: str) -> None:
     """Run the LangGraph chain and stream resulting Panels via Redis Pub/Sub."""
@@ -37,7 +47,9 @@ def process_user_input(user_input: str, session_id: str) -> None:
     redis_client = create_sync_redis()
 
     try:
-        result = compiled_graph.invoke(build_initial_state(user_input))
+        history = load_conversation_history(session_id)
+        initial_state = build_initial_state(user_input, history)
+        result = asyncio.run(compiled_graph.ainvoke(initial_state))
         panels: list[Panel] = result.get("panels", [])
 
         if not panels:
@@ -45,6 +57,8 @@ def process_user_input(user_input: str, session_id: str) -> None:
             _publish_error(redis_client, channel, "Graph completed with no panels.")
             return
 
+        assistant_content = _extract_assistant_content(result)
+        append_conversation_turn(session_id, user_input, assistant_content)
         _publish_panels(redis_client, channel, panels)
     except Exception as exc:
         logger.exception("Failed to process user input for session %s", session_id)

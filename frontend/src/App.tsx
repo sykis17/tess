@@ -14,8 +14,14 @@ function truncateSessionId(sessionId: string): string {
 
 function App() {
   const sessionId = useSessionId();
-  const { connectionState, panels, lastError, sendMessage, clearError } =
-    useWebSocket(sessionId);
+  const {
+    connectionState,
+    panels,
+    lastError,
+    isProcessing,
+    sendMessage,
+    clearError,
+  } = useWebSocket(sessionId);
   const panelsEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -37,7 +43,12 @@ function App() {
       </header>
 
       <main className="app-main">
-        {panels.length === 0 ? (
+        {isProcessing && (
+          <p className="app-main__processing">
+            TESS is thinking… (first Ollama response can take up to a minute)
+          </p>
+        )}
+        {panels.length === 0 && !isProcessing ? (
           <p className="app-main__empty">
             No panels yet. Send a message to start processing.
           </p>
@@ -63,7 +74,10 @@ function App() {
         {lastError && (
           <ErrorBanner message={lastError} onDismiss={clearError} />
         )}
-        <MessageInput disabled={!isConnected} onSend={sendMessage} />
+        <MessageInput
+          disabled={!isConnected || isProcessing}
+          onSend={sendMessage}
+        />
       </footer>
     </div>
   );

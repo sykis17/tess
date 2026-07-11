@@ -16,6 +16,7 @@ export function useWebSocket(sessionId: string) {
     useState<ConnectionState>("connecting");
   const [panels, setPanels] = useState<Panel[]>([]);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -35,10 +36,12 @@ export function useWebSocket(sessionId: string) {
 
         if (isWorkerError(data)) {
           setLastError(data.message);
+          setIsProcessing(false);
           return;
         }
 
         if (isPanel(data)) {
+          setIsProcessing(false);
           setPanels((previous) => {
             const existingIndex = previous.findIndex(
               (panel) => panel.panel_id === data.panel_id,
@@ -77,6 +80,8 @@ export function useWebSocket(sessionId: string) {
   const sendMessage = useCallback((text: string) => {
     const ws = wsRef.current;
     if (ws?.readyState === WebSocket.OPEN) {
+      setIsProcessing(true);
+      setLastError(null);
       ws.send(text);
     }
   }, []);
@@ -89,6 +94,7 @@ export function useWebSocket(sessionId: string) {
     connectionState,
     panels,
     lastError,
+    isProcessing,
     sendMessage,
     clearError,
   };

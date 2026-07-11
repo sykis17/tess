@@ -61,6 +61,13 @@
   margin-top: 3rem;
 }
 
+.app-main__processing {
+  color: #ffd866;
+  text-align: center;
+  margin: 1rem 0;
+  font-size: 0.95rem;
+}
+
 .panel-list {
   display: flex;
   flex-direction: column;

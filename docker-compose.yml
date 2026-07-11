@@ -12,6 +12,7 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379/0
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - DEFAULT_LLM_PROVIDER=ollama
     depends_on:
       - redis
 
@@ -24,6 +25,7 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379/0
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - DEFAULT_LLM_PROVIDER=ollama
     depends_on:
       - redis
 

@@ -11,3 +11,5 @@
 - [x] **Phase 5:** Build the React frontend prototype to receive and dynamically render Panels.
 
 - [x] **Phase 6:** Deploy the local setup to a Hetzner production server.
+
+- [x] **Phase 7:** Wire Ollama/Gemini into LangGraph wide_receiver; Redis conversation history for contextual follow-ups.

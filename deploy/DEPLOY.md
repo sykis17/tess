@@ -152,17 +152,23 @@ VITE_WS_BASE_URL=wss://tess.example.com
 
 Never commit `.env.prod` — it is listed in `.gitignore`.
 
-### Optional variables (Ollama)
+### Ollama (recommended for initial testing)
 
-Ollama is optional in production. To use it on the same host, install Ollama on the server and set:
+Ollama runs **inside Docker** as the `ollama` service — no host install required.
+
+In `.env.prod`:
 
 ```env
-OLLAMA_BASE_URL=http://host.docker.internal:11434
-OLLAMA_MODEL=llama3.2
 DEFAULT_LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://ollama:11434
+OLLAMA_MODEL=llama3.2
 ```
 
-Add `extra_hosts: ["host.docker.internal:host-gateway"]` to `web` and `worker` in `docker-compose.prod.yml` if needed.
+The deploy script pulls the model automatically on first run.
+
+See [SERVER_CHECKLIST.md](SERVER_CHECKLIST.md) for a step-by-step server guide.
+
+On a 4 GB server, if you run out of memory, try a smaller model: `OLLAMA_MODEL=llama3.2:1b`.
 
 ## 7. Install Node.js (for frontend build)
 

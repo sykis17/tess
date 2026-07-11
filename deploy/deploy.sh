@@ -56,6 +56,13 @@ cd "${REPO_ROOT}"
 echo "Starting production stack..."
 docker compose --env-file "${ENV_FILE}" -f docker-compose.prod.yml up -d --build
 
+if [[ "${DEFAULT_LLM_PROVIDER:-}" == "ollama" ]]; then
+  OLLAMA_MODEL_NAME="${OLLAMA_MODEL:-llama3.2}"
+  echo ""
+  echo "Pulling Ollama model ${OLLAMA_MODEL_NAME} (first run may take several minutes)..."
+  docker compose --env-file "${ENV_FILE}" -f docker-compose.prod.yml exec -T ollama ollama pull "${OLLAMA_MODEL_NAME}"
+fi
+
 echo ""
 echo "Waiting for services to become healthy..."
 sleep 5

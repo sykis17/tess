@@ -23,6 +23,16 @@ class AgentTrace(BaseModel):
     output_preview: str | None = None
 
 
+class SearchResult(BaseModel):
+    """A single search hit with extracted excerpt from resource reader."""
+
+    query: str
+    url: str
+    title: str
+    excerpt: str = ""
+    reader_agent: str = "resource_reader"
+
+
 class MayorData(BaseModel):
     """Raw output from a topic agent before combiner stages."""
 

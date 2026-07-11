@@ -22,7 +22,7 @@ celery_app = Celery(
     backend=settings.redis_url,
 )
 
-_REDUCER_KEYS = frozenset({"collected_data", "mayor_data", "panels", "agent_traces"})
+_REDUCER_KEYS = frozenset({"collected_data", "mayor_data", "panels", "agent_traces", "search_results"})
 
 
 def _publish_error(redis_client, channel: str, message: str) -> None:
@@ -82,7 +82,7 @@ async def _run_graph_with_streaming(
     return merged
 
 
-@celery_app.task(name="process_user_input", soft_time_limit=300, time_limit=310)
+@celery_app.task(name="process_user_input", soft_time_limit=360, time_limit=370)
 def process_user_input(user_input: str, session_id: str) -> None:
     """Run the LangGraph chain and stream resulting Panels via Redis Pub/Sub."""
     channel = session_channel(session_id)
@@ -91,7 +91,7 @@ def process_user_input(user_input: str, session_id: str) -> None:
     try:
         history = load_conversation_history(session_id)
         panel_id = str(uuid.uuid4())
-        initial_state = build_initial_state(user_input, history, panel_id=panel_id)
+        initial_state = build_initial_state(user_input, history, panel_id=panel_id, session_id=session_id)
         result = asyncio.run(
             _run_graph_with_streaming(initial_state, redis_client, channel)
         )

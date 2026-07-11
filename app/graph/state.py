@@ -3,7 +3,7 @@ from typing import Annotated
 
 from typing_extensions import TypedDict
 
-from app.graph.schemas import AgentTrace, MayorData, Panel
+from app.graph.schemas import AgentTrace, MayorData, Panel, SearchResult
 from app.llm.types import LLMMessage
 
 
@@ -13,6 +13,9 @@ class GraphState(TypedDict):
     user_input: str
     current_task: str
     active_agents: list[str]
+    search_queries: list[str]
+    search_results: Annotated[list[SearchResult], operator.add]
+    session_id: str
     collected_data: Annotated[list[str], operator.add]
     mayor_data: Annotated[list[MayorData], operator.add]
     conversation_history: list[LLMMessage]
@@ -26,12 +29,16 @@ def build_initial_state(
     user_input: str,
     conversation_history: list[LLMMessage] | None = None,
     panel_id: str = "",
+    session_id: str = "",
 ) -> GraphState:
     """Build the initial LangGraph state for a new user input."""
     return {
         "user_input": user_input,
         "current_task": "",
         "active_agents": [],
+        "search_queries": [],
+        "search_results": [],
+        "session_id": session_id,
         "collected_data": [],
         "mayor_data": [],
         "conversation_history": conversation_history or [],

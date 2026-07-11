@@ -11,7 +11,7 @@ export type ConnectionState =
 const WS_BASE_URL =
   import.meta.env.VITE_WS_BASE_URL ?? "ws://127.0.0.1:8000";
 
-const PROCESSING_TIMEOUT_MS = 300_000;
+const PROCESSING_TIMEOUT_MS = 360_000;
 
 export function useWebSocket(sessionId: string) {
   const [connectionState, setConnectionState] =

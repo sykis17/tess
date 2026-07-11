@@ -22,9 +22,14 @@ def _resolve_folder_path_for_agent(agent_name: str) -> str:
         return get_agent(DEFAULT_AGENT_NAME).folder_path
 
 
-def _format_routing_message(agent_names: list[str]) -> str:
+def _format_routing_message(
+    agent_names: list[str],
+    search_queries: list[str] | None = None,
+) -> str:
     """Build the processing Panel content for one or more alarmed agents."""
     display_names = [format_agent_display_name(name) for name in agent_names]
+    if search_queries:
+        display_names.append("Resource Finder")
     if len(display_names) == 1:
         return f"Routing to {display_names[0]}…"
     return f"Routing to {' + '.join(display_names)}…"
@@ -55,27 +60,34 @@ async def wide_receiver_node(state: GraphState) -> dict[str, Any]:
     )
 
     routed_agents = decision.active_agents
+    search_queries = decision.search_queries
     routed_display = ", ".join(routed_agents)
     turn_count = conversation_turn_count(conversation_history)
+
+    preview_parts = [f"Routed to: {routed_display} — {decision.current_task}"]
+    if search_queries:
+        preview_parts.append(f"Search: {search_queries[0]}")
 
     wr_trace = AgentTrace(
         agent_name="wide_receiver",
         inputs_seen=["user_input", format_history_input(turn_count)],
         task_summary=decision.current_task,
-        output_preview=f"Routed to: {routed_display} — {decision.current_task}",
+        output_preview=" | ".join(preview_parts),
     )
 
     agents_involved = [
         "Wide Receiver",
         *[format_agent_display_name(name) for name in routed_agents],
     ]
+    if search_queries:
+        agents_involved.append("Resource Finder")
 
     processing_panel = Panel(
         panel_id=state["panel_id"],
         folder_path=_resolve_folder_path_for_agent(routed_agents[0]),
         status="processing",
         content_type="markdown",
-        content=_format_routing_message(routed_agents),
+        content=_format_routing_message(routed_agents, search_queries),
         follow_up_options=[],
         agents_involved=agents_involved,
         agent_traces=[wr_trace],
@@ -84,6 +96,7 @@ async def wide_receiver_node(state: GraphState) -> dict[str, Any]:
     return {
         "current_task": decision.current_task,
         "active_agents": decision.active_agents,
+        "search_queries": search_queries,
         "agent_traces": [wr_trace],
         "panels": [processing_panel],
     }

@@ -119,24 +119,24 @@ Each mode influences WR routing (which topic/specialist agents to alarm) and whi
 
 ---
 
-## Current Implementation (Phase 10)
+## Current Implementation (Phase 11)
 
-What is **built and deployed today** is a parallel multi-specialist chain. WR can alarm 1–3 specialists; they run concurrently via LangGraph `Send` fan-out and merge at Presenter.
+What is **built and deployed today** is a parallel multi-specialist chain with an optional search sub-pipeline. WR can alarm 1–3 specialists and optionally trigger web search; they run concurrently via LangGraph `Send` fan-out and merge at Presenter.
 
 ```
-START → wide_receiver → [parallel: coder | researcher | general_assistant] → presenter → END
+START → wide_receiver → [parallel: coder | researcher | general_assistant] + [optional: resource_finder → resource_reader] → presenter → END
 ```
 
 | Node | Status | Notes |
 |------|--------|-------|
-| Wide Receiver | ✅ Live | Routes to 1–3 specialists; emits processing Panel with all alarmed agents |
+| Wide Receiver | ✅ Live | Routes to 1–3 specialists; emits `search_queries` (0–1) when sources needed |
 | Topic Agents (subjects) | 🟡 Partial | Coder / Researcher run in parallel as early stand-ins, not full subject matrix |
 | Specialist Agents (media) | ⬜ Planned | |
-| Search | ⬜ Planned | |
+| Search | ✅ Live | Resource finder (DuckDuckGo / Tavily) → resource reader; feeds `mayor_data` with citations |
 | Combiner Mayor / Micro | ⬜ Planned | Presenter merges `mayor_data` directly for now |
 | Collector | ⬜ Planned | |
 | Defense | ⬜ Planned | |
-| Presenter | ✅ Live | Merges multi-agent `mayor_data` into sections; attaches `agents_involved` + `agent_traces` |
+| Presenter | ✅ Live | Merges multi-agent `mayor_data` + `## Sources` section when search ran |
 
 ### Live Specialist Agents
 
@@ -148,14 +148,15 @@ START → wide_receiver → [parallel: coder | researcher | general_assistant] �
 
 Config pattern: `app/agents/<name>/config.py` + `prompt.py`, registered in `app/agents/registry.py`.
 
-### Agent Visibility (Phase 9–10)
+### Agent Visibility (Phase 9–11)
 
 - **`AgentTrace`** — per-node record (`agent_name`, `inputs_seen`, `task_summary`, `output_preview`)
-- **`agents_involved`** — human-readable pipeline on each Panel (all parallel agents shown on processing Panel)
-- **`MayorData`** — per-specialist raw output in graph state before combiner stages
+- **`agents_involved`** — human-readable pipeline on each Panel (all parallel agents + search when active)
+- **`MayorData`** — per-specialist raw output in graph state before combiner stages; `resource_reader` populates `citations`
 - **Processing Panel** — WR streams `status: processing` immediately with all alarmed agent badges; Presenter updates same `panel_id` to `completed`
 - Worker uses `astream(stream_mode="updates")` for incremental Redis publish
-- Parallel fan-out via LangGraph `Send` API; fan-in at Presenter (max 3 agents)
+- Parallel fan-out via LangGraph `Send` API; fan-in at Presenter (max 3 agents + optional search)
+- Search provider: DuckDuckGo default; Tavily when `TAVILY_API_KEY` is set
 
 ---
 
@@ -194,6 +195,8 @@ A high-value research feature: let the user **select an output level** and compa
 |------|------|
 | Graph definition | `app/graph/builder.py` |
 | WR routing | `app/graph/nodes/wide_receiver.py`, `app/graph/routing.py` |
+| Search nodes | `app/graph/nodes/resource_finder.py`, `app/graph/nodes/resource_reader.py` |
+| Search utilities | `app/search/provider.py`, `app/search/fetcher.py`, `app/search/extractor.py` |
 | Specialist nodes | `app/graph/nodes/<name>.py` |
 | Agent registry | `app/agents/registry.py` |
 | Shared specialist runner | `app/agents/base.py` |

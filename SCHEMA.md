@@ -1,6 +1,6 @@
 # TESS Engine — Data Schemas
 
-Strictly typed data via Pydantic models in Python. This document covers **live** schemas (Phase 10) and **planned** types for the full AI chain.
+Strictly typed data via Pydantic models in Python. This document covers **live** schemas (Phase 11) and **planned** types for the full AI chain.
 
 ---
 
@@ -68,16 +68,23 @@ Per-agent visibility record accumulated during graph execution.
 
 ## 3. RoutingDecision (live)
 
-Wide Receiver routing JSON. Supports 1–3 agents per message (capped at 3).
+Wide Receiver routing JSON. Supports 1–3 agents per message (capped at 3) and 0–1 search queries.
 
 ```json
 {
   "active_agents": ["coder", "researcher"],
-  "current_task": "Compare Python async patterns and explain photosynthesis"
+  "current_task": "Compare Python async patterns and explain photosynthesis",
+  "search_queries": ["photosynthesis mechanism 2024"]
 }
 ```
 
-### Planned extensions (Phase 11+)
+| Field | Type | Description |
+|-------|------|-------------|
+| `active_agents` | `list[str]` | 1–3 registered specialist agent names |
+| `current_task` | `str` | Concise task summary for specialists |
+| `search_queries` | `list[str]` | 0–1 web search queries for resource finder |
+
+### Planned extensions (Phase 16+)
 
 ```json
 {
@@ -91,7 +98,6 @@ Wide Receiver routing JSON. Supports 1–3 agents per message (capped at 3).
 
 | Field | Phase | Description |
 |-------|-------|-------------|
-| `search_queries` | 11 | Queries for resource finder |
 | `product_mode` | 16 | Research / planner / coding / builder |
 | `chain_profile` | 17 | Output level L0–L4 |
 
@@ -101,17 +107,17 @@ Wide Receiver routing JSON. Supports 1–3 agents per message (capped at 3).
 
 Internal graph state types for the full chain. `MayorData` is live in Phase 10; others are planned.
 
-### MayorData (live — Phase 10)
+### MayorData (live — Phase 10–11)
 
-Raw output from a topic agent, specialist, or search reader. Stored in graph state via reducer; merged by Presenter.
+Raw output from a topic agent, specialist, or search reader. Stored in graph state via reducer; merged by Presenter. `resource_reader` populates `citations`.
 
 ```json
 {
-  "source_agent": "coder",
-  "topic": "Code generation, debugging, refactoring",
+  "source_agent": "resource_reader",
+  "topic": "Web sources",
   "depth": null,
-  "content": "...",
-  "citations": []
+  "content": "### Article title\n\nExtracted excerpt...",
+  "citations": ["[Article title](https://example.com/article)"]
 }
 ```
 
@@ -160,7 +166,7 @@ Combiner Micro output — refined segment ready for collection.
 
 ---
 
-## 5. Search types (planned — Phase 11)
+## 5. Search types (live — Phase 11)
 
 ### SearchResult
 
@@ -173,6 +179,14 @@ Combiner Micro output — refined segment ready for collection.
   "reader_agent": "resource_reader"
 }
 ```
+
+### Search configuration (env)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TAVILY_API_KEY` | (empty) | When set, Tavily is preferred over DuckDuckGo |
+| `SEARCH_MAX_URLS` | `3` | Max URLs per query |
+| `SEARCH_FETCH_TIMEOUT_SECONDS` | `15` | Per-page fetch timeout |
 
 ---
 

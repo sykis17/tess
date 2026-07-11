@@ -15,3 +15,4 @@ class RoutingDecision(BaseModel):
 
     active_agents: list[str] = Field(min_length=1)
     current_task: str = Field(min_length=1)
+    search_queries: list[str] = Field(default_factory=list)

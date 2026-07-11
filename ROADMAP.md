@@ -12,19 +12,13 @@
 - [x] **Phase 8:** WR routes to General Assistant specialist; per-agent config in `app/agents/`.
 - [x] **Phase 9:** Agent visibility (`agents_involved`, `agent_traces`, processing Panel); Coder + Researcher specialists; dynamic WR routing.
 - [x] **Phase 10:** Parallel topic agents — WR alarms 1–3 specialists; LangGraph `Send` fan-out/fan-in; `MayorData` in graph state; multi-agent processing Panel.
+- [x] **Phase 11:** Search layer — resource finder (DuckDuckGo / Tavily) + resource reader; `search_queries` on WR routing; grounded excerpts in `mayor_data` with citations; optional Redis search cache.
 
 ---
 
 ## Next — Full AI Chain
 
 Phases below map to the [target architecture](AI_MAP.md#target-ai-chain-full-vision). Each phase should keep backward-compatible Panels and deployable increments.
-
-### Phase 11 — Search layer
-
-- **Resource finder** — locate URLs, papers, docs from task context.
-- **Resource reader** — extract and chunk content.
-- Search results feed Combiner Mayor as mayor data.
-- Optional: cache search results per session in Redis.
 
 ### Phase 12 — Combiners + Collector
 

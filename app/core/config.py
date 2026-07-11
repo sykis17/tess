@@ -19,5 +19,10 @@ class Settings(BaseSettings):
 
     default_llm_provider: str = "gemini"
 
+    tavily_api_key: str | None = None
+    search_max_urls: int = 3
+    search_fetch_timeout_seconds: float = 15.0
+    search_cache_ttl_seconds: int = 3600
+
 
 settings = Settings()

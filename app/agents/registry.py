@@ -14,6 +14,8 @@ DEFAULT_AGENT_NAME = GENERAL_ASSISTANT_CONFIG.name
 _DISPLAY_NAME_OVERRIDES: dict[str, str] = {
     "wide_receiver": "Wide Receiver",
     "presenter": "Presenter",
+    "resource_finder": "Resource Finder",
+    "resource_reader": "Resource Reader",
 }
 
 

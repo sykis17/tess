@@ -115,7 +115,7 @@ First response may take 30–60 seconds while the model loads.
 | `git pull` says "Already up to date" but code is old | Push not done from PC | On PC: `git push origin main`, then pull again |
 | Gemini 429 error | Free quota exhausted | Use Ollama (`DEFAULT_LLM_PROVIDER=ollama`) or enable billing |
 | Deploy script fails on npm | Node not installed | Install Node.js (one-time setup above) |
-| Out of memory | CPX11 has 4 GB RAM | Try smaller model: `OLLAMA_MODEL=llama3.2:1b` in `.env.prod` |
+| Out of memory / `signal: killed` | CPX11 has 4 GB RAM; llama3.2 is too large | Use `OLLAMA_MODEL=llama3.2:1b`, add swap (see below), redeploy |
 
 ---
 
@@ -127,6 +127,21 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f worker
 ```
 
 Press `Ctrl+C` to stop following logs.
+
+---
+
+## Fix OOM: add swap (recommended on 4 GB servers)
+
+```bash
+sudo fallocate -l 4G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+free -h
+```
+
+Then switch to the smaller model and redeploy (see above).
 
 ---
 

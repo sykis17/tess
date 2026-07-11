@@ -3,6 +3,7 @@ import json
 import logging
 
 from celery import Celery
+from celery.exceptions import SoftTimeLimitExceeded
 
 from app.core.config import settings
 from app.core.conversation import append_conversation_turn, load_conversation_history
@@ -40,7 +41,7 @@ def _extract_assistant_content(result: dict) -> str:
     return collected_data[-1]
 
 
-@celery_app.task(name="process_user_input")
+@celery_app.task(name="process_user_input", soft_time_limit=120, time_limit=130)
 def process_user_input(user_input: str, session_id: str) -> None:
     """Run the LangGraph chain and stream resulting Panels via Redis Pub/Sub."""
     channel = session_channel(session_id)
@@ -60,6 +61,13 @@ def process_user_input(user_input: str, session_id: str) -> None:
         assistant_content = _extract_assistant_content(result)
         append_conversation_turn(session_id, user_input, assistant_content)
         _publish_panels(redis_client, channel, panels)
+    except SoftTimeLimitExceeded:
+        logger.error("Task timed out for session %s", session_id)
+        _publish_error(
+            redis_client,
+            channel,
+            "Request timed out. The server may be low on memory — try again in a moment.",
+        )
     except Exception as exc:
         logger.exception("Failed to process user input for session %s", session_id)
         _publish_error(redis_client, channel, str(exc))

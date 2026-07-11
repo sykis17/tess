@@ -11,6 +11,8 @@ export type ConnectionState =
 const WS_BASE_URL =
   import.meta.env.VITE_WS_BASE_URL ?? "ws://127.0.0.1:8000";
 
+const PROCESSING_TIMEOUT_MS = 180_000;
+
 export function useWebSocket(sessionId: string) {
   const [connectionState, setConnectionState] =
     useState<ConnectionState>("connecting");
@@ -76,6 +78,21 @@ export function useWebSocket(sessionId: string) {
       wsRef.current = null;
     };
   }, [sessionId]);
+
+  useEffect(() => {
+    if (!isProcessing) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setIsProcessing(false);
+      setLastError(
+        "No response received after 3 minutes. The server may be out of memory or still loading the model.",
+      );
+    }, PROCESSING_TIMEOUT_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [isProcessing]);
 
   const sendMessage = useCallback((text: string) => {
     const ws = wsRef.current;

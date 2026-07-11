@@ -28,6 +28,7 @@ class OllamaLLM(BaseLLM):
             "base_url": self._base_url,
             "model": self._model_name,
             "temperature": self._temperature,
+            "client_kwargs": {"timeout": settings.ollama_request_timeout_seconds},
         }
         if config and config.max_tokens is not None:
             model_kwargs["num_predict"] = config.max_tokens

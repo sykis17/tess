@@ -26,7 +26,14 @@ async def resource_reader_node(state: GraphState) -> dict[str, Any]:
     search_results: list[SearchResult] = state.get("search_results") or []
     if not search_results:
         logger.info("Resource Reader: no search results; skipping")
-        return {}
+        queries = state.get("search_queries") or []
+        reader_trace = AgentTrace(
+            agent_name="resource_reader",
+            inputs_seen=[f"search_query: {queries[0]}"] if queries else [],
+            task_summary=state.get("current_task") or None,
+            output_preview="No URLs to read — search returned no results.",
+        )
+        return {"agent_traces": [reader_trace]}
 
     logger.info("Resource Reader processing %d URLs", len(search_results))
 

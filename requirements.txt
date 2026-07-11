@@ -9,6 +9,6 @@ langchain-google-genai
 langchain-ollama
 pydantic-settings
 httpx
-duckduckgo-search
+ddgs
 beautifulsoup4
 tavily-python

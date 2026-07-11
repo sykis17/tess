@@ -37,8 +37,10 @@ def _publish_panels(redis_client, channel: str, panels: list[Panel]) -> None:
         redis_client.publish(channel, panel.model_dump_json())
 
 
-def _merge_node_output(merged: dict[str, Any], node_output: dict[str, Any]) -> None:
+def _merge_node_output(merged: dict[str, Any], node_output: dict[str, Any] | None) -> None:
     """Merge a node update into the running graph state."""
+    if not node_output:
+        return
     for key, value in node_output.items():
         if key in _REDUCER_KEYS:
             merged[key] = [*merged.get(key, []), *value]
@@ -73,6 +75,8 @@ async def _run_graph_with_streaming(
 
     async for update in compiled_graph.astream(initial_state, stream_mode="updates"):
         for _node_name, node_output in update.items():
+            if node_output is None:
+                continue
             _merge_node_output(merged, node_output)
 
             panels = node_output.get("panels", [])

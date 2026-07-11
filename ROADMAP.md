@@ -13,3 +13,5 @@
 - [x] **Phase 6:** Deploy the local setup to a Hetzner production server.
 
 - [x] **Phase 7:** Wire Ollama/Gemini into LangGraph wide_receiver; Redis conversation history for contextual follow-ups.
+
+- [x] **Phase 8:** Wide Receiver routing to first specialist agent (General Assistant); per-agent config in `app/agents/`; Presenter uses agent folder paths.

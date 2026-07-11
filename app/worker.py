@@ -41,7 +41,7 @@ def _extract_assistant_content(result: dict) -> str:
     return collected_data[-1]
 
 
-@celery_app.task(name="process_user_input", soft_time_limit=120, time_limit=130)
+@celery_app.task(name="process_user_input", soft_time_limit=180, time_limit=190)
 def process_user_input(user_input: str, session_id: str) -> None:
     """Run the LangGraph chain and stream resulting Panels via Redis Pub/Sub."""
     channel = session_channel(session_id)

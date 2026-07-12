@@ -7,6 +7,7 @@ import type { ContentType } from "../types/panel";
 interface PanelContentProps {
   contentType: ContentType;
   content: string;
+  contentFormat?: string | null;
 }
 
 function isMediaUrl(content: string): boolean {
@@ -21,18 +22,30 @@ function isImageSource(content: string): boolean {
   );
 }
 
-function MarkdownFallback({ content }: { content: string }) {
+function MarkdownFallback({
+  content,
+  contentFormat,
+}: {
+  content: string;
+  contentFormat?: string | null;
+}) {
+  const rankedClass =
+    contentFormat === "ranked_list" ? " panel-content--ranked-list" : "";
   return (
-    <div className="panel-content panel-content--markdown">
+    <div className={`panel-content panel-content--markdown${rankedClass}`}>
       <ReactMarkdown>{content}</ReactMarkdown>
     </div>
   );
 }
 
-export function PanelContent({ contentType, content }: PanelContentProps) {
+export function PanelContent({
+  contentType,
+  content,
+  contentFormat,
+}: PanelContentProps) {
   switch (contentType) {
     case "markdown":
-      return <MarkdownFallback content={content} />;
+      return <MarkdownFallback content={content} contentFormat={contentFormat} />;
 
     case "code":
       return (
@@ -68,7 +81,7 @@ export function PanelContent({ contentType, content }: PanelContentProps) {
           </div>
         );
       }
-      return <MarkdownFallback content={content} />;
+      return <MarkdownFallback content={content} contentFormat={contentFormat} />;
 
     case "audio":
       if (isMediaUrl(content)) {
@@ -80,7 +93,7 @@ export function PanelContent({ contentType, content }: PanelContentProps) {
           </div>
         );
       }
-      return <MarkdownFallback content={content} />;
+      return <MarkdownFallback content={content} contentFormat={contentFormat} />;
 
     default:
       return (

@@ -9,6 +9,7 @@ from app.graph.combiner_utils import (
     RESOURCE_READER_AGENT,
     build_agents_involved,
     order_mayor_data,
+    paragraph_fingerprints,
 )
 from app.graph.schemas import DefenseChecks, DefenseReview, UsableAnswer
 from app.graph.state import GraphState
@@ -47,9 +48,15 @@ def defense_pipeline_names() -> list[str]:
     ]
 
 
-def should_predict_defense(_active_agents: list[str], _search_queries: list[str]) -> bool:
+def should_predict_defense(
+    _active_agents: list[str],
+    _search_queries: list[str],
+    chain_profile: str = "L4",
+) -> bool:
     """Predict defense usage for WR processing Panel badges."""
-    return True
+    from app.graph.chain_gates import allows_defense
+
+    return allows_defense(chain_profile)
 
 
 def normalize_segments_for_review(state: GraphState) -> list[UsableAnswer]:
@@ -74,6 +81,7 @@ def normalize_segments_for_review(state: GraphState) -> list[UsableAnswer]:
                 title=format_agent_display_name(entry.source_agent),
                 content=entry.content,
                 review_status="pending",
+                source_agents=[entry.source_agent],
             )
         )
 
@@ -126,6 +134,53 @@ def segment_contains_refusal(content: str) -> bool:
     if len(normalized) > 300:
         return False
     return any(pattern.search(normalized) for pattern in _REFUSAL_PATTERNS)
+
+
+def _segment_ids_with_cross_repetition(segments: list[UsableAnswer]) -> set[str]:
+    """Return segment IDs that repeat substantive paragraphs from earlier segments."""
+    seen: dict[str, str] = {}
+    repeating: set[str] = set()
+
+    for segment in segments:
+        for fingerprint in paragraph_fingerprints(segment.content):
+            prior_segment_id = seen.get(fingerprint)
+            if prior_segment_id is not None and prior_segment_id != segment.segment_id:
+                repeating.add(segment.segment_id)
+            else:
+                seen[fingerprint] = segment.segment_id
+    return repeating
+
+
+def apply_repetition_overrides(
+    segments: list[UsableAnswer],
+    reviews: list[DefenseReview],
+) -> list[DefenseReview]:
+    """Force revise verdicts when segments repeat the same substantive paragraphs."""
+    repeating_ids = _segment_ids_with_cross_repetition(segments)
+    if not repeating_ids:
+        return reviews
+
+    updated: list[DefenseReview] = []
+    for review in reviews:
+        if review.segment_id not in repeating_ids or review.verdict != "pass":
+            updated.append(review)
+            continue
+
+        updated.append(
+            review.model_copy(
+                update={
+                    "verdict": "revise",
+                    "checks": DefenseChecks(
+                        big_picture="revise",
+                        detail="pass",
+                        implication="pass",
+                    ),
+                    "notes": review.notes.strip()
+                    or "Repeated themes or paragraphs across segments; collapse duplicates and keep 5–7 distinct themes.",
+                }
+            )
+        )
+    return updated
 
 
 def apply_refusal_overrides(
@@ -199,11 +254,11 @@ def parse_defense_reviews_json(raw: str, segments: list[UsableAnswer]) -> list[D
 
         if not reviews:
             raise ValueError("No defense reviews parsed")
-        return apply_refusal_overrides(segments, reviews)
+        return apply_repetition_overrides(segments, apply_refusal_overrides(segments, reviews))
     except (json.JSONDecodeError, ValueError) as exc:
         logger.warning("Failed to parse DefenseReview JSON; using auto-pass fallback: %s", exc)
         fallback = _fallback_auto_pass(segments)
-        return apply_refusal_overrides(segments, fallback)
+        return apply_repetition_overrides(segments, apply_refusal_overrides(segments, fallback))
 
 
 def apply_defense_verdicts(
@@ -306,6 +361,31 @@ def build_agents_involved_with_defense(
         pipeline.extend(defense_pipeline_names())
         pipeline.append(presenter_name)
     return pipeline
+
+
+def build_panel_agents_involved(
+    state: GraphState,
+    *,
+    include_combiners: bool = False,
+) -> list[str]:
+    """Build agents_involved for Panels, respecting chain_profile depth gates."""
+    from app.core.chain_profiles import ChainProfile
+    from app.graph.chain_gates import allows_defense
+
+    profile = state.get("chain_profile", ChainProfile.L4.value)
+    if profile == ChainProfile.L0.value:
+        return [
+            "Direct Responder",
+            format_agent_display_name("presenter"),
+        ]
+
+    if allows_defense(profile):
+        return build_agents_involved_with_defense(
+            state,
+            include_combiners=include_combiners,
+        )
+
+    return build_agents_involved(state, include_combiners=include_combiners)
 
 
 def resolve_retry_specialist(state: GraphState) -> str:

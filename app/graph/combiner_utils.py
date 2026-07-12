@@ -3,6 +3,7 @@ import logging
 import re
 import uuid
 from app.agents.registry import format_agent_display_name
+from app.agents.subjects.registry import collect_pov_sources
 from app.graph.schemas import MayorData, MicroData, MicroDataSegment, UsableAnswer
 from app.graph.state import GraphState
 
@@ -12,6 +13,110 @@ RESOURCE_READER_AGENT = "resource_reader"
 MAX_USABLE_ANSWERS = 5
 
 _JSON_FENCE_PATTERN = re.compile(r"```(?:json)?\s*([\s\S]*?)\s*```", re.IGNORECASE)
+_HEADING_PATTERN = re.compile(r"^#{1,4}\s+(.+)$", re.MULTILINE)
+_MIN_DEDUP_PARAGRAPH_LEN = 40
+
+
+def _normalize_paragraph_fingerprint(text: str) -> str:
+    """Normalize paragraph text for repetition detection."""
+    collapsed = re.sub(r"\s+", " ", text.strip().lower())
+    return re.sub(r"[*_`]+", "", collapsed)
+
+
+def _split_markdown_blocks(content: str) -> list[tuple[str | None, list[str]]]:
+    """Split markdown into (heading, paragraphs) blocks."""
+    blocks: list[tuple[str | None, list[str]]] = []
+    current_heading: str | None = None
+    current_paragraphs: list[str] = []
+
+    for paragraph in re.split(r"\n\n+", content.strip()):
+        paragraph = paragraph.strip()
+        if not paragraph:
+            continue
+
+        lines = paragraph.split("\n")
+        heading_match = _HEADING_PATTERN.match(lines[0].strip())
+        if heading_match:
+            if current_heading is not None or current_paragraphs:
+                blocks.append((current_heading, current_paragraphs))
+            current_heading = heading_match.group(1).strip()
+            remainder = "\n".join(lines[1:]).strip()
+            current_paragraphs = [remainder] if remainder else []
+            continue
+
+        current_paragraphs.append(paragraph)
+
+    if current_heading is not None or current_paragraphs:
+        blocks.append((current_heading, current_paragraphs))
+    return blocks
+
+
+def _merge_deduped_markdown_blocks(
+    blocks: list[tuple[str | None, list[str]]],
+) -> str:
+    """Merge markdown blocks while dropping repeated paragraphs and duplicate headings."""
+    seen_global: set[str] = set()
+    seen_by_heading: dict[str, set[str]] = {}
+    merged: list[tuple[str | None, list[str]]] = []
+    heading_index: dict[str, int] = {}
+
+    for heading, paragraphs in blocks:
+        heading_key = _normalize_paragraph_fingerprint(heading) if heading else None
+        unique_paragraphs: list[str] = []
+
+        for paragraph in paragraphs:
+            fingerprint = _normalize_paragraph_fingerprint(paragraph)
+            if len(fingerprint) >= _MIN_DEDUP_PARAGRAPH_LEN:
+                if heading_key:
+                    heading_seen = seen_by_heading.setdefault(heading_key, set())
+                    if fingerprint in heading_seen or fingerprint in seen_global:
+                        continue
+                    heading_seen.add(fingerprint)
+                elif fingerprint in seen_global:
+                    continue
+                seen_global.add(fingerprint)
+            unique_paragraphs.append(paragraph)
+
+        if not unique_paragraphs:
+            continue
+
+        if heading_key and heading_key in heading_index:
+            index = heading_index[heading_key]
+            existing_heading, existing_paragraphs = merged[index]
+            merged[index] = (existing_heading, [*existing_paragraphs, *unique_paragraphs])
+            continue
+
+        if heading_key:
+            heading_index[heading_key] = len(merged)
+        merged.append((heading, unique_paragraphs))
+
+    parts: list[str] = []
+    for heading, paragraphs in merged:
+        body = "\n\n".join(paragraph for paragraph in paragraphs if paragraph.strip())
+        if heading:
+            parts.append(f"### {heading}\n\n{body}" if body else f"### {heading}")
+        elif body:
+            parts.append(body)
+    return "\n\n".join(parts)
+
+
+def dedupe_markdown_content(content: str) -> str:
+    """Remove repeated paragraphs and merge duplicate section headings."""
+    blocks = _split_markdown_blocks(content)
+    if not blocks:
+        return content.strip()
+    return _merge_deduped_markdown_blocks(blocks)
+
+
+def paragraph_fingerprints(content: str) -> list[str]:
+    """Return normalized fingerprints for substantive paragraphs in markdown content."""
+    fingerprints: list[str] = []
+    for _, paragraphs in _split_markdown_blocks(content):
+        for paragraph in paragraphs:
+            fingerprint = _normalize_paragraph_fingerprint(paragraph)
+            if len(fingerprint) >= _MIN_DEDUP_PARAGRAPH_LEN:
+                fingerprints.append(fingerprint)
+    return fingerprints
 
 
 def _extract_json_payload(raw: str) -> str:
@@ -41,8 +146,16 @@ def should_bypass_combiners(state: GraphState) -> bool:
     return len(active_agents) <= 1
 
 
-def should_predict_combiners(active_agents: list[str], search_queries: list[str]) -> bool:
+def should_predict_combiners(
+    active_agents: list[str],
+    search_queries: list[str],
+    chain_profile: str = "L4",
+) -> bool:
     """Predict combiner usage for WR processing Panel badges."""
+    from app.graph.chain_gates import allows_combiners
+
+    if not allows_combiners(chain_profile):
+        return False
     return len(active_agents) > 1 or bool(search_queries)
 
 
@@ -227,14 +340,61 @@ def sort_usable_answers(answers: list[UsableAnswer]) -> list[UsableAnswer]:
     ]
 
 
-def format_usable_answers_markdown(answers: list[UsableAnswer]) -> str:
+def _count_specialists(active_agents: list[str]) -> int:
+    return sum(1 for name in active_agents if name != RESOURCE_READER_AGENT)
+
+
+def _is_single_lens_run(active_agents: list[str]) -> bool:
+    """True when the panel has at most one specialist and fewer than two POV lenses."""
+    return (
+        len(collect_pov_sources(active_agents)) < 2
+        and _count_specialists(active_agents) <= 1
+    )
+
+
+def _usable_answers_share_single_lens(answers: list[UsableAnswer]) -> bool:
+    """True when multiple usable answers all come from the same specialist."""
+    if len(answers) <= 1:
+        return False
+    source_sets = {tuple(sorted(answer.source_agents)) for answer in answers}
+    return len(source_sets) == 1
+
+
+def _is_agent_section_title(title: str, source_agents: list[str]) -> bool:
+    """True when a segment title is just the specialist agent name."""
+    normalized = title.strip()
+    for agent in source_agents:
+        if normalized == agent or normalized == format_agent_display_name(agent):
+            return True
+    return False
+
+
+def _flatten_single_lens_usable_answers(answers: list[UsableAnswer]) -> str:
+    """Merge single-lens combiner segments into flat prose without duplicate themes."""
+    blocks: list[tuple[str | None, list[str]]] = []
+    for answer in answers:
+        if _is_agent_section_title(answer.title, answer.source_agents):
+            content = answer.content.strip()
+        else:
+            content = f"### {answer.title}\n\n{answer.content.strip()}"
+        blocks.extend(_split_markdown_blocks(content))
+    return _merge_deduped_markdown_blocks(blocks)
+
+
+def format_usable_answers_markdown(
+    answers: list[UsableAnswer],
+    active_agents: list[str] | None = None,
+) -> str:
     """Turn usable answers into markdown content for the Panel."""
     if not answers:
         return "No response generated."
 
     ordered = sort_usable_answers(answers)
     if len(ordered) == 1:
-        return ordered[0].content
+        return dedupe_markdown_content(ordered[0].content)
+
+    if active_agents and _is_single_lens_run(active_agents) and _usable_answers_share_single_lens(ordered):
+        return _flatten_single_lens_usable_answers(ordered)
 
     sections: list[str] = []
     for answer in ordered:

@@ -7,13 +7,17 @@ from app.graph.combiner_utils import (
     order_mayor_data,
 )
 from app.graph.defense_utils import (
-    build_agents_involved_with_defense,
+    build_panel_agents_involved,
     defense_exhausted_retries,
 )
+from app.graph.follow_up_utils import generate_follow_up_options
+from app.graph.list_format_utils import apply_list_format
 from app.graph.media_utils import extract_typed_media_content, resolve_content_type
+from app.graph.pipeline_stages import PipelineStage
+from app.graph.pov_segments import build_pov_segments
 from app.graph.schemas import (
-    DEFAULT_FOLLOW_UP_OPTIONS,
     AgentTrace,
+    ContentFormat,
     ContentType,
     MayorData,
     Panel,
@@ -114,15 +118,15 @@ def _resolve_panel_output(
     if usable_answers:
         if defense_ran and not exhausted:
             approved = [answer for answer in usable_answers if answer.review_status == "approved"]
-            content = format_usable_answers_markdown(approved or usable_answers)
+            content = format_usable_answers_markdown(approved or usable_answers, active_agents)
         elif defense_ran and exhausted:
             best_effort = [
                 answer.model_copy(update={"review_status": "approved"})
                 for answer in usable_answers
             ]
-            content = format_usable_answers_markdown(best_effort)
+            content = format_usable_answers_markdown(best_effort, active_agents)
         else:
-            content = format_usable_answers_markdown(usable_answers)
+            content = format_usable_answers_markdown(usable_answers, active_agents)
         return content, content_type
 
     if mayor_data:
@@ -139,7 +143,7 @@ def _resolve_panel_output(
     return content, content_type
 
 
-def presenter_node(state: GraphState) -> dict[str, Any]:
+async def presenter_node(state: GraphState) -> dict[str, Any]:
     """Format collected or synthesized data into a strictly typed Panel for frontend streaming."""
     usable_answers = state.get("usable_answers") or []
     mayor_data = state.get("mayor_data") or []
@@ -148,6 +152,8 @@ def presenter_node(state: GraphState) -> dict[str, Any]:
     combiners_bypassed = state.get("combiners_bypassed", True)
     defense_ran = bool(state.get("defense_reviews"))
     exhausted = defense_exhausted_retries(state)
+    user_input = state["user_input"]
+    product_mode = state.get("product_mode")
 
     content, content_type = _resolve_panel_output(
         usable_answers,
@@ -158,8 +164,30 @@ def presenter_node(state: GraphState) -> dict[str, Any]:
         exhausted,
     )
 
+    content_format: ContentFormat | None = None
+    if content_type == "markdown":
+        content, list_format = apply_list_format(content, user_input)
+        if list_format == "ranked_list":
+            content_format = "ranked_list"
+
+    pov_segments = build_pov_segments(
+        usable_answers,
+        mayor_data,
+        active_agents,
+        defense_ran,
+        exhausted,
+    )
+
+    follow_up_options, follow_up_kinds = await generate_follow_up_options(
+        content,
+        pov_segments,
+        product_mode if product_mode != "auto" else None,
+        active_agents,
+        user_input,
+    )
+
     include_combiners = not combiners_bypassed and bool(usable_answers)
-    agents_involved = build_agents_involved_with_defense(
+    agents_involved = build_panel_agents_involved(
         state,
         include_combiners=include_combiners,
     )
@@ -186,12 +214,17 @@ def presenter_node(state: GraphState) -> dict[str, Any]:
         status="completed",
         content_type=content_type,
         content=content,
-        follow_up_options=list(DEFAULT_FOLLOW_UP_OPTIONS),
+        follow_up_options=follow_up_options,
+        follow_up_kinds=follow_up_kinds,
         agents_involved=agents_involved,
         agent_traces=[*state.get("agent_traces", []), presenter_trace],
         data_tier="final" if usable_answers else None,
         pov_sources=collect_pov_sources(active_agents),
-        product_mode=state.get("product_mode") if state.get("product_mode") != "auto" else None,
+        product_mode=product_mode if product_mode != "auto" else None,
+        output_level=state.get("chain_profile"),
+        pipeline_stage=PipelineStage.DONE,
+        pov_segments=pov_segments,
+        content_format=content_format,
     )
 
     return {

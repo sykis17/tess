@@ -10,6 +10,7 @@ from app.graph.combiner_utils import (
     serialize_micro_data_for_llm,
 )
 from app.graph.panel_stream import publish_panel
+from app.graph.pipeline_stages import PipelineStage
 from app.graph.prompts import build_combiner_micro_prompt
 from app.graph.schemas import AgentTrace, OUTPUT_PREVIEW_MAX_CHARS, Panel
 from app.graph.state import GraphState
@@ -60,6 +61,8 @@ async def combiner_micro_node(state: GraphState) -> dict[str, Any]:
             agent_traces=state.get("agent_traces", []),
             data_tier="usable",
             pov_sources=pov_sources,
+            output_level=state.get("chain_profile"),
+            pipeline_stage=PipelineStage.COMBINING,
         ),
         state.get("session_id", ""),
     )
@@ -115,6 +118,8 @@ async def combiner_micro_node(state: GraphState) -> dict[str, Any]:
         agent_traces=[*state.get("agent_traces", []), trace],
         data_tier="usable",
         pov_sources=pov_sources,
+        output_level=state.get("chain_profile"),
+        pipeline_stage=PipelineStage.COMBINING,
     )
 
     result: dict[str, Any] = {

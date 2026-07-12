@@ -11,39 +11,44 @@ from app.graph.routing import apply_product_mode_routing, parse_routing_decision
 
 
 def test_plain_text_payload_maps_to_auto() -> None:
-    text, mode = parse_incoming_payload("Hey, how are you?")
+    text, mode, profile = parse_incoming_payload("Hey, how are you?")
     assert text == "Hey, how are you?"
     assert mode == "auto"
+    assert profile == "L4"
 
 
 def test_valid_json_envelope_parses_text_and_mode() -> None:
     payload = json.dumps(
         {"text": "Explain photosynthesis with citations", "product_mode": "research"}
     )
-    text, mode = parse_incoming_payload(payload)
+    text, mode, profile = parse_incoming_payload(payload)
     assert text == "Explain photosynthesis with citations"
     assert mode == "research"
+    assert profile == "L3"
 
 
 def test_invalid_json_falls_back_to_plain_text() -> None:
     raw = "not json at all"
-    text, mode = parse_incoming_payload(raw)
+    text, mode, profile = parse_incoming_payload(raw)
     assert text == raw
     assert mode == "auto"
+    assert profile == "L4"
 
 
 def test_invalid_product_mode_maps_to_auto() -> None:
     payload = json.dumps({"text": "Hello", "product_mode": "invalid_mode"})
-    text, mode = parse_incoming_payload(payload)
+    text, mode, profile = parse_incoming_payload(payload)
     assert text == "Hello"
     assert mode == "auto"
+    assert profile == "L4"
 
 
 def test_json_without_text_falls_back_to_plain_text() -> None:
     payload = json.dumps({"product_mode": "research"})
-    text, mode = parse_incoming_payload(payload)
+    text, mode, profile = parse_incoming_payload(payload)
     assert text == payload
     assert mode == "auto"
+    assert profile == "L4"
 
 
 # --- Routing nudges ---

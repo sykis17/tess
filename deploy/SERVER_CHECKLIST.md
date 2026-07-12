@@ -118,7 +118,8 @@ First response may take 30–60 seconds while the model loads.
 | Gemini 429 error | Free quota exhausted | Use Ollama (`DEFAULT_LLM_PROVIDER=ollama`) or enable billing |
 | Deploy script fails on npm | Node not installed | Install Node.js (one-time setup above) |
 | Out of memory / `signal: killed` | CPX11 has 4 GB RAM; llama3.2 is too large | Use `OLLAMA_MODEL=llama3.2:1b`, add swap (see below), redeploy |
-| Multi-POV timeout after ~12 minutes | 6+ sequential LLM calls on small hardware | Use `llama3.2:1b`, simplify prompt, or wait for Phase 20 streaming |
+| Multi-POV timeout after ~12 minutes | 6+ sequential LLM calls on small hardware | Use `llama3.2:1b`, simplify prompt; L0/specialist stages now stream tokens for live feedback |
+| Steer while processing | User sends new message during pipeline | Expected — previous task revoked; wait for new Panel; combiner stages may still take minutes |
 
 ---
 

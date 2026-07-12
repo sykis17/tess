@@ -10,13 +10,19 @@ from app.graph.nodes.combiner_micro import combiner_micro_node
 from app.graph.nodes.collector import collector_node
 from app.graph.nodes.defense_delegator import defense_delegator_node
 from app.graph.nodes.defense_review import defense_review_node
+from app.graph.nodes.direct_responder import direct_responder_node
 from app.graph.nodes.fan_in_wait import fan_in_wait_node
 from app.graph.nodes.post_fan_in import post_fan_in_node
 from app.graph.nodes.presenter import presenter_node
 from app.graph.nodes.resource_finder import resource_finder_node
 from app.graph.nodes.resource_reader import resource_reader_node
 from app.graph.nodes.wide_receiver import wide_receiver_node
-from app.graph.routing import fan_out_from_wr, route_after_defense, route_after_fan_in
+from app.graph.routing import (
+    fan_out_from_wr,
+    route_after_defense,
+    route_after_fan_in,
+    route_from_start,
+)
 from app.graph.state import GraphState
 
 
@@ -38,6 +44,7 @@ def build_graph() -> CompiledStateGraph:
     builder = StateGraph(GraphState)
 
     builder.add_node("wide_receiver", wide_receiver_node)
+    builder.add_node("direct_responder", direct_responder_node)
     builder.add_node("post_fan_in", post_fan_in_node)
     builder.add_node("fan_in_wait", fan_in_wait_node)
     builder.add_node("combiner_mayor", combiner_mayor_node)
@@ -56,7 +63,8 @@ def build_graph() -> CompiledStateGraph:
     builder.add_edge("resource_finder", "resource_reader")
     builder.add_edge("resource_reader", "post_fan_in")
 
-    builder.add_edge(START, "wide_receiver")
+    builder.add_conditional_edges(START, route_from_start)
+    builder.add_edge("direct_responder", "presenter")
     builder.add_conditional_edges("wide_receiver", fan_out_from_wr)
     builder.add_conditional_edges("post_fan_in", route_after_fan_in)
     builder.add_edge("fan_in_wait", END)

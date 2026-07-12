@@ -6,12 +6,15 @@ import uuid
 from app.graph.combiner_utils import (
     _fallback_micro_data,
     _fallback_usable_answers,
+    dedupe_markdown_content,
+    format_usable_answers_markdown,
     normalize_micro_data,
     parse_micro_data_json,
     parse_usable_answers_json,
     serialize_micro_data_for_llm,
 )
-from app.graph.schemas import MayorData, MicroData, MicroDataSegment
+from app.graph.defense_utils import apply_repetition_overrides
+from app.graph.schemas import DefenseChecks, DefenseReview, MayorData, MicroData, MicroDataSegment, UsableAnswer
 
 
 def test_micro_data_segment_accepts_overlap_notes() -> None:
@@ -139,3 +142,130 @@ def test_parse_usable_answers_json_carries_source_agents() -> None:
     micro = MicroData(segments=[], source_agents=["art", "ui_design"])
     answers = parse_usable_answers_json(payload, micro)
     assert answers[0].source_agents == ["art", "ui_design"]
+
+
+def test_format_usable_answers_flattens_single_lens_researcher() -> None:
+    """Multiple researcher segments must not repeat ## Researcher headers."""
+    answers = [
+        UsableAnswer(
+            segment_id="a1",
+            order_hint=1,
+            title="Researcher",
+            content="### Emerging Trends\n\nElectric propulsion overview.",
+            source_agents=["researcher"],
+        ),
+        UsableAnswer(
+            segment_id="a2",
+            order_hint=2,
+            title="Researcher",
+            content="### Autonomous Systems\n\nVTOL aircraft details.",
+            source_agents=["researcher"],
+        ),
+    ]
+    content = format_usable_answers_markdown(answers, ["researcher"])
+    assert "## Researcher" not in content
+    assert "### Emerging Trends" in content
+    assert "### Autonomous Systems" in content
+
+
+def test_format_usable_answers_dedupes_repeated_paragraphs_single_lens() -> None:
+    """Repeated overview paragraphs across researcher segments should appear once."""
+    repeated = (
+        "Electric aviation is transforming regional travel with quieter, lower-emission aircraft "
+        "entering commercial service across multiple continents."
+    )
+    answers = [
+        UsableAnswer(
+            segment_id="a1",
+            order_hint=1,
+            title="Researcher",
+            content=f"### Emerging Trends\n\n{repeated}\n\nNew battery densities enable longer routes.",
+            source_agents=["researcher"],
+        ),
+        UsableAnswer(
+            segment_id="a2",
+            order_hint=2,
+            title="Researcher",
+            content=f"### Autonomous Systems\n\n{repeated}\n\nVTOL autonomy trials are expanding.",
+            source_agents=["researcher"],
+        ),
+    ]
+    content = format_usable_answers_markdown(answers, ["researcher"])
+    assert content.count("Electric aviation is transforming") == 1
+    assert "### Emerging Trends" in content
+    assert "### Autonomous Systems" in content
+    assert "VTOL autonomy trials" in content
+
+
+def test_format_usable_answers_merges_duplicate_section_headings() -> None:
+    """Duplicate ### headings from combiner_micro should merge into one section."""
+    answers = [
+        UsableAnswer(
+            segment_id="a1",
+            order_hint=1,
+            title="Researcher",
+            content="### Electric Aviation\n\nBattery improvements are accelerating.",
+            source_agents=["researcher"],
+        ),
+        UsableAnswer(
+            segment_id="a2",
+            order_hint=2,
+            title="Researcher",
+            content="### Electric Aviation\n\nHybrid-electric regional jets are in certification.",
+            source_agents=["researcher"],
+        ),
+    ]
+    content = format_usable_answers_markdown(answers, ["researcher"])
+    assert content.count("### Electric Aviation") == 1
+    assert "Battery improvements" in content
+    assert "Hybrid-electric regional jets" in content
+
+
+def test_apply_repetition_overrides_flags_cross_segment_duplicates() -> None:
+    repeated = (
+        "Electric aviation is transforming regional travel with quieter, lower-emission aircraft "
+        "entering commercial service across multiple continents."
+    )
+    segments = [
+        UsableAnswer(
+            segment_id="s1",
+            order_hint=1,
+            title="Overview",
+            content=repeated,
+            source_agents=["researcher"],
+        ),
+        UsableAnswer(
+            segment_id="s2",
+            order_hint=2,
+            title="Trends",
+            content=repeated,
+            source_agents=["researcher"],
+        ),
+    ]
+    reviews = [
+        DefenseReview(
+            segment_id="s1",
+            checks=DefenseChecks(big_picture="pass", detail="pass", implication="pass"),
+            notes="",
+            verdict="pass",
+        ),
+        DefenseReview(
+            segment_id="s2",
+            checks=DefenseChecks(big_picture="pass", detail="pass", implication="pass"),
+            notes="",
+            verdict="pass",
+        ),
+    ]
+    updated = apply_repetition_overrides(segments, reviews)
+    assert updated[0].verdict == "pass"
+    assert updated[1].verdict == "revise"
+    assert "Repeated themes" in updated[1].notes
+
+
+def test_dedupe_markdown_content_removes_duplicate_paragraphs() -> None:
+    repeated = (
+        "Electric aviation is transforming regional travel with quieter, lower-emission aircraft "
+        "entering commercial service across multiple continents."
+    )
+    content = dedupe_markdown_content(f"{repeated}\n\n{repeated}")
+    assert content.count("Electric aviation is transforming") == 1

@@ -33,6 +33,9 @@ Rules:
 - Do NOT route depth variants — each POV is one disciplinary lens, not deep vs brief.
 - Summarize the user's intent in current_task so specialists can act on it.
 - Use conversation history to interpret follow-ups such as "continue with this" or "tell me more about [topic from prior answer]".
+- When the user drills down ("tell me more about X"), route to the agent(s) best suited to expand that topic; keep current_task focused on the referenced segment or heading.
+- When the user asks for a ranked or enumerated list (e.g. "top 10", "best beaches", "list of careers"), reflect list intent in current_task
+  (e.g. "List top 5 careers in cybersecurity as a ranked list").
 - If unsure between specialists, prefer the most specific agent over general_assistant.
 - search_queries: include 0 or 1 web search query when the user needs grounded sources.
   Set a search query when the user asks for citations, sources, references, "cite", "with sources",
@@ -57,7 +60,9 @@ Examples:
 - "Draw a diagram plan for photosynthesis" → {{"active_agents": ["photo"], "current_task": "Draw a diagram plan for photosynthesis", "search_queries": []}}
 - "Write a 30-second video script about async Python" → {{"active_agents": ["video"], "current_task": "Write a 30-second video script about async Python", "search_queries": []}}
 - "Outline a podcast intro about cybersecurity" → {{"active_agents": ["audio"], "current_task": "Outline a podcast intro about cybersecurity", "search_queries": []}}
-- "Explain REST APIs and create a diagram plan" → {{"active_agents": ["researcher", "photo"], "current_task": "Explain REST APIs and create a diagram plan", "search_queries": []}}"""
+- "Explain REST APIs and create a diagram plan" → {{"active_agents": ["researcher", "photo"], "current_task": "Explain REST APIs and create a diagram plan", "search_queries": []}}
+- "What are the top 5 careers in cybersecurity?" → {{"active_agents": ["researcher"], "current_task": "List top 5 careers in cybersecurity as a ranked list", "search_queries": []}}
+- "Tell me more about Usability patterns" → {{"active_agents": ["ui_design"], "current_task": "Expand on usability patterns from the prior answer", "search_queries": []}}"""
 
 
 def build_wr_system_prompt(product_mode: str = "auto") -> str:
@@ -84,6 +89,27 @@ def build_combiner_micro_prompt(product_mode: str = "auto") -> str:
 def build_defense_prompt(product_mode: str = "auto") -> str:
     """Build Defense Review prompt with optional mode hint."""
     return _append_hint(DEFENSE_REVIEW_SYSTEM_PROMPT, get_defense_hint(product_mode))
+
+
+FOLLOW_UP_SYSTEM_PROMPT = """You are the Follow-Up Suggestion generator in the TESS Engine.
+
+Given a completed answer, generate exactly 4 short follow-up chip suggestions the user can click to continue learning.
+You do NOT answer the user. You only output JSON.
+
+Respond with JSON only, using this exact shape:
+{"suggestions": [{"label": "<short chip text, max 40 chars>", "kind": "related|deviating|choice|drill_down", "prompt": "<optional full message or null>"}]}
+
+Rules:
+- Return exactly 4 suggestions with this mix:
+  1. Two context-related (kind "related") — clarify scope, audience, accuracy, or deepen the current topic.
+  2. One adjacent-topic suggestion (kind "deviating") — broaden exploration without leaving the session theme.
+  3. One choice-theme cluster (kind "choice") covering four steer intents across the set when possible:
+     go deeper (detail), change angle (POV/subtopic), change format (list/plan/comparison), practical next step (build/implement/summarize).
+- Labels must be actionable as standalone user messages (≤ 40 characters).
+- Use POV segment titles and answer content — reference specific topics, not generic placeholders.
+- prompt may be null; when null the label is sent as the user message.
+- Do not include markdown fences, explanations, or any text outside the JSON object."""
+
 COMBINER_MAYOR_SYSTEM_PROMPT = """You are the Combiner Mayor in the TESS Engine.
 
 Your job is to CURATE and SORT raw specialist output — not write the final user answer.
@@ -127,6 +153,9 @@ Respond with JSON only, using this exact shape:
 
 Rules:
 - Produce 2 to 4 usable answer segments when enough material exists; fewer if content is thin.
+- When all material comes from ONE specialist (e.g. researcher only), prefer ONE segment with
+  5–7 top themes as bullets — do NOT split the same themes across multiple segments.
+- For broad factual asks, keep content concise: top themes, bullets, no repeated overview paragraphs.
 - COLLAPSE duplicate themes from multiple POVs into ONE segment when they agree.
   Use phrases like "Multiple sources confirm…" or "Both Art and UI Design recommend…"
   when overlap_notes or content show agreement.
@@ -167,6 +196,8 @@ Rules:
 - Flag hallucinated or unsupported citations when the user asked for sources but content lacks grounding.
 - Assume the user wants to keep learning but not be overwhelmed — flag "revise" when total content
   length or density would overwhelm a learner; suggest trimming or splitting.
+- Flag "revise" when the same facts, themes, or paragraphs repeat across segments or within a
+  wall-of-text answer; ask combiner_micro to collapse duplicates and keep 5–7 distinct themes.
 - Keep output safe and aligned with the user's project context.
 - For casual greetings or simple chat, pass quickly unless the response is clearly off-topic.
 - Return one defense_reviews entry per input segment, matching segment_id exactly.

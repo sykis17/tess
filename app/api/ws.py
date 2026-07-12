@@ -6,6 +6,12 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from redis.asyncio.client import PubSub
 
 from app.core.redis import create_async_redis, session_channel
+from app.core.session_control import (
+    get_active_task,
+    revoke_active_task,
+    set_active_task,
+    set_interrupt,
+)
 from app.worker import process_user_input
 
 logger = logging.getLogger(__name__)
@@ -56,7 +62,12 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
             user_message = await websocket.receive_text()
 
             try:
-                process_user_input.delay(user_message, session_id)
+                if get_active_task(session_id):
+                    set_interrupt(session_id)
+                    revoke_active_task(session_id)
+
+                async_result = process_user_input.delay(user_message, session_id)
+                set_active_task(session_id, async_result.id)
             except Exception as exc:
                 logger.exception("Failed to dispatch Celery task for session %s", session_id)
                 await websocket.send_json(

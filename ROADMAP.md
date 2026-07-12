@@ -21,40 +21,16 @@
 - [x] **Phase 15B:** POV agent matrix — five disciplinary lenses (`chemistry`, `biology`, `economics`, `art`, `ui_design`); `MayorData.pov`; WR routes perspectives not depth; POV keyword override fixes wrong-discipline misroutes; cross-POV combiner prompts; defense length guidance; `pov_sources` on Panels; frontend POV badges.
 - [x] **Phase 15C:** Combiner role split — Mayor curates/sorts inventory with `overlap_notes` and per-segment `source_agents`; Micro deduplicates into consensus-style `usable_answers`.
 - [x] **Phase 16:** Product modes — mode selector in frontend; `product_mode` in GraphState and Panels; JSON WebSocket envelope with plain-text fallback; WR mode rules and routing nudges; combiner/defense mode hints.
+- [x] **Phase 17:** Chain profiles — L0–L4 depth gates on single graph; `chain_profile` on request/state; `output_level` on Panels; L0 `direct_responder` path; frontend chain selector + compare UI; `tests/test_chain_profiles.py`.
+- [x] **Phase 18:** Pipeline status wall & results wall — `pipeline_stage` on streamed Panels; sticky status bar; virtual folder tree from agent `folder_path`; results wall filter; structured `pov_segments` on completed Panels; `tests/test_pipeline_stages.py`, `tests/test_pov_segments.py`.
+- [x] **Phase 19:** Interactive learning UX — clickable POV segment drill-down; LLM-generated `follow_up_options` with `follow_up_kinds`; structured `ranked_list` content format; WR list-intent and drill-down routing hints; `tests/test_follow_up_options.py`, `tests/test_list_format.py`.
+- [x] **Phase 20:** Streaming & polish — token streaming for L0 direct responder and POV specialists (`is_streaming` Panel deltas); mid-chain steer via send-while-processing (`session_control` + Celery revoke); CPX11 stream throttle; `tests/test_stream_utils.py`, `tests/test_session_control.py`, `tests/test_interruption.py`.
 
 ---
 
 ## Next — Full AI Chain
 
 Phases below map to the [target architecture](AI_MAP.md#target-ai-chain-full-vision). Each phase should keep backward-compatible Panels and deployable increments.
-
-### Phase 17 — Output levels (research feature)
-
-- User-selectable **chain profile** (L0–L4): direct LLM → full chain.
-- Same question, compare Panels side-by-side with `output_level` metadata.
-- L0 bypass graph for baseline benchmarking.
-- Research UI: diff view using `agent_traces` across levels.
-
-### Phase 18 — Pipeline status wall & results wall
-
-- **Status wall / info bar** — persistent UI from WR through Presenter showing what will happen and what is happening (agent badges, stage, ETA hints).
-- **Results wall** — folder-tree navigation opens a wall of Panels/results per virtual folder (e.g. `Science/Chemistry`, `Design/UI`).
-- POV segments visible in completed Panels (which lens contributed what).
-
-### Phase 19 — Interactive learning UX
-
-- **Click title → drill down** — clicking a segment title auto-sends "tell me more about this" in context.
-- **Context-related questions** — WR or post-presenter suggestions to clarify user needs and improve accuracy.
-- **Context-deviating questions** — adjacent-topic suggestions to broaden exploration.
-- **Structured list formats** — "10 best beaches", "top careers", ranked/itemized output templates.
-- **Choice themes** — present 4 options/themes for user to steer next step.
-- LLM-generated `follow_up_options` replace static mock buttons where possible.
-
-### Phase 20 — Streaming & polish
-
-- Token streaming to frontend (partial Panel content).
-- Interrupt / steer mid-chain via `interruption_flag`.
-- Performance tuning for CPX11 (4 GB RAM) production constraints.
 
 ### Future (post–Phase 20)
 

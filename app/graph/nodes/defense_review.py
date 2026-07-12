@@ -12,6 +12,7 @@ from app.graph.defense_utils import (
     parse_defense_reviews_json,
     serialize_segments_for_llm,
 )
+from app.graph.pipeline_stages import PipelineStage
 from app.graph.prompts import build_defense_prompt
 from app.graph.schemas import AgentTrace, Panel
 from app.graph.state import GraphState
@@ -97,6 +98,8 @@ async def defense_review_node(state: GraphState) -> dict[str, Any]:
         agent_traces=[*state.get("agent_traces", []), trace],
         data_tier="usable",
         pov_sources=collect_pov_sources(state.get("active_agents") or []),
+        output_level=state.get("chain_profile"),
+        pipeline_stage=PipelineStage.DEFENSE,
     )
 
     return {

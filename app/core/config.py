@@ -24,5 +24,7 @@ class Settings(BaseSettings):
     search_fetch_timeout_seconds: float = 15.0
     search_cache_ttl_seconds: int = 3600
 
+    stream_throttle_ms: int = 75
+
 
 settings = Settings()

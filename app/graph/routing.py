@@ -8,6 +8,12 @@ from app.agents.registry import AGENT_REGISTRY, DEFAULT_AGENT_NAME
 from app.agents.schemas import RoutingDecision
 from app.agents.subjects.registry import infer_pov_agents_from_keywords, is_pov_agent
 from app.core.product_modes import ProductMode
+from app.graph.chain_gates import (
+    allows_search,
+    max_defense_retries,
+    max_routed_agents,
+    route_after_fan_in_target,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -115,11 +121,14 @@ def _infer_agents_from_keywords(user_input: str) -> list[str]:
     research_signals = (
         "explain ",
         "what is ",
+        "what are ",
         "how does ",
         "tell me about",
         "summarize ",
         "compare ",
         "research ",
+        "happening in",
+        "right now",
     )
 
     if any(signal in text for signal in photo_signals):
@@ -224,6 +233,78 @@ def _apply_keyword_pov_override(
     return merged
 
 
+_CASUAL_GREETING_SIGNALS = (
+    "how are you",
+    "hello",
+    "hi there",
+    "hey there",
+    "good morning",
+    "good evening",
+    "hey,",
+)
+
+
+def _looks_like_casual_greeting(user_input: str) -> bool:
+    text = user_input.lower().strip()
+    return any(signal in text for signal in _CASUAL_GREETING_SIGNALS) and len(text) < 60
+
+
+def _apply_keyword_researcher_override(
+    user_input: str,
+    active_agents: list[str],
+) -> list[str]:
+    """Route broad factual questions away from general_assistant to researcher."""
+    if len(active_agents) != 1 or active_agents[0] not in FALLBACK_AGENTS:
+        return active_agents
+    if active_agents[0] == "researcher":
+        return active_agents
+    if _looks_like_casual_greeting(user_input):
+        return active_agents
+    if _looks_like_broad_research_topic(user_input):
+        logger.info(
+            "Keyword override: replacing %s with researcher for broad research topic",
+            active_agents,
+        )
+        return ["researcher"]
+    return active_agents
+
+
+def apply_auto_routing_nudges(
+    decision: RoutingDecision,
+    user_input: str,
+    chain_profile: str,
+) -> RoutingDecision:
+    """Apply auto-mode routing corrections and optional search for temporal factual asks."""
+    active_agents = _apply_keyword_researcher_override(user_input, list(decision.active_agents))
+    search_queries = list(decision.search_queries)
+    current_task = decision.current_task
+
+    if active_agents != decision.active_agents and active_agents == ["researcher"]:
+        if not current_task or current_task.strip() == user_input.strip():
+            current_task = user_input
+
+    temporal_signals = ("right now", "currently", "happening", "latest", "recent", "2024", "2025", "2026")
+    text = user_input.lower()
+    if (
+        allows_search(chain_profile)
+        and not search_queries
+        and "researcher" in active_agents
+        and (
+            any(signal in text for signal in temporal_signals)
+            or _needs_research_search(user_input)
+            or _looks_like_broad_research_topic(user_input)
+        )
+    ):
+        search_queries = [_infer_search_query_from_input(user_input)]
+        logger.info("Auto routing: inferred search query for researcher factual ask")
+
+    return RoutingDecision(
+        active_agents=active_agents,
+        current_task=current_task,
+        search_queries=_normalize_search_queries(search_queries),
+    )
+
+
 def _dedupe_known_agents(agents: list[str]) -> list[str]:
     """Filter to registered agents, dedupe, and cap at MAX_PARALLEL_AGENTS."""
     seen: set[str] = set()
@@ -316,11 +397,16 @@ _BROAD_RESEARCH_SIGNALS = (
     "aerospace",
     "explain ",
     "what is ",
+    "what are ",
     "how does ",
     "tell me about",
     "summarize ",
     "compare ",
     "research ",
+    "happening in",
+    "right now",
+    "currently",
+    "latest",
 )
 
 
@@ -441,10 +527,57 @@ def apply_product_mode_routing(
     )
 
 
+def _apply_chain_profile_to_decision(
+    decision: RoutingDecision,
+    chain_profile: str,
+) -> RoutingDecision:
+    """Trim agents and suppress search per chain profile depth gates."""
+    agents = list(decision.active_agents)
+    cap = max_routed_agents(chain_profile)
+    if len(agents) > cap:
+        logger.info(
+            "Chain profile %s: trimming active_agents from %s to %s",
+            chain_profile,
+            agents,
+            agents[:cap],
+        )
+        agents = agents[:cap]
+
+    search_queries = list(decision.search_queries)
+    if search_queries and not allows_search(chain_profile):
+        logger.info(
+            "Chain profile %s: clearing search_queries %s",
+            chain_profile,
+            search_queries,
+        )
+        search_queries = []
+
+    return RoutingDecision(
+        active_agents=agents,
+        current_task=decision.current_task,
+        search_queries=search_queries,
+    )
+
+
+def _finalize_routing_decision(
+    decision: RoutingDecision,
+    fallback_task: str,
+    product_mode: str,
+    chain_profile: str,
+) -> RoutingDecision:
+    """Apply auto nudges, product-mode rules, and chain-profile gates."""
+    nudged = apply_auto_routing_nudges(decision, fallback_task, chain_profile)
+    return _apply_chain_profile_to_decision(
+        apply_product_mode_routing(product_mode, nudged, fallback_task),
+        chain_profile,
+    )
+
+
 def parse_routing_decision(
     raw: str,
     fallback_task: str,
     product_mode: str = "auto",
+    chain_profile: str = "L4",
 ) -> RoutingDecision:
     """Parse the Wide Receiver routing JSON with a safe fallback."""
     payload = _extract_json_payload(raw)
@@ -458,7 +591,7 @@ def parse_routing_decision(
             active_agents=_infer_agents_from_keywords(fallback_task),
             current_task=fallback_task,
         )
-        return apply_product_mode_routing(product_mode, fallback, fallback_task)
+        return _finalize_routing_decision(fallback, fallback_task, product_mode, chain_profile)
 
     known_agents = _dedupe_known_agents(decision.active_agents)
     if not known_agents:
@@ -468,7 +601,7 @@ def parse_routing_decision(
             current_task=decision.current_task or fallback_task,
             search_queries=_normalize_search_queries(decision.search_queries),
         )
-        return apply_product_mode_routing(product_mode, fallback, fallback_task)
+        return _finalize_routing_decision(fallback, fallback_task, product_mode, chain_profile)
 
     corrected_agents = _apply_keyword_media_override(fallback_task, known_agents)
     corrected_agents = _apply_keyword_pov_override(fallback_task, corrected_agents)
@@ -478,7 +611,17 @@ def parse_routing_decision(
         current_task=decision.current_task or fallback_task,
         search_queries=_normalize_search_queries(decision.search_queries),
     )
-    return apply_product_mode_routing(product_mode, routed, fallback_task)
+    return _finalize_routing_decision(routed, fallback_task, product_mode, chain_profile)
+
+
+def route_from_start(state: dict) -> str:
+    """Route L0 to direct responder; L1–L4 to Wide Receiver."""
+    from app.graph.chain_gates import allows_wide_receiver
+
+    profile = state.get("chain_profile", "L4")
+    if not allows_wide_receiver(profile):
+        return "direct_responder"
+    return "wide_receiver"
 
 
 def fan_out_from_wr(state: dict) -> list[Send]:
@@ -487,7 +630,8 @@ def fan_out_from_wr(state: dict) -> list[Send]:
     sends = [Send(agent, state) for agent in agents if agent in AGENT_REGISTRY]
 
     search_queries = state.get("search_queries") or []
-    if search_queries:
+    chain_profile = state.get("chain_profile", "L4")
+    if search_queries and allows_search(chain_profile):
         sends.append(Send("resource_finder", state))
 
     return sends
@@ -499,11 +643,18 @@ def fan_out_to_specialists(state: dict) -> list[Send]:
 
 
 def route_after_fan_in(state: dict) -> str:
-    """Route to combiners or defense after all parallel branches complete."""
+    """Route to combiners, defense, or presenter after parallel branches complete."""
     from app.graph.fan_in_utils import all_fan_in_branches_complete
 
     if not all_fan_in_branches_complete(state):
         return "fan_in_wait"
+
+    chain_profile = state.get("chain_profile", "L4")
+    target = route_after_fan_in_target(chain_profile)
+    if target == "presenter":
+        return "presenter"
+    if target == "defense_delegator":
+        return "defense_delegator"
 
     if state.get("combiners_bypassed"):
         return "defense_delegator"
@@ -514,7 +665,6 @@ def route_after_defense(state: dict) -> str:
     """Route to presenter or retry target after defense review."""
     from app.agents.registry import AGENT_REGISTRY, DEFAULT_AGENT_NAME
     from app.graph.defense_utils import (
-        MAX_DEFENSE_RETRIES,
         all_segments_approved,
         resolve_retry_specialist,
     )
@@ -522,11 +672,13 @@ def route_after_defense(state: dict) -> str:
     reviews = state.get("defense_reviews") or []
     retry_count = state.get("defense_retry_count") or 0
     usable_answers = state.get("usable_answers") or []
+    chain_profile = state.get("chain_profile", "L4")
+    retry_limit = max_defense_retries(chain_profile)
 
     if not reviews and not usable_answers:
         return "presenter"
 
-    if all_segments_approved(reviews) or retry_count >= MAX_DEFENSE_RETRIES:
+    if all_segments_approved(reviews) or retry_count >= retry_limit:
         return "presenter"
 
     if state.get("combiners_bypassed"):

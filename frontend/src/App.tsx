@@ -1,12 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 
+import {
+  ChainProfileSelector,
+  type ChainProfile,
+  type ChainProfileSelection,
+} from "./components/ChainProfileSelector";
+import { CompareLevelsToggle } from "./components/CompareLevelsToggle";
 import { ConnectionStatus } from "./components/ConnectionStatus";
 import { ErrorBanner } from "./components/ErrorBanner";
+import { FolderTree } from "./components/FolderTree";
 import { MessageInput } from "./components/MessageInput";
 import { ModeSelector, type ProductMode } from "./components/ModeSelector";
-import { PanelCard } from "./components/PanelCard";
+import { ResultsWall } from "./components/ResultsWall";
+import { StatusWall } from "./components/StatusWall";
+import { usePipelineStatus } from "./hooks/usePipelineStatus";
 import { useSessionId } from "./hooks/useSessionId";
 import { useWebSocket } from "./hooks/useWebSocket";
+import { buildDrillDownMessage } from "./utils/drillDown";
 import "./App.css";
 
 function truncateSessionId(sessionId: string): string {
@@ -16,25 +26,56 @@ function truncateSessionId(sessionId: string): string {
 function App() {
   const sessionId = useSessionId();
   const [selectedMode, setSelectedMode] = useState<ProductMode>("auto");
+  const [selectedChainProfile, setSelectedChainProfile] =
+    useState<ChainProfileSelection>("default");
+  const [compareEnabled, setCompareEnabled] = useState(false);
+  const [compareLevels, setCompareLevels] = useState<ChainProfile[]>([
+    "L0",
+    "L4",
+  ]);
+  const [activeCompareLevels, setActiveCompareLevels] = useState<
+    ChainProfile[]
+  >([]);
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const {
     connectionState,
     panels,
     lastError,
+    cancelNotice,
     isProcessing,
     sendMessage,
     clearError,
+    clearCancelNotice,
   } = useWebSocket(sessionId);
+  const pipelineStatus = usePipelineStatus(panels, isProcessing);
   const panelsEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     panelsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [panels]);
+  }, [panels, selectedFolder]);
 
   const isConnected = connectionState === "connected";
 
   const handleSend = (text: string) => {
-    sendMessage(text, selectedMode);
+    if (compareEnabled && compareLevels.length >= 2) {
+      setActiveCompareLevels([...compareLevels]);
+      for (const level of compareLevels) {
+        sendMessage(text, selectedMode, level);
+      }
+      return;
+    }
+
+    const profile =
+      selectedChainProfile === "default" ? undefined : selectedChainProfile;
+    setActiveCompareLevels([]);
+    sendMessage(text, selectedMode, profile);
   };
+
+  const handleSegmentClick = (title: string) => {
+    handleSend(buildDrillDownMessage(title));
+  };
+
+  const compareLevelSet = new Set(activeCompareLevels);
 
   return (
     <div className="app">
@@ -47,50 +88,64 @@ function App() {
         </div>
         <div className="app-header__controls">
           <ModeSelector value={selectedMode} onChange={setSelectedMode} />
+          <ChainProfileSelector
+            value={selectedChainProfile}
+            onChange={setSelectedChainProfile}
+          />
           <ConnectionStatus state={connectionState} />
         </div>
       </header>
 
-      <main className="app-main">
-        {isProcessing && (
-          <p className="app-main__processing">
-            TESS is thinking… (first Ollama response can take up to a minute)
-          </p>
-        )}
-        {panels.length === 0 && !isProcessing ? (
-          <p className="app-main__empty">
-            No panels yet. Send a message to start processing.
-          </p>
-        ) : (
-          <div className="panel-list">
-            {panels.map((panel) => (
-              <PanelCard
-                key={panel.panel_id}
-                folderPath={panel.folder_path}
-                status={panel.status}
-                contentType={panel.content_type}
-                content={panel.content}
-                followUpOptions={panel.follow_up_options}
-                agentsInvolved={panel.agents_involved}
-                agentTraces={panel.agent_traces}
-                povSources={panel.pov_sources}
-                productMode={panel.product_mode}
-                onFollowUp={handleSend}
-              />
-            ))}
-            <div ref={panelsEndRef} />
-          </div>
-        )}
-      </main>
+      <div className="app-header__compare">
+        <CompareLevelsToggle
+          enabled={compareEnabled}
+          selectedLevels={compareLevels}
+          onEnabledChange={setCompareEnabled}
+          onLevelsChange={setCompareLevels}
+        />
+      </div>
+
+      <StatusWall status={pipelineStatus} />
+
+      <div className="app-body">
+        <aside className="app-sidebar">
+          <FolderTree
+            panels={panels}
+            selectedFolder={selectedFolder}
+            onSelectFolder={setSelectedFolder}
+          />
+        </aside>
+
+        <main className="app-main">
+          <ResultsWall
+            panels={panels}
+            selectedFolder={selectedFolder}
+            activeCompareLevels={activeCompareLevels}
+            compareLevelSet={compareLevelSet}
+            isProcessing={isProcessing}
+            onFollowUp={handleSend}
+            onSegmentClick={handleSegmentClick}
+            panelsEndRef={panelsEndRef}
+          />
+        </main>
+      </div>
 
       <footer className="app-footer">
         {lastError && (
           <ErrorBanner message={lastError} onDismiss={clearError} />
         )}
-        <MessageInput
-          disabled={!isConnected || isProcessing}
-          onSend={handleSend}
-        />
+        {cancelNotice && (
+          <div className="cancel-notice" role="status">
+            <span>{cancelNotice}</span>
+            <button type="button" onClick={clearCancelNotice}>
+              Dismiss
+            </button>
+          </div>
+        )}
+        <p className="app-footer__hint">
+          Sending a new message while processing will cancel the current run.
+        </p>
+        <MessageInput disabled={!isConnected} onSend={handleSend} />
       </footer>
     </div>
   );

@@ -118,9 +118,31 @@ Each mode influences WR routing (which topic/specialist agents to alarm) and whi
 
 ---
 
-## Current Implementation (Phase 16 — live)
+## Current Implementation (Phase 19 — live)
 
-The deployed graph uses **POV agents** — one disciplinary lens per agent (chemistry, art, ui_design, …). WR routes 1–3 relevant perspectives; combiners weave cross-POV answers; defense reviews before presentation.
+The deployed graph uses **POV agents** — one disciplinary lens per agent (chemistry, art, ui_design, …). WR routes 1–3 relevant perspectives; combiners weave cross-POV answers; defense reviews before presentation. Completed Panels now offer **interactive follow-ups** and **clickable POV segment drill-down**.
+
+### Frontend layout (Phase 18–19)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Header: Mode + Depth + Connection                           │
+│ Compare toggle (optional)                                   │
+├─────────────────────────────────────────────────────────────┤
+│ StatusWall: routing → Agents → Combine → Defense → Done     │
+├──────────────┬──────────────────────────────────────────────┤
+│ FolderTree   │ ResultsWall (PanelCards + pov_segments)      │
+│              │  clickable segment titles + follow-up chips │
+├──────────────┴──────────────────────────────────────────────┤
+│ MessageInput                                                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+- **Status wall** — reads `pipeline_stage` from in-flight Panels; predicted steps from `agents_involved` (gate-aware by `output_level`).
+- **Folder tree** — virtual navigation from agent `folder_path` registry (`app/core/folder_tree.py`); session-scoped filter only.
+- **POV segments** — `pov_segments` on completed Panels; frontend renders titled blocks with POV badges. Segment titles are **clickable** — auto-send "Tell me more about {title}" via the same WebSocket path as follow-up chips. Builder ([`pov_segments.py`](app/graph/pov_segments.py)) uses `mayor_data` fallback when combiner thematic segments don't cover multiple routed POVs; single-lens runs (including `researcher` + search) omit segments and use flat `content`.
+- **Interactive follow-ups (Phase 19)** — Presenter calls [`follow_up_utils.py`](app/graph/follow_up_utils.py) to generate 4 contextual chip labels (context-related, adjacent, choice themes) with `follow_up_kinds` for styling; falls back to `DEFAULT_FOLLOW_UP_OPTIONS` on LLM error.
+- **Structured list format (Phase 19)** — [`list_format_utils.py`](app/graph/list_format_utils.py) detects top-N / ranked list intent and reformats bullet content as numbered lists; optional `content_format: ranked_list` on Panels.
 
 ```
 START → wide_receiver → [parallel: POV agents | coder | researcher | general_assistant | photo | video | audio] + [optional: resource_finder → resource_reader]
@@ -150,7 +172,7 @@ defense_delegator → defense_review → [pass → presenter | revise → combin
 | Collector | ✅ Live | Deterministic sort by `order_hint` |
 | Defense Delegator | ✅ Live | Normalizes segments for review (wraps bypass `mayor_data` when needed) |
 | Defense Review | ✅ Live | Single LLM call returns all three checks per segment; length cap guidance; emits `review_passed` Panel |
-| Presenter | ✅ Live | Reads approved `usable_answers`; emits `completed` Panel with `pov_sources` |
+| Presenter | ✅ Live | Reads approved `usable_answers`; async LLM follow-up generation; list format post-processing; emits `completed` Panel with `pov_sources`, `pov_segments`, `follow_up_options`, `follow_up_kinds`, `pipeline_stage=done` |
 
 **Bypass rule:** Skip combiners when `len(active_agents) <= 1` and no `resource_reader` entry — single-agent prompts stay fast. Defense always runs (lightweight single-check review on all paths).
 
@@ -189,39 +211,34 @@ Config pattern: `app/agents/<name>/config.py` + `prompt.py`, registered in `app/
 - **`pov_sources`** — disciplinary lenses on WR, combiner, defense, and completed Panels (Phase 15B)
 - **`product_mode`** — intent profile echoed on processing and completed Panels when not `auto` (Phase 16)
 - **`MicroData`** / **`UsableAnswer`** — combiner pipeline types; Presenter reads ordered `usable_answers` on synthesis path
-- **Processing Panel** — WR streams `status: processing` immediately with all alarmed agent badges (including combiners when predicted); combiner nodes publish pre-LLM progress panels and emit intermediate Panels with `data_tier` and `pov_sources`
+- **`output_level`** — chain profile echoed on Panels for compare UI (Phase 17)
+- **`pipeline_stage`** — machine-readable chain phase on every streamed Panel (Phase 18)
+- **`pov_segments`** — structured per-lens sections on completed Panels (Phase 18)
+- **`follow_up_options`** / **`follow_up_kinds`** — LLM-generated contextual chips on completed Panels (Phase 19)
+- **`content_format`** — `ranked_list` when list intent detected (Phase 19)
+- **`is_streaming`** — when `true`, `content` is a token delta appended client-side on the same `panel_id` (Phase 20)
+- **Mid-chain steer** — send while processing revokes in-flight Celery task via `app/core/session_control.py` (Phase 20)
+- **Processing Panel** — WR streams `status: processing` with `pipeline_stage=routing`; specialists publish streaming `agents` stage content; combiners/defense set `combining`/`defense`
 - Worker uses `astream(stream_mode="updates")` for incremental Redis publish; Celery soft limit **720s** (~12 min) for multi-POV pipelines
 - Parallel fan-out via LangGraph `Send` API; fan-in at Presenter (max 3 agents + optional search)
 - Search provider: DuckDuckGo default; Tavily when `TAVILY_API_KEY` is set
 
 ---
 
-## Research: Output Levels (Proposed)
+## Output Levels (Live — Phase 17)
 
-A high-value research feature: let the user **select an output level** and compare results from different chain depths on the same question.
+User-selectable **chain profiles** gate graph depth on a single LangGraph. Orthogonal to product modes (intent).
 
 | Level | Name | Chain | Use case |
 |-------|------|-------|----------|
-| **L0** | Direct | Single Ollama/Gemini call, no graph | Baseline speed and quality |
-| **L1** | Routed | WR → one specialist → Presenter | Single-domain default |
-| **L1+** | Parallel routed | WR → parallel specialists → Presenter | **Current Phase 10** (1–3 agents) |
-| **L2** | Reviewed | L1 + Defense pass before Panel | QA comparison |
-| **L3** | Grounded | L2 + Search (finder + reader) | Citation and source quality |
-| **L4** | Multi-agent | WR → parallel topic agents → Mayor → Micro → Collector → Defense → Presenter | Full TESS chain |
+| **L0** | Direct | Single LLM → Presenter (no WR) | Baseline speed and quality |
+| **L1** | Routed | WR → one specialist → Presenter | Single-domain fast path |
+| **L1+** | Parallel | WR → 1–3 specialists → Presenter (no combiners/defense) | Multi-POV raw output |
+| **L2** | Reviewed | L1 + Defense | QA-checked single-agent answer |
+| **L3** | Grounded | L2 + Search | Citations and source grounding |
+| **L4** | Full chain | WR → agents → Combiners (multi) → Defense → Presenter | Production default |
 
-### Why this is a strong direction
-
-1. **Measurable quality ladder** — Same prompt, different levels; `agent_traces` already show what each agent saw, so diffs are inspectable.
-2. **Cost / latency tradeoffs** — L0 is fast; L4 is thorough. Users (and researchers) pick consciously.
-3. **Incremental delivery** — Each level reuses the previous graph as a subgraph; ROADMAP can add levels without rewriting.
-4. **UI fit** — A level selector in the frontend maps to a `chain_profile` field on the request; Panels can include `output_level` in metadata for side-by-side comparison views.
-
-### Suggested implementation path
-
-1. Add `chain_profile: Literal["L0", "L1", …]` to session or per-message request (see `SCHEMA.md`).
-2. Build L0 as a bypass graph (no WR) for baseline.
-3. Keep L1 as default (current graph).
-4. Add L2–L4 as new LangGraph branches/subgraphs as combiners and defense land.
+Gate logic lives in `app/graph/chain_gates.py`. L0 entry via `direct_responder` node. Frontend chain selector + compare UI stack Panels by `output_level`.
 
 ---
 
@@ -236,6 +253,7 @@ A high-value research feature: let the user **select an output level** and compa
 | Fan-in utilities | `app/graph/fan_in_utils.py` |
 | Combiner utilities | `app/graph/combiner_utils.py` |
 | WR routing | `app/graph/nodes/wide_receiver.py`, `app/graph/routing.py` |
+| Chain profiles | `app/core/chain_profiles.py`, `app/graph/chain_gates.py`, `app/graph/nodes/direct_responder.py` |
 | Search nodes | `app/graph/nodes/resource_finder.py`, `app/graph/nodes/resource_reader.py` |
 | Search utilities | `app/search/provider.py`, `app/search/fetcher.py`, `app/search/extractor.py` |
 | Specialist nodes | `app/graph/nodes/<name>.py` |
@@ -244,5 +262,15 @@ A high-value research feature: let the user **select an output level** and compa
 | Shared specialist runner | `app/agents/base.py` |
 | Presenter | `app/graph/nodes/presenter.py` |
 | Panel schema | `app/graph/schemas.py`, `SCHEMA.md` |
+| Pipeline stages | `app/graph/pipeline_stages.py` |
+| POV segments builder | `app/graph/pov_segments.py` |
+| Follow-up generator | `app/graph/follow_up_utils.py` |
+| Token streaming | `app/graph/stream_utils.py` |
+| Session steer | `app/core/session_control.py` |
+| List format utils | `app/graph/list_format_utils.py` |
+| Folder tree (backend) | `app/core/folder_tree.py` |
 | Worker | `app/worker.py` |
+| Frontend status wall | `frontend/src/components/StatusWall.tsx`, `usePipelineStatus.ts` |
+| Frontend folder / results | `frontend/src/components/FolderTree.tsx`, `ResultsWall.tsx`, `PanelSegments.tsx` |
+| Frontend drill-down | `frontend/src/utils/drillDown.ts` |
 | Frontend Panel UI | `frontend/src/components/PanelCard.tsx` |

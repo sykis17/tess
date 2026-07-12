@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 PanelStatus = Literal["processing", "review_passed", "completed"]
 ContentType = Literal["markdown", "code", "image", "audio", "video"]
+ContentFormat = Literal["markdown", "ranked_list"]
 DataTier = Literal["mayor", "micro", "usable", "final"]
 ReviewStatus = Literal["pending", "approved", "revise"]
 CheckVerdict = Literal["pass", "revise"]
@@ -92,6 +93,15 @@ class DefenseReview(BaseModel):
     verdict: DefenseVerdict
 
 
+class PanelSegment(BaseModel):
+    """Structured per-lens section on a completed Panel."""
+
+    title: str
+    content: str
+    source_agents: list[str] = Field(default_factory=list)
+    pov: str | None = None
+
+
 class Panel(BaseModel):
     """WebSocket payload streamed to the frontend when a processing segment completes."""
 
@@ -106,3 +116,9 @@ class Panel(BaseModel):
     data_tier: DataTier | None = None
     pov_sources: list[str] = Field(default_factory=list)
     product_mode: str | None = None
+    output_level: str | None = None
+    pipeline_stage: str | None = None
+    pov_segments: list[PanelSegment] = Field(default_factory=list)
+    content_format: ContentFormat | None = None
+    follow_up_kinds: list[str] = Field(default_factory=list)
+    is_streaming: bool = False

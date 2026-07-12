@@ -95,6 +95,20 @@ def test_casual_greeting_routes_to_general_assistant() -> None:
     assert agents == ["general_assistant"]
 
 
+def test_aviation_misroute_to_general_assistant_overridden_to_researcher() -> None:
+    """WR misroutes broad factual aviation asks to general_assistant; auto nudge fixes it."""
+    prompt = "what are some interesting things happening in aviation right now?"
+    decision = parse_routing_decision(
+        (
+            '{"active_agents": ["general_assistant"], '
+            f'"current_task": "{prompt}", "search_queries": []}}'
+        ),
+        prompt,
+    )
+    assert decision.active_agents == ["researcher"]
+    assert len(decision.search_queries) == 1
+
+
 def test_python_sort_routes_to_coder() -> None:
     agents = _route("not-json", "Write a Python sort function")
     assert agents == ["coder"]

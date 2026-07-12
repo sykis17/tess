@@ -1,6 +1,6 @@
 # TESS Engine — Data Schemas
 
-Strictly typed data via Pydantic models in Python. This document covers **live** schemas (Phase 11) and **planned** types for the full AI chain.
+Strictly typed data via Pydantic models in Python. This document covers **live** schemas through Phase 20 (`is_streaming` token deltas, mid-chain steer).
 
 ---
 
@@ -15,7 +15,9 @@ Streamed to the frontend when a processing segment completes or updates.
   "status": "processing | review_passed | completed",
   "content_type": "markdown | code | image | audio | video",
   "content": "The actual payload",
-  "follow_up_options": ["Continue with this", "Change style", "Discard"],
+  "follow_up_options": ["Who is the target audience?", "Compare to gaming app UI", "Sketch wireframes next"],
+  "follow_up_kinds": ["related", "deviating", "choice"],
+  "content_format": "ranked_list",
   "agents_involved": ["Wide Receiver", "Coder", "Presenter"],
   "agent_traces": [
     {
@@ -37,7 +39,7 @@ Streamed to the frontend when a processing segment completes or updates.
 | `status` | enum | Live | `processing`, `review_passed`, `completed` |
 | `content_type` | enum | Live | `markdown`, `code`, `image`, `audio`, `video` |
 | `content` | `str` | Live | Payload body — see content conventions below |
-| `follow_up_options` | `list[str]` | Live | Quick-reply buttons |
+| `follow_up_options` | `list[str]` | Live | Quick-reply chip labels; LLM-generated on completed Panels (Phase 19); falls back to defaults on error |
 | `agents_involved` | `list[str]` | Live (Phase 9) | Human-readable agent pipeline |
 | `agent_traces` | `list[AgentTrace]` | Live (Phase 9) | Per-agent visibility records |
 
@@ -67,13 +69,45 @@ Media specialist agents use `folder_path` values: `Media/Photo`, `Media/Video`, 
 |-------|------|--------|-------------|
 | `pov_sources` | `list[str]` | Live (Phase 15B) | Disciplinary lenses on processing, combiner, defense, and completed Panels (e.g. `["Chemistry", "Art"]`) |
 | `product_mode` | `str \| null` | Live (Phase 16) | Active intent profile: `research`, `planner`, `coding`, `builder`; omitted or `null` for `auto` |
+| `output_level` | `str \| null` | Live (Phase 17) | Chain profile used (`L0`–`L4`) for compare UI |
+| `pipeline_stage` | `str \| null` | Live (Phase 18) | Current chain stage for status wall (`routing`, `agents`, `combining`, `defense`, `presenting`, `done`) |
+| `pov_segments` | `list[PanelSegment]` | Live (Phase 18) | Structured per-lens sections on completed Panels |
+
+### Live Panel fields (Phase 19)
+
+| Field | Type | Status | Description |
+|-------|------|--------|-------------|
+| `content_format` | `str \| null` | Live (Phase 19) | `markdown` or `ranked_list` when list intent detected; omitted for default markdown |
+| `follow_up_kinds` | `list[str]` | Live (Phase 19) | Parallel to `follow_up_options`: `related`, `deviating`, `choice`, `drill_down` for chip styling |
+
+### Live Panel fields (Phase 20)
+
+| Field | Type | Status | Description |
+|-------|------|--------|-------------|
+| `is_streaming` | `bool` | Live (Phase 20) | When `true`, `content` is a **delta** appended to the in-flight Panel with the same `panel_id`; omitted or `false` for full replacement |
+
+### PanelSegment (live — Phase 18)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `title` | `str` | Segment heading |
+| `content` | `str` | Segment body (markdown) |
+| `source_agents` | `list[str]` | Registry keys that contributed |
+| `pov` | `str \| null` | Display lens (e.g. `Art`, `UI Design`) |
+
+Segment titles are clickable in the frontend; clicking sends `"Tell me more about {title}"` as the next user message.
 
 ### Planned Panel fields
 
-| Field | Type | Phase | Description |
-|-------|------|-------|-------------|
-| `output_level` | `str` | 17 | Chain profile used (`L0`–`L4`) for research comparison |
-| `pipeline_stage` | `str` | 18 | Current chain stage for status wall (`routing`, `agents`, `combining`, `defense`, `done`) |
+_None — Phase 20 fields are live._
+
+### WebSocket cancellation envelope (Phase 20)
+
+```json
+{ "type": "cancelled", "message": "Previous request cancelled — processing your new message." }
+```
+
+Not a Panel — clients should decrement in-flight state and show an informational notice (not an error).
 
 ---
 
@@ -115,14 +149,15 @@ WebSocket inbound envelope (backward compatible — plain text still maps to `au
 ```json
 {
   "text": "Explain photosynthesis with citations",
-  "product_mode": "research"
+  "product_mode": "research",
+  "chain_profile": "L3"
 }
 ```
 
 | Field | Phase | Description |
 |-------|-------|-------------|
 | `product_mode` | 16 (live) | Research / planner / coding / builder; `auto` when omitted or plain text |
-| `chain_profile` | 17 (planned) | Output level L0–L4 |
+| `chain_profile` | 17 (live) | Output level L0–L4; omitted in JSON resolves from product mode; plain text → L4 |
 
 POV agents use keys such as `chemistry`, `art`, `ui_design` (one disciplinary lens per agent).
 
@@ -239,7 +274,7 @@ Graph state fields (Phase 13):
 
 ---
 
-## 6. Chain profiles (planned — Phase 17)
+## 6. Chain profiles (live — Phase 17)
 
 User-selectable output levels for research and benchmarking.
 

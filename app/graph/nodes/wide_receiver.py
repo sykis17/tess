@@ -3,9 +3,11 @@ from typing import Any
 
 from app.agents.registry import format_agent_display_name, get_agent
 from app.agents.subjects.registry import collect_pov_sources
+from app.graph.chain_gates import allows_search
 from app.graph.combiner_utils import combiner_pipeline_names, should_predict_combiners
 from app.graph.defense_utils import defense_pipeline_names, should_predict_defense
 from app.graph.fan_in_utils import build_expected_fan_in_branches
+from app.graph.pipeline_stages import PipelineStage
 from app.graph.prompts import build_wr_system_prompt
 from app.graph.routing import parse_routing_decision
 from app.graph.schemas import AgentTrace, Panel
@@ -44,7 +46,13 @@ async def wide_receiver_node(state: GraphState) -> dict[str, Any]:
     user_input = state["user_input"]
     conversation_history = state["conversation_history"]
     product_mode = state.get("product_mode", "auto")
-    logger.info("Wide Receiver received user input: %s (mode=%s)", user_input, product_mode)
+    chain_profile = state.get("chain_profile", "L4")
+    logger.info(
+        "Wide Receiver received user input: %s (mode=%s, profile=%s)",
+        user_input,
+        product_mode,
+        chain_profile,
+    )
 
     system_prompt = build_wr_system_prompt(product_mode)
     messages: list[LLMMessage] = [
@@ -59,6 +67,7 @@ async def wide_receiver_node(state: GraphState) -> dict[str, Any]:
         response.content,
         fallback_task=user_input,
         product_mode=product_mode,
+        chain_profile=chain_profile,
     )
 
     logger.info(
@@ -89,11 +98,11 @@ async def wide_receiver_node(state: GraphState) -> dict[str, Any]:
         "Wide Receiver",
         *[format_agent_display_name(name) for name in routed_agents],
     ]
-    if search_queries:
+    if search_queries and allows_search(chain_profile):
         agents_involved.append("Resource Finder")
-    if should_predict_combiners(routed_agents, search_queries):
+    if should_predict_combiners(routed_agents, search_queries, chain_profile):
         agents_involved.extend(combiner_pipeline_names())
-    if should_predict_defense(routed_agents, search_queries):
+    if should_predict_defense(routed_agents, search_queries, chain_profile):
         agents_involved.extend(defense_pipeline_names())
 
     processing_panel = Panel(
@@ -107,6 +116,8 @@ async def wide_receiver_node(state: GraphState) -> dict[str, Any]:
         agent_traces=[wr_trace],
         pov_sources=collect_pov_sources(routed_agents),
         product_mode=product_mode if product_mode != "auto" else None,
+        output_level=chain_profile,
+        pipeline_stage=PipelineStage.ROUTING,
     )
 
     return {

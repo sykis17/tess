@@ -88,13 +88,13 @@ async def combiner_micro_node(state: GraphState) -> dict[str, Any]:
         data_tier="usable",
     )
 
-    return {
+    result: dict[str, Any] = {
         "usable_answers": usable_answers,
         "agent_traces": [trace],
         "panels": [intermediate_panel],
-        "defense_retry_count": (
-            (state.get("defense_retry_count") or 0) + 1
-            if defense_notes
-            else (state.get("defense_retry_count") or 0)
-        ),
     }
+
+    if defense_notes:
+        result["defense_retry_count"] = (state.get("defense_retry_count") or 0) + 1
+
+    return result

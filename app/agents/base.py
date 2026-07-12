@@ -80,10 +80,15 @@ async def run_specialist(state: GraphState, agent_name: str) -> dict[str, Any]:
         pov=agent.pov,
     )
 
-    return {
+    result: dict[str, Any] = {
         "collected_data": [response.content],
         "mayor_data": [mayor_entry],
         "agent_traces": [specialist_trace],
-        "defense_retry_count": _maybe_increment_defense_retry(state),
         **fan_in_branch_complete(state, agent_name),
     }
+
+    retry_count = _maybe_increment_defense_retry(state)
+    if retry_count != (state.get("defense_retry_count") or 0):
+        result["defense_retry_count"] = retry_count
+
+    return result

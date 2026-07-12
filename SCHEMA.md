@@ -13,7 +13,7 @@ Streamed to the frontend when a processing segment completes or updates.
   "panel_id": "uuid4",
   "folder_path": "Coding/Projects",
   "status": "processing | review_passed | completed",
-  "content_type": "markdown | code | image",
+  "content_type": "markdown | code | image | audio | video",
   "content": "The actual payload",
   "follow_up_options": ["Continue with this", "Change style", "Discard"],
   "agents_involved": ["Wide Receiver", "Coder", "Presenter"],
@@ -35,13 +35,25 @@ Streamed to the frontend when a processing segment completes or updates.
 | `panel_id` | `str` | Live | Stable ID; processing → completed updates reuse it |
 | `folder_path` | `str` | Live | Virtual folder (e.g. `Science/Chemistry`) |
 | `status` | enum | Live | `processing`, `review_passed`, `completed` |
-| `content_type` | enum | Live | `markdown`, `code`, `image` |
-| `content` | `str` | Live | Payload body |
+| `content_type` | enum | Live | `markdown`, `code`, `image`, `audio`, `video` |
+| `content` | `str` | Live | Payload body — see content conventions below |
 | `follow_up_options` | `list[str]` | Live | Quick-reply buttons |
 | `agents_involved` | `list[str]` | Live (Phase 9) | Human-readable agent pipeline |
 | `agent_traces` | `list[AgentTrace]` | Live (Phase 9) | Per-agent visibility records |
 
 Clients should treat missing optional fields as empty lists.
+
+### Content conventions (Phase 14)
+
+| `content_type` | `content` format |
+|----------------|------------------|
+| `markdown` | Markdown prose (default for text, scripts, plans) |
+| `code` | Source code string |
+| `image` | HTTP(S) URL or `data:` URI |
+| `video` | HTTP(S) URL to video file, or markdown script fallback |
+| `audio` | HTTP(S) URL to audio file, or markdown script fallback |
+
+Media specialist agents use `folder_path` values: `Media/Photo`, `Media/Video`, `Media/Audio`.
 
 ### Live Panel fields (Phase 12)
 

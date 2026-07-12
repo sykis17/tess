@@ -2,6 +2,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from app.agents.registry import AGENT_REGISTRY
+from app.graph.nodes.audio import audio_node
 from app.graph.nodes.coder import coder_node
 from app.graph.nodes.combiner_mayor import combiner_mayor_node
 from app.graph.nodes.combiner_micro import combiner_micro_node
@@ -10,11 +11,13 @@ from app.graph.nodes.defense_delegator import defense_delegator_node
 from app.graph.nodes.defense_review import defense_review_node
 from app.graph.nodes.fan_in_wait import fan_in_wait_node
 from app.graph.nodes.general_assistant import general_assistant_node
+from app.graph.nodes.photo import photo_node
 from app.graph.nodes.post_fan_in import post_fan_in_node
 from app.graph.nodes.presenter import presenter_node
 from app.graph.nodes.researcher import researcher_node
 from app.graph.nodes.resource_finder import resource_finder_node
 from app.graph.nodes.resource_reader import resource_reader_node
+from app.graph.nodes.video import video_node
 from app.graph.nodes.wide_receiver import wide_receiver_node
 from app.graph.routing import fan_out_from_wr, route_after_defense, route_after_fan_in
 from app.graph.state import GraphState
@@ -23,6 +26,9 @@ _SPECIALIST_NODES = {
     "general_assistant": general_assistant_node,
     "coder": coder_node,
     "researcher": researcher_node,
+    "photo": photo_node,
+    "video": video_node,
+    "audio": audio_node,
 }
 
 

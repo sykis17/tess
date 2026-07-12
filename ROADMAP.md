@@ -16,18 +16,13 @@
 - [x] **Phase 12:** Combiners + Collector — Combiner Mayor/Micro LLM synthesis; deterministic Collector; bypass for single-agent fast path; `MicroData` / `UsableAnswer` live; optional `data_tier` on intermediate Panels.
 - [x] **Phase 13:** Defense layer — Defense Delegator + Defense Review (single LLM, three checks per segment); `review_passed` Panel before `completed`; bounded revise loops to combiner_micro or specialist; `DefenseReview` live in schemas.
 - [x] **Phase 13.1:** Fan-in join fix; WR routes factual/explore topics to researcher; GA prompt anti-refusal; defense auto-revise on refusal phrases.
+- [x] **Phase 14:** Media specialist agents — Photo, Video, Audio; Panel `content_type` audio/video; WR routes media alongside topic agents; text-first plans/scripts (Option A).
 
 ---
 
 ## Next — Full AI Chain
 
 Phases below map to the [target architecture](AI_MAP.md#target-ai-chain-full-vision). Each phase should keep backward-compatible Panels and deployable increments.
-
-### Phase 14 — Media specialist agents
-
-- Photo, video, audio specialist agents.
-- Panel `content_type` for image/audio/video payloads.
-- WR routes media tasks alongside topic agents.
 
 ### Phase 15 — Topic agent matrix
 

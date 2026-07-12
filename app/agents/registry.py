@@ -1,12 +1,18 @@
+from app.agents.audio.config import AUDIO_CONFIG
 from app.agents.coder.config import CODER_CONFIG
 from app.agents.general_assistant.config import GENERAL_ASSISTANT_CONFIG
+from app.agents.photo.config import PHOTO_CONFIG
 from app.agents.researcher.config import RESEARCHER_CONFIG
 from app.agents.schemas import AgentConfig
+from app.agents.video.config import VIDEO_CONFIG
 
 AGENT_REGISTRY: dict[str, AgentConfig] = {
     GENERAL_ASSISTANT_CONFIG.name: GENERAL_ASSISTANT_CONFIG,
     CODER_CONFIG.name: CODER_CONFIG,
     RESEARCHER_CONFIG.name: RESEARCHER_CONFIG,
+    PHOTO_CONFIG.name: PHOTO_CONFIG,
+    VIDEO_CONFIG.name: VIDEO_CONFIG,
+    AUDIO_CONFIG.name: AUDIO_CONFIG,
 }
 
 DEFAULT_AGENT_NAME = GENERAL_ASSISTANT_CONFIG.name
@@ -21,6 +27,9 @@ _DISPLAY_NAME_OVERRIDES: dict[str, str] = {
     "collector": "Collector",
     "defense_delegator": "Defense Delegator",
     "defense_review": "Defense Review",
+    "photo": "Photo",
+    "video": "Video",
+    "audio": "Audio",
 }
 
 

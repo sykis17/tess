@@ -119,12 +119,12 @@ Each mode influences WR routing (which topic/specialist agents to alarm) and whi
 
 ---
 
-## Current Implementation (Phase 13)
+## Current Implementation (Phase 14)
 
-What is **built and deployed today** is a parallel multi-specialist chain with optional search, combiner synthesis, and a Defense QA gate before Presenter. WR can alarm 1–3 specialists and optionally trigger web search; they run concurrently via LangGraph `Send` fan-out. Multi-agent or search-grounded paths pass through Combiner Mayor → Combiner Micro → Collector; all paths pass through Defense before Presenter.
+What is **built and deployed today** is a parallel multi-specialist chain with optional search, combiner synthesis, media specialists, and a Defense QA gate before Presenter. WR can alarm 1–3 specialists (topic + media) and optionally trigger web search; they run concurrently via LangGraph `Send` fan-out. Multi-agent or search-grounded paths pass through Combiner Mayor → Combiner Micro → Collector; all paths pass through Defense before Presenter.
 
 ```
-START → wide_receiver → [parallel: coder | researcher | general_assistant] + [optional: resource_finder → resource_reader]
+START → wide_receiver → [parallel: coder | researcher | general_assistant | photo | video | audio] + [optional: resource_finder → resource_reader]
       → post_fan_in → [bypass → defense | combiners → defense] → presenter → END
 ```
 
@@ -144,7 +144,7 @@ defense_delegator → defense_review → [pass → presenter | revise → combin
 |------|--------|-------|
 | Wide Receiver | ✅ Live | Routes to 1–3 specialists; emits `search_queries` (0–1) when sources needed |
 | Topic Agents (subjects) | 🟡 Partial | Coder / Researcher run in parallel as early stand-ins, not full subject matrix |
-| Specialist Agents (media) | ⬜ Planned | |
+| Specialist Agents (media) | ✅ Live | Photo, Video, Audio — diagram plans, scripts, outlines (text-first; URL when provided) |
 | Search | ✅ Live | Resource finder (DuckDuckGo / Tavily) → resource reader; feeds `mayor_data` with citations |
 | Combiner Mayor | ✅ Live | Aggregates `mayor_data` → `micro_data` (cross-topic synthesis) |
 | Combiner Micro | ✅ Live | Refines `micro_data` → `usable_answers` (3–5 segments) |
@@ -166,6 +166,9 @@ defense_delegator → defense_review → [pass → presenter | revise → combin
 | `coder` | `Coding/Projects` | Code generation, debugging, refactoring |
 | `researcher` | `Research/Topics` | Factual research, explanations, summaries |
 | `general_assistant` | `Assistant/General` | Casual chat and general tasks |
+| `photo` | `Media/Photo` | Diagram plans, image descriptions, visual layouts |
+| `video` | `Media/Video` | Video scripts, storyboards, edit plans |
+| `audio` | `Media/Audio` | Voiceover scripts, podcast outlines, audio plans |
 
 Config pattern: `app/agents/<name>/config.py` + `prompt.py`, registered in `app/agents/registry.py`.
 

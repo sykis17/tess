@@ -9,6 +9,10 @@ interface PanelContentProps {
   content: string;
 }
 
+function isMediaUrl(content: string): boolean {
+  return content.startsWith("http://") || content.startsWith("https://");
+}
+
 function isImageSource(content: string): boolean {
   return (
     content.startsWith("http://") ||
@@ -17,14 +21,18 @@ function isImageSource(content: string): boolean {
   );
 }
 
+function MarkdownFallback({ content }: { content: string }) {
+  return (
+    <div className="panel-content panel-content--markdown">
+      <ReactMarkdown>{content}</ReactMarkdown>
+    </div>
+  );
+}
+
 export function PanelContent({ contentType, content }: PanelContentProps) {
   switch (contentType) {
     case "markdown":
-      return (
-        <div className="panel-content panel-content--markdown">
-          <ReactMarkdown>{content}</ReactMarkdown>
-        </div>
-      );
+      return <MarkdownFallback content={content} />;
 
     case "code":
       return (
@@ -49,6 +57,30 @@ export function PanelContent({ contentType, content }: PanelContentProps) {
           <p>Image content is not a valid URL or data URI.</p>
         </div>
       );
+
+    case "video":
+      if (isMediaUrl(content)) {
+        return (
+          <div className="panel-content panel-content--video">
+            <video controls src={content}>
+              Your browser does not support the video tag.
+            </video>
+          </div>
+        );
+      }
+      return <MarkdownFallback content={content} />;
+
+    case "audio":
+      if (isMediaUrl(content)) {
+        return (
+          <div className="panel-content panel-content--audio">
+            <audio controls src={content}>
+              Your browser does not support the audio tag.
+            </audio>
+          </div>
+        );
+      }
+      return <MarkdownFallback content={content} />;
 
     default:
       return (

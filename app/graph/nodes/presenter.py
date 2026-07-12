@@ -9,7 +9,14 @@ from app.graph.defense_utils import (
     build_agents_involved_with_defense,
     defense_exhausted_retries,
 )
-from app.graph.schemas import DEFAULT_FOLLOW_UP_OPTIONS, AgentTrace, MayorData, Panel
+from app.graph.media_utils import extract_typed_media_content, resolve_content_type
+from app.graph.schemas import (
+    DEFAULT_FOLLOW_UP_OPTIONS,
+    AgentTrace,
+    ContentType,
+    MayorData,
+    Panel,
+)
 from app.graph.state import GraphState
 
 RESOURCE_READER_AGENT = "resource_reader"
@@ -92,15 +99,16 @@ def _resolve_folder_path(state: GraphState) -> str:
         return get_agent(DEFAULT_AGENT_NAME).folder_path
 
 
-def presenter_node(state: GraphState) -> dict[str, Any]:
-    """Format collected or synthesized data into a strictly typed Panel for frontend streaming."""
-    usable_answers = state.get("usable_answers") or []
-    mayor_data = state.get("mayor_data") or []
-    collected_data = state["collected_data"]
-    active_agents = state.get("active_agents") or []
-    combiners_bypassed = state.get("combiners_bypassed", True)
-    defense_ran = bool(state.get("defense_reviews"))
-    exhausted = defense_exhausted_retries(state)
+def _resolve_panel_output(
+    usable_answers: list,
+    mayor_data: list[MayorData],
+    collected_data: list[str],
+    active_agents: list[str],
+    defense_ran: bool,
+    exhausted: bool,
+) -> tuple[str, ContentType]:
+    """Resolve Panel content and content_type from graph state."""
+    content_type: ContentType = "markdown"
 
     if usable_answers:
         if defense_ran and not exhausted:
@@ -114,10 +122,40 @@ def presenter_node(state: GraphState) -> dict[str, Any]:
             content = format_usable_answers_markdown(best_effort)
         else:
             content = format_usable_answers_markdown(usable_answers)
-    elif mayor_data:
+        return content, content_type
+
+    if mayor_data:
+        specialists, sources = _split_specialist_and_sources(mayor_data, active_agents)
+        if len(specialists) == 1 and not sources:
+            entry = specialists[0]
+            content_type = resolve_content_type(entry.source_agent, entry.content)
+            content = extract_typed_media_content(entry.content, content_type)
+            return content, content_type
         content = _format_mayor_data(mayor_data, active_agents)
-    else:
-        content = _format_collected_data(collected_data)
+        return content, content_type
+
+    content = _format_collected_data(collected_data)
+    return content, content_type
+
+
+def presenter_node(state: GraphState) -> dict[str, Any]:
+    """Format collected or synthesized data into a strictly typed Panel for frontend streaming."""
+    usable_answers = state.get("usable_answers") or []
+    mayor_data = state.get("mayor_data") or []
+    collected_data = state["collected_data"]
+    active_agents = state.get("active_agents") or []
+    combiners_bypassed = state.get("combiners_bypassed", True)
+    defense_ran = bool(state.get("defense_reviews"))
+    exhausted = defense_exhausted_retries(state)
+
+    content, content_type = _resolve_panel_output(
+        usable_answers,
+        mayor_data,
+        collected_data,
+        active_agents,
+        defense_ran,
+        exhausted,
+    )
 
     include_combiners = not combiners_bypassed and bool(usable_answers)
     agents_involved = build_agents_involved_with_defense(
@@ -145,7 +183,7 @@ def presenter_node(state: GraphState) -> dict[str, Any]:
         panel_id=state["panel_id"],
         folder_path=_resolve_folder_path(state),
         status="completed",
-        content_type="markdown",
+        content_type=content_type,
         content=content,
         follow_up_options=list(DEFAULT_FOLLOW_UP_OPTIONS),
         agents_involved=agents_involved,

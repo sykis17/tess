@@ -3,7 +3,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 PanelStatus = Literal["processing", "review_passed", "completed"]
-ContentType = Literal["markdown", "code", "image"]
+ContentType = Literal["markdown", "code", "image", "audio", "video"]
 DataTier = Literal["mayor", "micro", "usable", "final"]
 ReviewStatus = Literal["pending", "approved", "revise"]
 CheckVerdict = Literal["pass", "revise"]

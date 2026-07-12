@@ -18,6 +18,11 @@ Rules:
 - Route coding tasks, tool building, and debugging to "coder".
 - Route factual research, explanations, summaries, and "explore/tell me about X" requests to "researcher".
 - Route casual conversation and greetings to "general_assistant" only — not for code, research, or factual topics.
+- Route diagram, sketch, icon, image plan, and visual layout requests to "photo".
+- Route video script, storyboard, shot list, and edit plan requests to "video".
+- Route podcast, voiceover, narration, and audio outline requests to "audio".
+- Media agents count toward the 1–3 agent limit — combine with topic agents when needed
+  (e.g. researcher + photo for "explain X and sketch a diagram plan").
 - Use "researcher" (not "general_assistant") for topics like kubernetes/k8s, devops, blockchain, crypto, science, history, news, or any request that asks to explore or explain a subject.
 - When search_queries is non-empty for a factual topic, prefer "researcher" over "general_assistant".
 - Summarize the user's intent in current_task so specialists can act on it.
@@ -39,7 +44,11 @@ Examples:
 - "Explain photosynthesis and cite sources" → {{"active_agents": ["researcher"], "current_task": "Explain photosynthesis with cited sources", "search_queries": ["photosynthesis mechanism 2024"]}}
 - "Latest renewable energy cost trends 2025" → {{"active_agents": ["researcher"], "current_task": "Summarize latest renewable energy cost trends 2025", "search_queries": ["renewable energy cost trends 2025"]}}
 - "Compare async Python and explain photosynthesis with sources" → {{"active_agents": ["coder", "researcher"], "current_task": "Compare Python async patterns and explain photosynthesis with sources", "search_queries": ["photosynthesis mechanism 2024"]}}
-- "Explain REST APIs and write a FastAPI hello-world" → {{"active_agents": ["researcher", "coder"], "current_task": "Explain REST APIs and write a FastAPI hello-world", "search_queries": []}}"""
+- "Explain REST APIs and write a FastAPI hello-world" → {{"active_agents": ["researcher", "coder"], "current_task": "Explain REST APIs and write a FastAPI hello-world", "search_queries": []}}
+- "Draw a diagram plan for photosynthesis" → {{"active_agents": ["photo"], "current_task": "Draw a diagram plan for photosynthesis", "search_queries": []}}
+- "Write a 30-second video script about async Python" → {{"active_agents": ["video"], "current_task": "Write a 30-second video script about async Python", "search_queries": []}}
+- "Outline a podcast intro about cybersecurity" → {{"active_agents": ["audio"], "current_task": "Outline a podcast intro about cybersecurity", "search_queries": []}}
+- "Explain REST APIs and create a diagram plan" → {{"active_agents": ["researcher", "photo"], "current_task": "Explain REST APIs and create a diagram plan", "search_queries": []}}"""
 
 COMBINER_MAYOR_SYSTEM_PROMPT = """You are the Combiner Mayor in the TESS Engine.
 
@@ -56,6 +65,7 @@ Respond with JSON only, using this exact shape:
 Rules:
 - Produce 2 to 4 segments that cross-link topics when multiple domains are present.
 - Weave web source excerpts and citations into relevant segments — do NOT append a separate Sources section.
+- Photo, video, and audio agents produce plans and scripts — integrate them as prose sections; do not strip structural detail.
 - Each segment must be self-contained markdown-ready prose.
 - source_agents must list the mayor data contributors you synthesized (e.g. coder, researcher, resource_reader).
 - When only search sources supplement one specialist, integrate sources into that specialist's topic segments.
@@ -77,6 +87,7 @@ Rules:
 - segment_id: generate a unique UUID string for each segment.
 - review_status: always "pending".
 - Each content field must be polished markdown-ready prose — no redundant headers inside content.
+- Preserve diagram plans, video scripts, and audio outlines from media agents; integrate them naturally.
 - Preserve citations and cross-links from the micro data; integrate them naturally.
 - Do not include markdown fences, explanations, or any text outside the JSON object."""
 

@@ -1,5 +1,5 @@
 export type PanelStatus = "processing" | "review_passed" | "completed";
-export type ContentType = "markdown" | "code" | "image";
+export type ContentType = "markdown" | "code" | "image" | "audio" | "video";
 export type DataTier = "mayor" | "micro" | "usable" | "final";
 
 export interface AgentTrace {
@@ -57,6 +57,9 @@ export function formatAgentDisplayName(registryKey: string): string {
     collector: "Collector",
     defense_delegator: "Defense Delegator",
     defense_review: "Defense Review",
+    photo: "Photo",
+    video: "Video",
+    audio: "Audio",
   };
   if (overrides[registryKey]) {
     return overrides[registryKey];

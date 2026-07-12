@@ -11,7 +11,8 @@ export type ConnectionState =
 const WS_BASE_URL =
   import.meta.env.VITE_WS_BASE_URL ?? "ws://127.0.0.1:8000";
 
-const PROCESSING_TIMEOUT_MS = 480_000;
+const PROCESSING_TIMEOUT_MS = 720_000;
+const PROCESSING_TIMEOUT_MINUTES = PROCESSING_TIMEOUT_MS / 60_000;
 
 export function useWebSocket(sessionId: string) {
   const [connectionState, setConnectionState] =
@@ -57,7 +58,14 @@ export function useWebSocket(sessionId: string) {
 
             if (existingIndex >= 0) {
               const updated = [...previous];
-              updated[existingIndex] = data;
+              const existing = previous[existingIndex];
+              updated[existingIndex] = {
+                ...data,
+                pov_sources:
+                  data.pov_sources && data.pov_sources.length > 0
+                    ? data.pov_sources
+                    : existing.pov_sources,
+              };
               return updated;
             }
 
@@ -93,7 +101,7 @@ export function useWebSocket(sessionId: string) {
     const timer = window.setTimeout(() => {
       setIsProcessing(false);
       setLastError(
-        "No response received after 5 minutes. The server may be out of memory or still loading the model.",
+        `No response received after ${PROCESSING_TIMEOUT_MINUTES} minutes. The server may still be processing a multi-agent request — please try again or use a simpler prompt.`,
       );
     }, PROCESSING_TIMEOUT_MS);
 

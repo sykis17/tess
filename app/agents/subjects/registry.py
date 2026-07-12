@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 
 
@@ -82,6 +83,9 @@ POV_DEFINITIONS: tuple[POVDefinition, ...] = (
             "look and feel",
             "visual hierarchy",
             "poster design",
+            "cover look",
+            "look",
+            "cover",
         ),
     ),
     POVDefinition(
@@ -126,11 +130,32 @@ def get_pov_definition_for_agent(agent_name: str) -> POVDefinition | None:
     return None
 
 
+_WORD_BOUNDARY_KEYWORDS: frozenset[str] = frozenset({
+    "acid",
+    "base",
+    "cell",
+    "gene",
+    "gdp",
+    "look",
+    "cover",
+    "market",
+    "trade",
+    "ux",
+})
+
+
+def _keyword_matches(text: str, keyword: str) -> bool:
+    """Match keywords with word boundaries for short tokens that cause false positives."""
+    if keyword in _WORD_BOUNDARY_KEYWORDS or len(keyword) <= 4:
+        return bool(re.search(rf"\b{re.escape(keyword)}\b", text))
+    return keyword in text
+
+
 def _matched_povs(text: str) -> list[POVDefinition]:
     """Return POV definitions whose keywords appear in the text."""
     matched: list[POVDefinition] = []
     for definition in POV_DEFINITIONS:
-        if any(keyword in text for keyword in definition.keywords):
+        if any(_keyword_matches(text, keyword) for keyword in definition.keywords):
             matched.append(definition)
     return matched
 

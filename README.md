@@ -33,6 +33,15 @@ cd frontend && npm install && npm run dev
 
 See [LOCAL_DEV.md](LOCAL_DEV.md) for details.
 
+## Tests
+
+```bash
+pip install pytest
+pytest tests/test_pov_routing.py
+```
+
+Quick smoke script: `python scripts/test_pov_routing.py`
+
 ## Deploy
 
 ```bash

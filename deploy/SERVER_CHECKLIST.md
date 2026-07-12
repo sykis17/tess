@@ -104,6 +104,8 @@ Then open **http://5.78.186.223** in your browser, hard-refresh (`Ctrl+Shift+R`)
 
 First response may take 30–60 seconds while the model loads.
 
+**Multi-POV requests** (e.g. art + ui_design) run 6+ sequential LLM calls. The pipeline allows up to **12 minutes** before timing out. On CPX11 with `llama3.2:1b`, expect several minutes for combiner stages.
+
 ---
 
 ## Common problems
@@ -116,6 +118,7 @@ First response may take 30–60 seconds while the model loads.
 | Gemini 429 error | Free quota exhausted | Use Ollama (`DEFAULT_LLM_PROVIDER=ollama`) or enable billing |
 | Deploy script fails on npm | Node not installed | Install Node.js (one-time setup above) |
 | Out of memory / `signal: killed` | CPX11 has 4 GB RAM; llama3.2 is too large | Use `OLLAMA_MODEL=llama3.2:1b`, add swap (see below), redeploy |
+| Multi-POV timeout after ~12 minutes | 6+ sequential LLM calls on small hardware | Use `llama3.2:1b`, simplify prompt, or wait for Phase 20 streaming |
 
 ---
 

@@ -1,28 +1,12 @@
-"""Quick Phase 15B routing smoke tests."""
-from app.agents.registry import AGENT_REGISTRY
-from app.agents.subjects.registry import infer_pov_agents_from_keywords, is_pov_agent
-from app.graph.routing import parse_routing_decision
-
-# Wrong POV -> chemistry for ionic bonding
-decision = parse_routing_decision(
-    '{"active_agents": ["biology"], "current_task": "Explain ionic bonding", "search_queries": []}',
-    "Explain ionic bonding",
+"""Quick Phase 15B routing smoke tests — run `pytest tests/test_pov_routing.py` for full matrix."""
+from tests.test_pov_routing import (
+    test_ionic_bonding_replaces_wrong_biology_pov,
+    test_pov_registry_has_five_agents,
+    test_science_app_ui_routes_art_and_ui_design,
 )
-assert decision.active_agents == ["chemistry"], decision.active_agents
 
-# Researcher fallback -> chemistry
-decision2 = parse_routing_decision(
-    '{"active_agents": ["researcher"], "current_task": "ionic bonding", "search_queries": []}',
-    "Explain ionic bonding",
-)
-assert "chemistry" in decision2.active_agents
-
-# Multi-POV keywords
-povs = infer_pov_agents_from_keywords("design a science app ui cover look and usability")
-assert "art" in povs or "ui_design" in povs
-
-assert is_pov_agent("chemistry")
-assert not is_pov_agent("coder")
-assert len([k for k, v in AGENT_REGISTRY.items() if v.agent_kind == "pov"]) == 5
+test_ionic_bonding_replaces_wrong_biology_pov()
+test_science_app_ui_routes_art_and_ui_design()
+test_pov_registry_has_five_agents()
 
 print("All Phase 15B smoke tests passed")

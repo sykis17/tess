@@ -164,6 +164,38 @@ Please review [AI_MAP.md](AI_MAP.md), [SCHEMA.md](SCHEMA.md), and [ROADMAP.md](R
 
 ---
 
+## Completion (Phase 15B — shipped)
+
+Phase 15B is complete. Summary of what shipped:
+
+| Area | Status |
+|------|--------|
+| POV agent matrix | Five lenses: `chemistry`, `biology`, `economics`, `art`, `ui_design` |
+| Depth-tier removal | `*_major`/`*_minor` fully migrated off |
+| `MayorData.pov` | Live on all POV agent output |
+| Routing override | Keyword fallback corrects, merges, and **prunes** wrong POV agents |
+| Combiner prompts | Cross-POV synthesis with POV headers; fallbacks preserve lens labels |
+| Defense | Length cap guidance in review prompt |
+| Frontend | POV badges persist through combiner/defense stages |
+| Multi-POV reliability | Celery + client timeout raised to **720s**; pre-LLM progress panels; per-node timing logs |
+| Tests | `tests/test_pov_routing.py` — full Phase 15B routing matrix |
+
+**Known limits (future phases):**
+
+- No token streaming (Phase 20) — long combiner stages show progress text only
+- Multi-POV on CPX11 with `llama3.2:1b` can take several minutes; 12-minute pipeline cap
+- `pov_sources` reflects routing intent, not per-segment synthesis attribution
+
+**Verify locally:**
+
+```bash
+pytest tests/test_pov_routing.py
+```
+
+**Canonical multi-POV test prompt:** *"Design a science app UI covering aesthetics and usability"* → `art` + `ui_design` → combiners → defense → presenter.
+
+---
+
 ## Glossary
 
 | Term | Meaning |

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 import uuid
 from typing import Any
 
@@ -17,6 +18,9 @@ from app.graph.schemas import Panel
 from app.graph.state import GraphState, build_initial_state
 
 logger = logging.getLogger(__name__)
+
+PIPELINE_SOFT_TIME_LIMIT_SECONDS = 720
+PIPELINE_HARD_TIME_LIMIT_SECONDS = 730
 
 celery_app = Celery(
     "tess_worker",
@@ -37,8 +41,10 @@ _REDUCER_KEYS = frozenset({
 def _format_worker_error(exc: Exception) -> str:
     """Return a user-visible error message for worker failures."""
     if isinstance(exc, SoftTimeLimitExceeded):
+        minutes = PIPELINE_SOFT_TIME_LIMIT_SECONDS // 60
         return (
-            "Request timed out. The server may be low on memory — try again in a moment."
+            f"Pipeline timed out after {minutes} minutes. Multi-agent requests on a small "
+            "server can take several minutes — please try again or use a simpler prompt."
         )
 
     if isinstance(
@@ -113,11 +119,24 @@ async def _run_graph_with_streaming(
 ) -> dict[str, Any]:
     """Run the graph and publish Panels incrementally as nodes complete."""
     merged: dict[str, Any] = dict(initial_state)
+    pipeline_start = time.monotonic()
+    node_start = pipeline_start
 
     async for update in compiled_graph.astream(initial_state, stream_mode="updates"):
-        for _node_name, node_output in update.items():
+        for node_name, node_output in update.items():
             if node_output is None:
                 continue
+
+            node_elapsed = time.monotonic() - node_start
+            cumulative_elapsed = time.monotonic() - pipeline_start
+            logger.info(
+                "Node %s finished in %.1fs (cumulative %.1fs)",
+                node_name,
+                node_elapsed,
+                cumulative_elapsed,
+            )
+            node_start = time.monotonic()
+
             _merge_node_output(merged, node_output)
 
             panels = node_output.get("panels", [])
@@ -127,7 +146,11 @@ async def _run_graph_with_streaming(
     return merged
 
 
-@celery_app.task(name="process_user_input", soft_time_limit=480, time_limit=490)
+@celery_app.task(
+    name="process_user_input",
+    soft_time_limit=PIPELINE_SOFT_TIME_LIMIT_SECONDS,
+    time_limit=PIPELINE_HARD_TIME_LIMIT_SECONDS,
+)
 def process_user_input(user_input: str, session_id: str) -> None:
     """Run the LangGraph chain and stream resulting Panels via Redis Pub/Sub."""
     channel = session_channel(session_id)

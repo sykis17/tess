@@ -2,6 +2,7 @@ import logging
 from typing import Any
 
 from app.agents.registry import DEFAULT_AGENT_NAME, get_agent
+from app.agents.subjects.registry import collect_pov_sources
 from app.graph.defense_utils import (
     aggregate_defense_notes,
     apply_defense_verdicts,
@@ -94,6 +95,7 @@ async def defense_review_node(state: GraphState) -> dict[str, Any]:
         ),
         agent_traces=[*state.get("agent_traces", []), trace],
         data_tier="usable",
+        pov_sources=collect_pov_sources(state.get("active_agents") or []),
     )
 
     return {

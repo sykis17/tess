@@ -12,3 +12,4 @@ httpx
 ddgs
 beautifulsoup4
 tavily-python
+pytest

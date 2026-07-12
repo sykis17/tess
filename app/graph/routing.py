@@ -189,14 +189,6 @@ def _apply_keyword_pov_override(
     keyword_set = set(keyword_povs)
     routed_pov_set = set(routed_povs)
 
-    if routed_povs and routed_pov_set.isdisjoint(keyword_set):
-        logger.info(
-            "Keyword override: replacing wrong POV %s with %s",
-            routed_povs,
-            keyword_povs,
-        )
-        return _dedupe_known_agents([*keyword_povs, *non_pov_agents])
-
     if not routed_povs and len(active_agents) == 1 and active_agents[0] in FALLBACK_AGENTS:
         logger.info(
             "Keyword override: replacing %s with %s for POV intent",
@@ -205,18 +197,30 @@ def _apply_keyword_pov_override(
         )
         return _dedupe_known_agents(keyword_povs)
 
+    supported_routed = [pov for pov in routed_povs if pov in keyword_set]
     missing_povs = [pov for pov in keyword_povs if pov not in routed_pov_set]
-    if missing_povs:
-        merged = _dedupe_known_agents([*active_agents, *missing_povs])
-        if merged != active_agents:
+    pruned_povs = [pov for pov in routed_povs if pov not in keyword_set]
+
+    if routed_povs and not supported_routed:
+        logger.info(
+            "Keyword override: replacing wrong POV %s with %s",
+            routed_povs,
+            keyword_povs,
+        )
+        corrected_povs = keyword_povs
+    else:
+        corrected_povs = [*supported_routed, *missing_povs]
+        if pruned_povs:
+            logger.info("Keyword override: pruned wrong POVs %s", pruned_povs)
+        if missing_povs:
             logger.info(
                 "Keyword override: added POV agents %s to routing %s",
                 missing_povs,
                 active_agents,
             )
-        return merged
 
-    return active_agents
+    merged = _dedupe_known_agents([*corrected_povs, *non_pov_agents])
+    return merged
 
 
 def _dedupe_known_agents(agents: list[str]) -> list[str]:

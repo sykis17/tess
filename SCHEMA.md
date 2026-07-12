@@ -65,7 +65,7 @@ Media specialist agents use `folder_path` values: `Media/Photo`, `Media/Video`, 
 
 | Field | Type | Status | Description |
 |-------|------|--------|-------------|
-| `pov_sources` | `list[str]` | Live (Phase 15B) | Disciplinary lenses that contributed to this Panel (e.g. `["Chemistry", "Art"]`) |
+| `pov_sources` | `list[str]` | Live (Phase 15B) | Disciplinary lenses on processing, combiner, defense, and completed Panels (e.g. `["Chemistry", "Art"]`) |
 
 ### Planned Panel fields
 

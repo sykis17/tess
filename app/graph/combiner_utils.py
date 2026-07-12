@@ -87,12 +87,22 @@ def serialize_mayor_data_for_llm(
     return "\n\n---\n\n".join(blocks)
 
 
+def format_mayor_segment_title(entry: MayorData) -> str:
+    """Format a fallback segment title with POV lens when available."""
+    display = format_agent_display_name(entry.source_agent)
+    if entry.pov:
+        return f"{display} ({entry.pov} POV)"
+    if entry.topic:
+        return f"{display} ({entry.topic})"
+    return display
+
+
 def _fallback_micro_data(mayor_data: list[MayorData], active_agents: list[str]) -> MicroData:
     """Build a single-segment MicroData fallback from raw mayor content."""
     ordered = order_mayor_data(mayor_data, active_agents)
     segments = [
         MicroDataSegment(
-            title=format_agent_display_name(entry.source_agent),
+            title=format_mayor_segment_title(entry),
             content=entry.content,
         )
         for entry in ordered

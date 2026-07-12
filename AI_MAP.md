@@ -141,7 +141,7 @@ defense_delegator → defense_review → [pass → presenter | revise → combin
 
 | Node | Status | Notes |
 |------|--------|-------|
-| Wide Receiver | ✅ Live | Routes to 1–3 specialists; POV keyword override corrects wrong-discipline misroutes |
+| Wide Receiver | ✅ Live | Routes to 1–3 specialists; POV keyword override corrects and prunes wrong-discipline misroutes |
 | POV Agents | ✅ Live | Chemistry, Biology, Economics, Art, UI Design — one lens per discipline; `researcher` fallback for off-matrix topics |
 | Specialist Agents (media) | ✅ Live | Photo, Video, Audio — diagram plans, scripts, outlines (text-first; URL when provided) |
 | Search | ✅ Live | Resource finder (DuckDuckGo / Tavily) → resource reader; feeds `mayor_data` with citations |
@@ -186,10 +186,10 @@ Config pattern: `app/agents/<name>/config.py` + `prompt.py`, registered in `app/
 - **`AgentTrace`** — per-node record (`agent_name`, `inputs_seen`, `task_summary`, `output_preview`)
 - **`agents_involved`** — human-readable pipeline on each Panel (all parallel agents + search when active)
 - **`MayorData`** — per-specialist raw output in graph state before combiner stages; POV agents set `pov`; `resource_reader` populates `citations`
-- **`pov_sources`** — disciplinary lenses on processing/completed Panels (Phase 15B)
+- **`pov_sources`** — disciplinary lenses on WR, combiner, defense, and completed Panels (Phase 15B)
 - **`MicroData`** / **`UsableAnswer`** — combiner pipeline types; Presenter reads ordered `usable_answers` on synthesis path
-- **Processing Panel** — WR streams `status: processing` immediately with all alarmed agent badges (including combiners when predicted); combiner nodes may emit intermediate Panels with `data_tier`
-- Worker uses `astream(stream_mode="updates")` for incremental Redis publish
+- **Processing Panel** — WR streams `status: processing` immediately with all alarmed agent badges (including combiners when predicted); combiner nodes publish pre-LLM progress panels and emit intermediate Panels with `data_tier` and `pov_sources`
+- Worker uses `astream(stream_mode="updates")` for incremental Redis publish; Celery soft limit **720s** (~12 min) for multi-POV pipelines
 - Parallel fan-out via LangGraph `Send` API; fan-in at Presenter (max 3 agents + optional search)
 - Search provider: DuckDuckGo default; Tavily when `TAVILY_API_KEY` is set
 

@@ -214,7 +214,10 @@ export function usePipelineStatus(
 
   const stageAgents = useMemo(() => {
     const agents = focusPanel?.agents_involved ?? [];
-    return agentsForCurrentStage(effectiveStage(focusPanel), agents);
+    return agentsForCurrentStage(
+      focusPanel ? effectiveStage(focusPanel) : null,
+      agents,
+    );
   }, [focusPanel]);
 
   return {

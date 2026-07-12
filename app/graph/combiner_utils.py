@@ -29,9 +29,16 @@ def has_resource_reader_entry(mayor_data: list[MayorData]) -> bool:
 
 
 def should_bypass_combiners(state: GraphState) -> bool:
-    """Skip combiners when only one mayor entry exists and search did not contribute."""
+    """Skip combiners for single-agent paths and when search did not contribute.
+
+    Uses active_agents count (not raw mayor_data length) so defense retries that
+    append a second mayor entry for the same specialist do not trigger combiners.
+    """
     mayor_data = state.get("mayor_data") or []
-    return len(mayor_data) <= 1 and not has_resource_reader_entry(mayor_data)
+    active_agents = state.get("active_agents") or []
+    if has_resource_reader_entry(mayor_data):
+        return False
+    return len(active_agents) <= 1
 
 
 def should_predict_combiners(active_agents: list[str], search_queries: list[str]) -> bool:

@@ -15,13 +15,123 @@ MAX_SEARCH_QUERIES = 1
 _JSON_FENCE_PATTERN = re.compile(r"```(?:json)?\s*([\s\S]*?)\s*```", re.IGNORECASE)
 
 
+def _extract_balanced_json_object(raw: str) -> str | None:
+    """Extract the first top-level JSON object from mixed LLM output."""
+    start = raw.find("{")
+    if start < 0:
+        return None
+
+    depth = 0
+    in_string = False
+    escape = False
+
+    for index in range(start, len(raw)):
+        char = raw[index]
+        if escape:
+            escape = False
+            continue
+        if char == "\\" and in_string:
+            escape = True
+            continue
+        if char == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return raw[start : index + 1]
+    return None
+
+
 def _extract_json_payload(raw: str) -> str:
     """Strip markdown fences and surrounding whitespace from an LLM response."""
     stripped = raw.strip()
     match = _JSON_FENCE_PATTERN.search(stripped)
     if match:
         return match.group(1).strip()
+    balanced = _extract_balanced_json_object(stripped)
+    if balanced:
+        return balanced
     return stripped
+
+
+def _infer_agents_from_keywords(user_input: str) -> list[str]:
+    """Heuristic agent routing when WR JSON parsing fails (small-model fallback)."""
+    text = user_input.lower().strip()
+    agents: list[str] = []
+
+    greeting_signals = ("how are you", "hello", "hi there", "hey there", "good morning", "good evening")
+    if any(signal in text for signal in greeting_signals) and len(text) < 50:
+        return [DEFAULT_AGENT_NAME]
+
+    photo_signals = (
+        "diagram plan",
+        "diagram for",
+        "sketch a",
+        "sketch ",
+        "draw a diagram",
+        "draw a diagram plan",
+        "draw a plan",
+        "image plan",
+        "visual layout",
+        "illustration plan",
+        "icon design",
+    )
+    video_signals = (
+        "video script",
+        "storyboard",
+        "shot list",
+        "edit plan",
+        "-second video",
+        "second video",
+    )
+    audio_signals = (
+        "podcast intro",
+        "podcast outline",
+        "podcast episode",
+        "voiceover",
+        "narration script",
+        "audio outline",
+    )
+    coder_signals = (
+        "write a python",
+        "write python",
+        "debug ",
+        "refactor ",
+        "fastapi",
+        "hello-world",
+        "hello world",
+        "sort function",
+        "cli tool",
+        "build a ",
+        "code ",
+    )
+    research_signals = (
+        "explain ",
+        "what is ",
+        "how does ",
+        "tell me about",
+        "summarize ",
+        "compare ",
+        "research ",
+    )
+
+    if any(signal in text for signal in photo_signals):
+        agents.append("photo")
+    if any(signal in text for signal in video_signals):
+        agents.append("video")
+    if any(signal in text for signal in audio_signals):
+        agents.append("audio")
+    if any(signal in text for signal in coder_signals):
+        agents.append("coder")
+    if any(signal in text for signal in research_signals):
+        agents.append("researcher")
+
+    return _dedupe_known_agents(agents) or [DEFAULT_AGENT_NAME]
 
 
 def _dedupe_known_agents(agents: list[str]) -> list[str]:
@@ -51,17 +161,17 @@ def parse_routing_decision(raw: str, fallback_task: str) -> RoutingDecision:
         data = json.loads(payload)
         decision = RoutingDecision.model_validate(data)
     except (json.JSONDecodeError, ValueError) as exc:
-        logger.warning("Failed to parse routing decision; using fallback: %s", exc)
+        logger.warning("Failed to parse routing decision; using keyword fallback: %s", exc)
         return RoutingDecision(
-            active_agents=[DEFAULT_AGENT_NAME],
+            active_agents=_infer_agents_from_keywords(fallback_task),
             current_task=fallback_task,
         )
 
     known_agents = _dedupe_known_agents(decision.active_agents)
     if not known_agents:
-        logger.warning("Routing decision had no active agents; using fallback.")
+        logger.warning("Routing decision had no active agents; using keyword fallback.")
         return RoutingDecision(
-            active_agents=[DEFAULT_AGENT_NAME],
+            active_agents=_infer_agents_from_keywords(fallback_task),
             current_task=decision.current_task or fallback_task,
             search_queries=_normalize_search_queries(decision.search_queries),
         )

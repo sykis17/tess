@@ -85,6 +85,53 @@ export function formatStageLabel(stage: string): string {
   return STAGE_LABELS[stage as PipelineStageId] ?? stage;
 }
 
+function agentsForCurrentStage(
+  stage: string | null | undefined,
+  agentsInvolved: string[],
+): string[] {
+  if (!stage) {
+    return agentsInvolved.filter(
+      (name) =>
+        !ROUTING_NAMES.has(name) &&
+        !COMBINING_NAMES.has(name) &&
+        !DEFENSE_NAMES.has(name) &&
+        !PRESENTING_NAMES.has(name) &&
+        name !== "Resource Finder" &&
+        name !== "Resource Reader",
+    );
+  }
+
+  switch (stage) {
+    case "routing":
+      return agentsInvolved.filter((name) => ROUTING_NAMES.has(name));
+    case "combining":
+      return agentsInvolved.filter((name) => COMBINING_NAMES.has(name));
+    case "defense":
+      return agentsInvolved.filter((name) => DEFENSE_NAMES.has(name));
+    case "presenting":
+      return agentsInvolved.filter((name) => PRESENTING_NAMES.has(name));
+    case "agents":
+    default:
+      return agentsInvolved.filter(
+        (name) =>
+          !ROUTING_NAMES.has(name) &&
+          !COMBINING_NAMES.has(name) &&
+          !DEFENSE_NAMES.has(name) &&
+          !PRESENTING_NAMES.has(name) &&
+          name !== "Resource Finder" &&
+          name !== "Resource Reader",
+      );
+  }
+}
+
+function formatStatusSubtitle(panel: Panel): string {
+  const content = panel.content;
+  if (panel.is_streaming && content.length > 100) {
+    return `${content.slice(0, 100).trim()}…`;
+  }
+  return content;
+}
+
 function isInFlight(panel: Panel): boolean {
   return panel.status === "processing" || panel.status === "review_passed";
 }
@@ -155,27 +202,19 @@ export function usePipelineStatus(
     return predictedStages(profile, agents);
   }, [earliestProcessing, focusPanel]);
 
-  const specialistAgents = useMemo(() => {
+  const stageAgents = useMemo(() => {
     const agents = focusPanel?.agents_involved ?? [];
-    return agents.filter(
-      (name) =>
-        !ROUTING_NAMES.has(name) &&
-        !COMBINING_NAMES.has(name) &&
-        !DEFENSE_NAMES.has(name) &&
-        !PRESENTING_NAMES.has(name) &&
-        name !== "Resource Finder" &&
-        name !== "Resource Reader",
-    );
+    return agentsForCurrentStage(focusPanel?.pipeline_stage, agents);
   }, [focusPanel]);
 
   return {
     visible: isProcessing && focusPanel !== null,
     currentStage: focusPanel?.pipeline_stage ?? null,
     predictedSteps,
-    activeAgents: specialistAgents,
+    activeAgents: stageAgents,
     subtitle:
       focusPanel && focusPanel.status !== "completed"
-        ? focusPanel.content
+        ? formatStatusSubtitle(focusPanel)
         : null,
     elapsedMs,
     focusPanelId: focusPanel?.panel_id ?? null,

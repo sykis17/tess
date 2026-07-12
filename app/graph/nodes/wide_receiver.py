@@ -7,14 +7,16 @@ from app.graph.chain_gates import allows_search
 from app.graph.combiner_utils import combiner_pipeline_names, should_predict_combiners
 from app.graph.defense_utils import defense_pipeline_names, should_predict_defense
 from app.graph.fan_in_utils import build_expected_fan_in_branches
+from app.graph.panel_stream import publish_panel
 from app.graph.pipeline_stages import PipelineStage
+from app.graph.progress_utils import generate_with_progress_heartbeat
 from app.graph.prompts import build_wr_system_prompt
 from app.graph.routing import parse_routing_decision
 from app.graph.schemas import AgentTrace, Panel
 from app.graph.state import GraphState
 from app.graph.trace_utils import conversation_turn_count, format_history_input, truncate_preview
 from app.llm.factory import create_llm
-from app.llm.types import LLMMessage, LLMRequest
+from app.llm.types import LLMMessage
 
 logger = logging.getLogger(__name__)
 
@@ -61,20 +63,42 @@ async def wide_receiver_node(state: GraphState) -> dict[str, Any]:
         LLMMessage(role="user", content=user_input),
     ]
 
+    session_id = state.get("session_id", "")
+    progress_panel = Panel(
+        panel_id=state["panel_id"],
+        folder_path=_resolve_folder_path_for_agent("general_assistant"),
+        status="processing",
+        content_type="markdown",
+        content="Analyzing your request and selecting agents…",
+        follow_up_options=[],
+        agents_involved=["Wide Receiver"],
+        agent_traces=state.get("agent_traces", []),
+        product_mode=product_mode if product_mode != "auto" else None,
+        output_level=chain_profile,
+        pipeline_stage=PipelineStage.ROUTING,
+    )
+    if session_id:
+        publish_panel(progress_panel, session_id)
+
     llm = create_llm()
-    response = await llm.generate(LLMRequest(messages=messages))
+    response_content = await generate_with_progress_heartbeat(
+        llm=llm,
+        messages=messages,
+        panel=progress_panel,
+        session_id=session_id,
+        working_label="**Wide Receiver** — routing your request",
+    )
     decision = parse_routing_decision(
-        response.content,
+        response_content,
         fallback_task=user_input,
         product_mode=product_mode,
         chain_profile=chain_profile,
     )
 
     logger.info(
-        "Wide Receiver routed to %s via %s (%s); task=%s",
+        "Wide Receiver routed to %s via %s; task=%s",
         decision.active_agents,
-        response.provider,
-        response.model,
+        llm.provider.value,
         decision.current_task,
     )
 

@@ -11,12 +11,13 @@ from app.graph.combiner_utils import (
 )
 from app.graph.panel_stream import publish_panel
 from app.graph.pipeline_stages import PipelineStage
+from app.graph.progress_utils import generate_with_progress_heartbeat
 from app.graph.prompts import build_combiner_mayor_prompt
 from app.graph.schemas import AgentTrace, OUTPUT_PREVIEW_MAX_CHARS, Panel
 from app.graph.state import GraphState
 from app.graph.trace_utils import truncate_preview
 from app.llm.factory import create_llm
-from app.llm.types import LLMMessage, LLMRequest
+from app.llm.types import LLMMessage
 
 logger = logging.getLogger(__name__)
 
@@ -47,23 +48,23 @@ async def combiner_mayor_node(state: GraphState) -> dict[str, Any]:
 
     logger.info("Combiner Mayor synthesizing %d mayor data entries", len(mayor_data))
 
-    publish_panel(
-        Panel(
-            panel_id=state["panel_id"],
-            folder_path=_resolve_folder_path(state),
-            status="processing",
-            content_type="markdown",
-            content=_synthesis_progress_message(active_agents),
-            follow_up_options=[],
-            agents_involved=build_agents_involved(state, include_combiners=True),
-            agent_traces=state.get("agent_traces", []),
-            data_tier="micro",
-            pov_sources=pov_sources,
-            output_level=state.get("chain_profile"),
-            pipeline_stage=PipelineStage.COMBINING,
-        ),
-        state.get("session_id", ""),
+    progress_panel = Panel(
+        panel_id=state["panel_id"],
+        folder_path=_resolve_folder_path(state),
+        status="processing",
+        content_type="markdown",
+        content=_synthesis_progress_message(active_agents),
+        follow_up_options=[],
+        agents_involved=build_agents_involved(state, include_combiners=True),
+        agent_traces=state.get("agent_traces", []),
+        data_tier="micro",
+        pov_sources=pov_sources,
+        output_level=state.get("chain_profile"),
+        pipeline_stage=PipelineStage.COMBINING,
     )
+    session_id = state.get("session_id", "")
+    if session_id:
+        publish_panel(progress_panel, session_id)
 
     mayor_text = serialize_mayor_data_for_llm(mayor_data, active_agents)
     user_message = (
@@ -80,14 +81,19 @@ async def combiner_mayor_node(state: GraphState) -> dict[str, Any]:
 
     llm_start = time.monotonic()
     llm = create_llm()
-    response = await llm.generate(LLMRequest(messages=messages))
+    response_content = await generate_with_progress_heartbeat(
+        llm=llm,
+        messages=messages,
+        panel=progress_panel,
+        session_id=session_id,
+        working_label="**Combiner Mayor** — sorting and cataloging perspectives",
+    )
     llm_elapsed = time.monotonic() - llm_start
-    micro_data = parse_micro_data_json(response.content, mayor_data, active_agents)
+    micro_data = parse_micro_data_json(response_content, mayor_data, active_agents)
 
     logger.info(
-        "Combiner Mayor completed via %s (%s); segments=%d; llm=%.1fs",
-        response.provider,
-        response.model,
+        "Combiner Mayor completed via %s; segments=%d; llm=%.1fs",
+        llm.provider.value,
         len(micro_data.segments),
         llm_elapsed,
     )

@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     search_cache_ttl_seconds: int = 3600
 
     stream_throttle_ms: int = 75
+    progress_heartbeat_seconds: float = 10.0
+
+    pipeline_soft_time_limit_seconds: int = 900
+    pipeline_hard_time_limit_seconds: int = 910
 
 
 settings = Settings()

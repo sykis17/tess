@@ -11,12 +11,13 @@ from app.graph.combiner_utils import (
 )
 from app.graph.panel_stream import publish_panel
 from app.graph.pipeline_stages import PipelineStage
+from app.graph.progress_utils import generate_with_progress_heartbeat
 from app.graph.prompts import build_combiner_micro_prompt
 from app.graph.schemas import AgentTrace, OUTPUT_PREVIEW_MAX_CHARS, Panel
 from app.graph.state import GraphState
 from app.graph.trace_utils import truncate_preview
 from app.llm.factory import create_llm
-from app.llm.types import LLMMessage, LLMRequest
+from app.llm.types import LLMMessage
 
 logger = logging.getLogger(__name__)
 
@@ -48,24 +49,24 @@ async def combiner_micro_node(state: GraphState) -> dict[str, Any]:
 
     current_task = state.get("current_task") or state["user_input"]
     segment_count = len(micro_data.segments)
+    session_id = state.get("session_id", "")
 
-    publish_panel(
-        Panel(
-            panel_id=state["panel_id"],
-            folder_path=_resolve_folder_path(state),
-            status="processing",
-            content_type="markdown",
-            content=f"Refining answer segments ({segment_count} cataloged themes)…",
-            follow_up_options=[],
-            agents_involved=build_agents_involved(state, include_combiners=True),
-            agent_traces=state.get("agent_traces", []),
-            data_tier="usable",
-            pov_sources=pov_sources,
-            output_level=state.get("chain_profile"),
-            pipeline_stage=PipelineStage.COMBINING,
-        ),
-        state.get("session_id", ""),
+    progress_panel = Panel(
+        panel_id=state["panel_id"],
+        folder_path=_resolve_folder_path(state),
+        status="processing",
+        content_type="markdown",
+        content=f"Refining answer segments ({segment_count} cataloged themes)…",
+        follow_up_options=[],
+        agents_involved=build_agents_involved(state, include_combiners=True),
+        agent_traces=state.get("agent_traces", []),
+        data_tier="usable",
+        pov_sources=pov_sources,
+        output_level=state.get("chain_profile"),
+        pipeline_stage=PipelineStage.COMBINING,
     )
+    if session_id:
+        publish_panel(progress_panel, session_id)
 
     micro_text = serialize_micro_data_for_llm(micro_data)
     user_message = f"Task: {current_task}\n\nMicro data to refine:\n\n{micro_text}"
@@ -81,14 +82,19 @@ async def combiner_micro_node(state: GraphState) -> dict[str, Any]:
 
     llm_start = time.monotonic()
     llm = create_llm()
-    response = await llm.generate(LLMRequest(messages=messages))
+    response_content = await generate_with_progress_heartbeat(
+        llm=llm,
+        messages=messages,
+        panel=progress_panel,
+        session_id=session_id,
+        working_label="**Combiner Micro** — deduplicating and refining segments",
+    )
     llm_elapsed = time.monotonic() - llm_start
-    usable_answers = parse_usable_answers_json(response.content, micro_data)
+    usable_answers = parse_usable_answers_json(response_content, micro_data)
 
     logger.info(
-        "Combiner Micro completed via %s (%s); segments=%d; llm=%.1fs",
-        response.provider,
-        response.model,
+        "Combiner Micro completed via %s; segments=%d; llm=%.1fs",
+        llm.provider.value,
         len(usable_answers),
         llm_elapsed,
     )

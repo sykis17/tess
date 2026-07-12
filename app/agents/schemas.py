@@ -1,4 +1,9 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
+
+AgentKind = Literal["topic", "tool", "media"]
+AgentDepth = Literal["major", "minor"]
 
 
 class AgentConfig(BaseModel):
@@ -8,6 +13,9 @@ class AgentConfig(BaseModel):
     folder_path: str
     description: str
     system_prompt: str
+    subject: str | None = None
+    depth: AgentDepth | None = None
+    agent_kind: AgentKind = "tool"
 
 
 class RoutingDecision(BaseModel):

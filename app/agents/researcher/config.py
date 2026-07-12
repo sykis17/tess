@@ -9,4 +9,5 @@ RESEARCHER_CONFIG = AgentConfig(
         "questions such as what something is or how it works."
     ),
     system_prompt=RESEARCHER_SYSTEM_PROMPT,
+    agent_kind="tool",
 )

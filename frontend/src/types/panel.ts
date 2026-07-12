@@ -60,6 +60,12 @@ export function formatAgentDisplayName(registryKey: string): string {
     photo: "Photo",
     video: "Video",
     audio: "Audio",
+    chemistry_major: "Chemistry Major",
+    chemistry_minor: "Chemistry Minor",
+    biology_major: "Biology Major",
+    biology_minor: "Biology Minor",
+    economics_major: "Economics Major",
+    economics_minor: "Economics Minor",
   };
   if (overrides[registryKey]) {
     return overrides[registryKey];

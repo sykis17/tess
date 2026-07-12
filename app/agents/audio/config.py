@@ -9,4 +9,5 @@ AUDIO_CONFIG = AgentConfig(
         "narration drafts, and audio metadata plans."
     ),
     system_prompt=AUDIO_SYSTEM_PROMPT,
+    agent_kind="media",
 )

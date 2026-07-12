@@ -9,4 +9,5 @@ CODER_CONFIG = AgentConfig(
         "and software development questions."
     ),
     system_prompt=CODER_SYSTEM_PROMPT,
+    agent_kind="tool",
 )

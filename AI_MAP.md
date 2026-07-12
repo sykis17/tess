@@ -119,12 +119,12 @@ Each mode influences WR routing (which topic/specialist agents to alarm) and whi
 
 ---
 
-## Current Implementation (Phase 14)
+## Current Implementation (Phase 15)
 
-What is **built and deployed today** is a parallel multi-specialist chain with optional search, combiner synthesis, media specialists, and a Defense QA gate before Presenter. WR can alarm 1–3 specialists (topic + media) and optionally trigger web search; they run concurrently via LangGraph `Send` fan-out. Multi-agent or search-grounded paths pass through Combiner Mayor → Combiner Micro → Collector; all paths pass through Defense before Presenter.
+What is **built and deployed today** is a parallel multi-specialist chain with school-subject topic agents (major/minor depth), optional search, combiner synthesis, media specialists, and a Defense QA gate before Presenter. WR can alarm 1–3 specialists (topic + tool/media) and optionally trigger web search; they run concurrently via LangGraph `Send` fan-out. Multi-agent or search-grounded paths pass through Combiner Mayor → Combiner Micro → Collector; all paths pass through Defense before Presenter.
 
 ```
-START → wide_receiver → [parallel: coder | researcher | general_assistant | photo | video | audio] + [optional: resource_finder → resource_reader]
+START → wide_receiver → [parallel: topic agents (major/minor) | coder | researcher | general_assistant | photo | video | audio] + [optional: resource_finder → resource_reader]
       → post_fan_in → [bypass → defense | combiners → defense] → presenter → END
 ```
 
@@ -143,7 +143,7 @@ defense_delegator → defense_review → [pass → presenter | revise → combin
 | Node | Status | Notes |
 |------|--------|-------|
 | Wide Receiver | ✅ Live | Routes to 1–3 specialists; emits `search_queries` (0–1) when sources needed |
-| Topic Agents (subjects) | 🟡 Partial | Coder / Researcher run in parallel as early stand-ins, not full subject matrix |
+| Topic Agents (subjects) | ✅ Live | Chemistry, Biology, Economics — major + minor variants; `researcher` fallback for off-matrix topics |
 | Specialist Agents (media) | ✅ Live | Photo, Video, Audio — diagram plans, scripts, outlines (text-first; URL when provided) |
 | Search | ✅ Live | Resource finder (DuckDuckGo / Tavily) → resource reader; feeds `mayor_data` with citations |
 | Combiner Mayor | ✅ Live | Aggregates `mayor_data` → `micro_data` (cross-topic synthesis) |
@@ -153,18 +153,31 @@ defense_delegator → defense_review → [pass → presenter | revise → combin
 | Defense Review | ✅ Live | Single LLM call returns all three checks per segment; emits `review_passed` Panel |
 | Presenter | ✅ Live | Reads approved `usable_answers`; emits `completed` Panel after defense pass |
 
-**Bypass rule:** Skip combiners when `len(mayor_data) <= 1` and no `resource_reader` entry — single-agent prompts stay fast. Defense always runs (lightweight single-check review on all paths).
+**Bypass rule:** Skip combiners when `len(active_agents) <= 1` and no `resource_reader` entry — single-agent prompts stay fast. Defense always runs (lightweight single-check review on all paths).
 
-**Defense retry:** On `revise`, loops back to `combiner_micro` (synthesis path) or originating specialist (bypass path); capped at `MAX_DEFENSE_RETRIES=2`. Phase 13.1: fan-in join waits for all parallel branches; refusal auto-revise; WR routes factual topics to researcher.
+**Defense retry:** On `revise`, loops back to `combiner_micro` (synthesis path) or originating specialist (bypass path); capped at `MAX_DEFENSE_RETRIES=2`. Phase 13.1: fan-in join waits for all parallel branches; refusal auto-revise; WR routes listed subjects to topic agents, off-matrix factual topics to researcher.
 
 **Fan-in join (13.1):** `post_fan_in` waits until all expected branches (`active_agents` + optional `resource_reader`) report done before routing downstream.
 
-### Live Specialist Agents
+### Live Topic Agents (Phase 15)
+
+| Agent | `folder_path` | Depth | Routes when |
+|-------|---------------|-------|-------------|
+| `chemistry_major` | `Science/Chemistry` | major | In-depth chemistry, lab concepts, bonding, reactions |
+| `chemistry_minor` | `Science/Chemistry` | minor | Brief chemistry overviews |
+| `biology_major` | `Science/Biology` | major | In-depth biology, cells, genetics, ecosystems |
+| `biology_minor` | `Science/Biology` | minor | Brief biology overviews |
+| `economics_major` | `Social Studies/Economics` | major | In-depth economics, markets, supply/demand |
+| `economics_minor` | `Social Studies/Economics` | minor | Brief economics overviews |
+
+Topic agents set `MayorData.topic` (subject name) and `MayorData.depth` (`major` or `minor`). Subject registry: `app/agents/subjects/registry.py`.
+
+### Live Tool & Media Agents
 
 | Agent | `folder_path` | Routes when |
 |-------|---------------|-------------|
 | `coder` | `Coding/Projects` | Code generation, debugging, refactoring |
-| `researcher` | `Research/Topics` | Factual research, explanations, summaries |
+| `researcher` | `Research/Topics` | Factual research for off-matrix topics (Kubernetes, history, etc.) |
 | `general_assistant` | `Assistant/General` | Casual chat and general tasks |
 | `photo` | `Media/Photo` | Diagram plans, image descriptions, visual layouts |
 | `video` | `Media/Video` | Video scripts, storyboards, edit plans |
@@ -228,7 +241,7 @@ A high-value research feature: let the user **select an output level** and compa
 | Search nodes | `app/graph/nodes/resource_finder.py`, `app/graph/nodes/resource_reader.py` |
 | Search utilities | `app/search/provider.py`, `app/search/fetcher.py`, `app/search/extractor.py` |
 | Specialist nodes | `app/graph/nodes/<name>.py` |
-| Agent registry | `app/agents/registry.py` |
+| Agent registry | `app/agents/registry.py`, `app/agents/subjects/registry.py` |
 | Shared specialist runner | `app/agents/base.py` |
 | Presenter | `app/graph/nodes/presenter.py` |
 | Panel schema | `app/graph/schemas.py`, `SCHEMA.md` |

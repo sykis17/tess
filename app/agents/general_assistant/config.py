@@ -9,4 +9,5 @@ GENERAL_ASSISTANT_CONFIG = AgentConfig(
         "require dedicated coding or research specialists."
     ),
     system_prompt=GENERAL_ASSISTANT_SYSTEM_PROMPT,
+    agent_kind="tool",
 )

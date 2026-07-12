@@ -76,7 +76,8 @@ async def run_specialist(state: GraphState, agent_name: str) -> dict[str, Any]:
     mayor_entry = MayorData(
         source_agent=agent_name,
         content=response.content,
-        topic=agent.description,
+        topic=agent.subject or agent.description,
+        depth=agent.depth,
     )
 
     return {

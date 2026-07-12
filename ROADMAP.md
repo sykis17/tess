@@ -17,6 +17,7 @@
 - [x] **Phase 13:** Defense layer — Defense Delegator + Defense Review (single LLM, three checks per segment); `review_passed` Panel before `completed`; bounded revise loops to combiner_micro or specialist; `DefenseReview` live in schemas.
 - [x] **Phase 13.1:** Fan-in join fix; WR routes factual/explore topics to researcher; GA prompt anti-refusal; defense auto-revise on refusal phrases.
 - [x] **Phase 14:** Media specialist agents — Photo, Video, Audio; Panel `content_type` audio/video; WR routes media alongside topic agents; text-first plans/scripts (Option A).
+- [x] **Phase 15:** Topic agent matrix — Chemistry, Biology, Economics (major + minor); subject registry; auto-generated WR rules; `MayorData.depth`/`topic`; researcher fallback for off-matrix topics.
 
 ---
 
@@ -24,12 +25,10 @@
 
 Phases below map to the [target architecture](AI_MAP.md#target-ai-chain-full-vision). Each phase should keep backward-compatible Panels and deployable increments.
 
-### Phase 15 — Topic agent matrix
+### Phase 15 follow-up (Option B — future)
 
-- School-subject topic agents (major + minor depth variants).
-- Subject registry mirroring `app/agents/` pattern.
-- WR prompt auto-generated from full subject list.
-- Folder paths per subject (e.g. `Science/Chemistry`, `Math/Algebra`).
+- Add Physics, Mathematics, History subject agents.
+- Retire researcher from WR prompt for covered subjects.
 
 ### Phase 16 — Product modes
 

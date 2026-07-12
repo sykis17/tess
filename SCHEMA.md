@@ -124,17 +124,17 @@ Wide Receiver routing JSON. Supports 1–3 agents per message (capped at 3) and 
 
 Internal graph state types for the full chain. `MayorData` is live in Phase 10–11; `MicroData` and `UsableAnswer` are live in Phase 12.
 
-### MayorData (live — Phase 10–11)
+### MayorData (live — Phase 10–15)
 
-Raw output from a topic agent, specialist, or search reader. Stored in graph state via reducer; merged by Presenter. `resource_reader` populates `citations`.
+Raw output from a topic agent, specialist, or search reader. Stored in graph state via reducer; merged by Presenter. `resource_reader` populates `citations`. Topic agents populate `topic` (subject name) and `depth` (`major` or `minor`).
 
 ```json
 {
-  "source_agent": "resource_reader",
-  "topic": "Web sources",
-  "depth": null,
-  "content": "### Article title\n\nExtracted excerpt...",
-  "citations": ["[Article title](https://example.com/article)"]
+  "source_agent": "chemistry_major",
+  "topic": "Chemistry",
+  "depth": "major",
+  "content": "### Ionic bonding\n\nIonic bonds form when...",
+  "citations": []
 }
 ```
 

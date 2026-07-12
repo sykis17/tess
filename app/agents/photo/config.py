@@ -9,4 +9,5 @@ PHOTO_CONFIG = AgentConfig(
         "illustration specs, and image composition guidance."
     ),
     system_prompt=PHOTO_SYSTEM_PROMPT,
+    agent_kind="media",
 )

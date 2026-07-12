@@ -9,4 +9,5 @@ VIDEO_CONFIG = AgentConfig(
         "scene breakdowns, and narration timing."
     ),
     system_prompt=VIDEO_SYSTEM_PROMPT,
+    agent_kind="media",
 )

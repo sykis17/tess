@@ -55,6 +55,8 @@ export function formatAgentDisplayName(registryKey: string): string {
     combiner_mayor: "Combiner Mayor",
     combiner_micro: "Combiner Micro",
     collector: "Collector",
+    defense_delegator: "Defense Delegator",
+    defense_review: "Defense Review",
   };
   if (overrides[registryKey]) {
     return overrides[registryKey];

@@ -3,7 +3,15 @@ from typing import Annotated
 
 from typing_extensions import TypedDict
 
-from app.graph.schemas import AgentTrace, MayorData, MicroData, Panel, SearchResult, UsableAnswer
+from app.graph.schemas import (
+    AgentTrace,
+    DefenseReview,
+    MayorData,
+    MicroData,
+    Panel,
+    SearchResult,
+    UsableAnswer,
+)
 from app.llm.types import LLMMessage
 
 
@@ -26,6 +34,9 @@ class GraphState(TypedDict):
     micro_data: MicroData | None
     usable_answers: list[UsableAnswer]
     combiners_bypassed: bool
+    defense_reviews: list[DefenseReview]
+    defense_retry_count: int
+    defense_notes: str
 
 
 def build_initial_state(
@@ -52,4 +63,7 @@ def build_initial_state(
         "micro_data": None,
         "usable_answers": [],
         "combiners_bypassed": False,
+        "defense_reviews": [],
+        "defense_retry_count": 0,
+        "defense_notes": "",
     }

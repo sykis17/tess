@@ -6,6 +6,8 @@ from app.graph.nodes.coder import coder_node
 from app.graph.nodes.combiner_mayor import combiner_mayor_node
 from app.graph.nodes.combiner_micro import combiner_micro_node
 from app.graph.nodes.collector import collector_node
+from app.graph.nodes.defense_delegator import defense_delegator_node
+from app.graph.nodes.defense_review import defense_review_node
 from app.graph.nodes.general_assistant import general_assistant_node
 from app.graph.nodes.post_fan_in import post_fan_in_node
 from app.graph.nodes.presenter import presenter_node
@@ -13,7 +15,7 @@ from app.graph.nodes.researcher import researcher_node
 from app.graph.nodes.resource_finder import resource_finder_node
 from app.graph.nodes.resource_reader import resource_reader_node
 from app.graph.nodes.wide_receiver import wide_receiver_node
-from app.graph.routing import fan_out_from_wr, route_after_fan_in
+from app.graph.routing import fan_out_from_wr, route_after_defense, route_after_fan_in
 from app.graph.state import GraphState
 
 _SPECIALIST_NODES = {
@@ -32,6 +34,8 @@ def build_graph() -> CompiledStateGraph:
     builder.add_node("combiner_mayor", combiner_mayor_node)
     builder.add_node("combiner_micro", combiner_micro_node)
     builder.add_node("collector", collector_node)
+    builder.add_node("defense_delegator", defense_delegator_node)
+    builder.add_node("defense_review", defense_review_node)
     builder.add_node("presenter", presenter_node)
     builder.add_node("resource_finder", resource_finder_node)
     builder.add_node("resource_reader", resource_reader_node)
@@ -48,7 +52,9 @@ def build_graph() -> CompiledStateGraph:
     builder.add_conditional_edges("post_fan_in", route_after_fan_in)
     builder.add_edge("combiner_mayor", "combiner_micro")
     builder.add_edge("combiner_micro", "collector")
-    builder.add_edge("collector", "presenter")
+    builder.add_edge("collector", "defense_delegator")
+    builder.add_edge("defense_delegator", "defense_review")
+    builder.add_conditional_edges("defense_review", route_after_defense)
     builder.add_edge("presenter", END)
 
     return builder.compile()

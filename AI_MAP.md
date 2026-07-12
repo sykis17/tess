@@ -119,19 +119,25 @@ Each mode influences WR routing (which topic/specialist agents to alarm) and whi
 
 ---
 
-## Current Implementation (Phase 12)
+## Current Implementation (Phase 13)
 
-What is **built and deployed today** is a parallel multi-specialist chain with optional search and combiner synthesis. WR can alarm 1–3 specialists and optionally trigger web search; they run concurrently via LangGraph `Send` fan-out. Multi-agent or search-grounded paths pass through Combiner Mayor → Combiner Micro → Collector before Presenter.
+What is **built and deployed today** is a parallel multi-specialist chain with optional search, combiner synthesis, and a Defense QA gate before Presenter. WR can alarm 1–3 specialists and optionally trigger web search; they run concurrently via LangGraph `Send` fan-out. Multi-agent or search-grounded paths pass through Combiner Mayor → Combiner Micro → Collector; all paths pass through Defense before Presenter.
 
 ```
 START → wide_receiver → [parallel: coder | researcher | general_assistant] + [optional: resource_finder → resource_reader]
-      → post_fan_in → [bypass → presenter | combiners → presenter] → END
+      → post_fan_in → [bypass → defense | combiners → defense] → presenter → END
 ```
 
 Combiner chain (when not bypassed):
 
 ```
-post_fan_in → combiner_mayor → combiner_micro → collector → presenter
+post_fan_in → combiner_mayor → combiner_micro → collector → defense_delegator → defense_review → presenter
+```
+
+Defense chain (all paths):
+
+```
+defense_delegator → defense_review → [pass → presenter | revise → combiner_micro or specialist (bounded retries)]
 ```
 
 | Node | Status | Notes |
@@ -143,10 +149,13 @@ post_fan_in → combiner_mayor → combiner_micro → collector → presenter
 | Combiner Mayor | ✅ Live | Aggregates `mayor_data` → `micro_data` (cross-topic synthesis) |
 | Combiner Micro | ✅ Live | Refines `micro_data` → `usable_answers` (3–5 segments) |
 | Collector | ✅ Live | Deterministic sort by `order_hint` |
-| Defense | ⬜ Planned | Phase 13 |
-| Presenter | ✅ Live | Reads `usable_answers` from collector path; bypass path merges `mayor_data` directly |
+| Defense Delegator | ✅ Live | Normalizes segments for review (wraps bypass `mayor_data` when needed) |
+| Defense Review | ✅ Live | Single LLM call returns all three checks per segment; emits `review_passed` Panel |
+| Presenter | ✅ Live | Reads approved `usable_answers`; emits `completed` Panel after defense pass |
 
-**Bypass rule:** Skip combiners when `len(mayor_data) <= 1` and no `resource_reader` entry — single-agent prompts stay fast (Phase 11 UX).
+**Bypass rule:** Skip combiners when `len(mayor_data) <= 1` and no `resource_reader` entry — single-agent prompts stay fast. Defense always runs (lightweight single-check review on all paths).
+
+**Defense retry:** On `revise`, loops back to `combiner_micro` (synthesis path) or originating specialist (bypass path); capped at `MAX_DEFENSE_RETRIES=2`.
 
 ### Live Specialist Agents
 
@@ -206,6 +215,8 @@ A high-value research feature: let the user **select an output level** and compa
 |------|------|
 | Graph definition | `app/graph/builder.py` |
 | Combiner nodes | `app/graph/nodes/combiner_mayor.py`, `combiner_micro.py`, `collector.py`, `post_fan_in.py` |
+| Defense nodes | `app/graph/nodes/defense_delegator.py`, `defense_review.py` |
+| Defense utilities | `app/graph/defense_utils.py` |
 | Combiner utilities | `app/graph/combiner_utils.py` |
 | WR routing | `app/graph/nodes/wide_receiver.py`, `app/graph/routing.py` |
 | Search nodes | `app/graph/nodes/resource_finder.py`, `app/graph/nodes/resource_reader.py` |

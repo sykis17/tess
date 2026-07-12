@@ -91,7 +91,31 @@ def fan_out_to_specialists(state: dict) -> list[Send]:
 
 
 def route_after_fan_in(state: dict) -> str:
-    """Route to combiners or directly to presenter after parallel fan-in."""
+    """Route to combiners or defense after parallel fan-in."""
     if state.get("combiners_bypassed"):
-        return "presenter"
+        return "defense_delegator"
     return "combiner_mayor"
+
+
+def route_after_defense(state: dict) -> str:
+    """Route to presenter or retry target after defense review."""
+    from app.agents.registry import AGENT_REGISTRY, DEFAULT_AGENT_NAME
+    from app.graph.defense_utils import (
+        MAX_DEFENSE_RETRIES,
+        all_segments_approved,
+        resolve_retry_specialist,
+    )
+
+    reviews = state.get("defense_reviews") or []
+    retry_count = state.get("defense_retry_count") or 0
+
+    if all_segments_approved(reviews) or retry_count >= MAX_DEFENSE_RETRIES:
+        return "presenter"
+
+    if state.get("combiners_bypassed"):
+        agent = resolve_retry_specialist(state)
+        if agent in AGENT_REGISTRY:
+            return agent
+        return DEFAULT_AGENT_NAME
+
+    return "combiner_micro"

@@ -42,6 +42,9 @@ async def combiner_micro_node(state: GraphState) -> dict[str, Any]:
     current_task = state.get("current_task") or state["user_input"]
     micro_text = serialize_micro_data_for_llm(micro_data)
     user_message = f"Task: {current_task}\n\nMicro data to refine:\n\n{micro_text}"
+    defense_notes = (state.get("defense_notes") or "").strip()
+    if defense_notes:
+        user_message += f"\n\nDefense revision notes (address these):\n{defense_notes}"
 
     messages: list[LLMMessage] = [
         LLMMessage(role="system", content=COMBINER_MICRO_SYSTEM_PROMPT),
@@ -89,4 +92,9 @@ async def combiner_micro_node(state: GraphState) -> dict[str, Any]:
         "usable_answers": usable_answers,
         "agent_traces": [trace],
         "panels": [intermediate_panel],
+        "defense_retry_count": (
+            (state.get("defense_retry_count") or 0) + 1
+            if defense_notes
+            else (state.get("defense_retry_count") or 0)
+        ),
     }

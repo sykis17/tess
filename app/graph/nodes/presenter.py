@@ -2,9 +2,12 @@ from typing import Any
 
 from app.agents.registry import DEFAULT_AGENT_NAME, format_agent_display_name, get_agent
 from app.graph.combiner_utils import (
-    build_agents_involved,
     format_usable_answers_markdown,
     order_mayor_data,
+)
+from app.graph.defense_utils import (
+    build_agents_involved_with_defense,
+    defense_exhausted_retries,
 )
 from app.graph.schemas import DEFAULT_FOLLOW_UP_OPTIONS, AgentTrace, MayorData, Panel
 from app.graph.state import GraphState
@@ -96,16 +99,31 @@ def presenter_node(state: GraphState) -> dict[str, Any]:
     collected_data = state["collected_data"]
     active_agents = state.get("active_agents") or []
     combiners_bypassed = state.get("combiners_bypassed", True)
+    defense_ran = bool(state.get("defense_reviews"))
+    exhausted = defense_exhausted_retries(state)
 
     if usable_answers:
-        content = format_usable_answers_markdown(usable_answers)
+        if defense_ran and not exhausted:
+            approved = [answer for answer in usable_answers if answer.review_status == "approved"]
+            content = format_usable_answers_markdown(approved or usable_answers)
+        elif defense_ran and exhausted:
+            best_effort = [
+                answer.model_copy(update={"review_status": "approved"})
+                for answer in usable_answers
+            ]
+            content = format_usable_answers_markdown(best_effort)
+        else:
+            content = format_usable_answers_markdown(usable_answers)
     elif mayor_data:
         content = _format_mayor_data(mayor_data, active_agents)
     else:
         content = _format_collected_data(collected_data)
 
     include_combiners = not combiners_bypassed and bool(usable_answers)
-    agents_involved = build_agents_involved(state, include_combiners=include_combiners)
+    agents_involved = build_agents_involved_with_defense(
+        state,
+        include_combiners=include_combiners,
+    )
 
     presenter_trace = AgentTrace(
         agent_name="presenter",
@@ -114,6 +132,7 @@ def presenter_node(state: GraphState) -> dict[str, Any]:
             f"mayor_data ({len(mayor_data)} entries)",
             f"collected_data ({len(collected_data)} entries)",
             f"combiners_bypassed ({combiners_bypassed})",
+            f"defense_reviews ({len(state.get('defense_reviews') or [])})",
             f"search_queries ({len(state.get('search_queries') or [])})",
         ],
         task_summary=state.get("current_task") or None,

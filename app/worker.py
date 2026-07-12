@@ -91,7 +91,7 @@ async def _run_graph_with_streaming(
     return merged
 
 
-@celery_app.task(name="process_user_input", soft_time_limit=420, time_limit=430)
+@celery_app.task(name="process_user_input", soft_time_limit=480, time_limit=490)
 def process_user_input(user_input: str, session_id: str) -> None:
     """Run the LangGraph chain and stream resulting Panels via Redis Pub/Sub."""
     channel = session_channel(session_id)

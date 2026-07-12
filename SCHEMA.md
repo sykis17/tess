@@ -154,7 +154,9 @@ Combiner Micro output — refined segment ready for collection.
 }
 ```
 
-### DefenseReview (planned — Phase 13)
+### DefenseReview (live — Phase 13)
+
+QA verdict per answer segment from Defense Review.
 
 ```json
 {
@@ -168,6 +170,14 @@ Combiner Micro output — refined segment ready for collection.
   "verdict": "revise"
 }
 ```
+
+Graph state fields (Phase 13):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `defense_reviews` | `list[DefenseReview]` | Latest review results per segment |
+| `defense_retry_count` | `int` | Bounded retry counter (max 2) |
+| `defense_notes` | `str` | Aggregated revise notes injected into retry prompts |
 
 ---
 

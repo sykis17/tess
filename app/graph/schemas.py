@@ -6,6 +6,8 @@ PanelStatus = Literal["processing", "review_passed", "completed"]
 ContentType = Literal["markdown", "code", "image"]
 DataTier = Literal["mayor", "micro", "usable", "final"]
 ReviewStatus = Literal["pending", "approved", "revise"]
+CheckVerdict = Literal["pass", "revise"]
+DefenseVerdict = Literal["pass", "revise", "reject"]
 
 DEFAULT_FOLLOW_UP_OPTIONS: list[str] = [
     "Continue with this",
@@ -68,6 +70,23 @@ class UsableAnswer(BaseModel):
     title: str
     content: str
     review_status: ReviewStatus = "pending"
+
+
+class DefenseChecks(BaseModel):
+    """Per-segment QA check results from Defense Review."""
+
+    big_picture: CheckVerdict
+    detail: CheckVerdict
+    implication: CheckVerdict
+
+
+class DefenseReview(BaseModel):
+    """Defense QA verdict for a single answer segment."""
+
+    segment_id: str
+    checks: DefenseChecks
+    notes: str = ""
+    verdict: DefenseVerdict
 
 
 class Panel(BaseModel):

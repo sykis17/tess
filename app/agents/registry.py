@@ -19,6 +19,8 @@ _DISPLAY_NAME_OVERRIDES: dict[str, str] = {
     "combiner_mayor": "Combiner Mayor",
     "combiner_micro": "Combiner Micro",
     "collector": "Collector",
+    "defense_delegator": "Defense Delegator",
+    "defense_review": "Defense Review",
 }
 
 

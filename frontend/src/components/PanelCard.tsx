@@ -31,6 +31,7 @@ export function PanelCard({
   onFollowUp,
 }: PanelCardProps) {
   const isProcessing = status === "processing";
+  const isCompleted = status === "completed";
   const pipeline = formatPipeline(agentsInvolved);
 
   return (
@@ -93,7 +94,7 @@ export function PanelCard({
         </details>
       )}
 
-      {!isProcessing && followUpOptions.length > 0 && (
+      {!isProcessing && isCompleted && followUpOptions.length > 0 && (
         <footer className="panel-card__footer">
           {followUpOptions.map((option) => (
             <button

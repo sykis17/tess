@@ -37,7 +37,10 @@ export function useWebSocket(sessionId: string) {
         const data: unknown = JSON.parse(event.data as string);
 
         if (isWorkerError(data)) {
-          setLastError(data.message);
+          setLastError(
+            data.message?.trim() ||
+              "An unexpected error occurred while processing your request.",
+          );
           setIsProcessing(false);
           return;
         }

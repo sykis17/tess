@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 from typing import Any
+import asyncio
 
 import httpx
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -14,6 +15,11 @@ from app.llm.types import (
     extract_content,
     to_langchain_messages,
 )
+
+
+# Ollama on small hardware handles one inference at a time; serialize parallel graph
+# branches so queued requests do not burn their HTTP timeout waiting for the model.
+_ollama_request_lock = asyncio.Lock()
 
 
 class OllamaLLM(BaseLLM):
@@ -44,7 +50,8 @@ class OllamaLLM(BaseLLM):
 
     async def generate(self, request: LLMRequest) -> LLMResponse:
         lc_messages = to_langchain_messages(request.messages)
-        result = await self._model.ainvoke(lc_messages)
+        async with _ollama_request_lock:
+            result = await self._model.ainvoke(lc_messages)
         content = extract_content(result.content)
 
         return LLMResponse(
@@ -56,9 +63,10 @@ class OllamaLLM(BaseLLM):
 
     async def stream(self, request: LLMRequest) -> AsyncIterator[str]:
         lc_messages = to_langchain_messages(request.messages)
-        async for chunk in self._model.astream(lc_messages):
-            if chunk.content:
-                yield extract_content(chunk.content)
+        async with _ollama_request_lock:
+            async for chunk in self._model.astream(lc_messages):
+                if chunk.content:
+                    yield extract_content(chunk.content)
 
     async def ping(self) -> bool:
         """Check whether the Ollama server is reachable."""

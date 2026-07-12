@@ -15,7 +15,7 @@ class Settings(BaseSettings):
 
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2"
-    ollama_request_timeout_seconds: float = 120.0
+    ollama_request_timeout_seconds: float = 300.0
 
     default_llm_provider: str = "gemini"
 

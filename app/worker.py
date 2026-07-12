@@ -4,6 +4,7 @@ import logging
 import uuid
 from typing import Any
 
+import httpx
 from celery import Celery
 from celery.exceptions import SoftTimeLimitExceeded
 
@@ -31,6 +32,34 @@ _REDUCER_KEYS = frozenset({
     "search_results",
     "fan_in_branches_done",
 })
+
+
+def _format_worker_error(exc: Exception) -> str:
+    """Return a user-visible error message for worker failures."""
+    if isinstance(exc, SoftTimeLimitExceeded):
+        return (
+            "Request timed out. The server may be low on memory — try again in a moment."
+        )
+
+    if isinstance(
+        exc,
+        (
+            httpx.ReadTimeout,
+            httpx.ConnectTimeout,
+            httpx.TimeoutException,
+            TimeoutError,
+        ),
+    ):
+        return (
+            "The AI model took too long to respond. On multi-agent requests this can take "
+            "several minutes on a small server — please try again or use a simpler prompt."
+        )
+
+    message = str(exc).strip()
+    if message:
+        return message
+
+    return "An unexpected error occurred while processing your request. Please try again."
 
 
 def _publish_error(redis_client, channel: str, message: str) -> None:
@@ -120,15 +149,11 @@ def process_user_input(user_input: str, session_id: str) -> None:
 
         assistant_content = _extract_assistant_content(result)
         append_conversation_turn(session_id, user_input, assistant_content)
-    except SoftTimeLimitExceeded:
+    except SoftTimeLimitExceeded as exc:
         logger.error("Task timed out for session %s", session_id)
-        _publish_error(
-            redis_client,
-            channel,
-            "Request timed out. The server may be low on memory — try again in a moment.",
-        )
+        _publish_error(redis_client, channel, _format_worker_error(exc))
     except Exception as exc:
         logger.exception("Failed to process user input for session %s", session_id)
-        _publish_error(redis_client, channel, str(exc))
+        _publish_error(redis_client, channel, _format_worker_error(exc))
     finally:
         redis_client.close()

@@ -65,6 +65,7 @@ export function useWebSocket(sessionId: string) {
                   data.pov_sources && data.pov_sources.length > 0
                     ? data.pov_sources
                     : existing.pov_sources,
+                product_mode: data.product_mode ?? existing.product_mode,
               };
               return updated;
             }
@@ -108,12 +109,17 @@ export function useWebSocket(sessionId: string) {
     return () => window.clearTimeout(timer);
   }, [isProcessing]);
 
-  const sendMessage = useCallback((text: string) => {
+  const sendMessage = useCallback((text: string, productMode?: string) => {
     const ws = wsRef.current;
     if (ws?.readyState === WebSocket.OPEN) {
       setIsProcessing(true);
       setLastError(null);
-      ws.send(text);
+      const mode = productMode ?? "auto";
+      const payload =
+        mode === "auto"
+          ? text
+          : JSON.stringify({ text, product_mode: mode });
+      ws.send(payload);
     }
   }, []);
 

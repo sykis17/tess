@@ -12,6 +12,7 @@ from celery.exceptions import SoftTimeLimitExceeded
 from app.core.config import settings
 from app.core.conversation import append_conversation_turn, load_conversation_history
 from app.core.redis import create_sync_redis, session_channel
+from app.core.ws_payload import parse_incoming_payload
 from app.graph import compiled_graph
 from app.graph.combiner_utils import format_usable_answers_markdown
 from app.graph.schemas import Panel
@@ -151,15 +152,22 @@ async def _run_graph_with_streaming(
     soft_time_limit=PIPELINE_SOFT_TIME_LIMIT_SECONDS,
     time_limit=PIPELINE_HARD_TIME_LIMIT_SECONDS,
 )
-def process_user_input(user_input: str, session_id: str) -> None:
+def process_user_input(payload: str, session_id: str) -> None:
     """Run the LangGraph chain and stream resulting Panels via Redis Pub/Sub."""
     channel = session_channel(session_id)
     redis_client = create_sync_redis()
 
     try:
+        user_text, product_mode = parse_incoming_payload(payload)
         history = load_conversation_history(session_id)
         panel_id = str(uuid.uuid4())
-        initial_state = build_initial_state(user_input, history, panel_id=panel_id, session_id=session_id)
+        initial_state = build_initial_state(
+            user_text,
+            history,
+            panel_id=panel_id,
+            session_id=session_id,
+            product_mode=product_mode,
+        )
         result = asyncio.run(
             _run_graph_with_streaming(initial_state, redis_client, channel)
         )
@@ -171,7 +179,7 @@ def process_user_input(user_input: str, session_id: str) -> None:
             return
 
         assistant_content = _extract_assistant_content(result)
-        append_conversation_turn(session_id, user_input, assistant_content)
+        append_conversation_turn(session_id, user_text, assistant_content)
     except SoftTimeLimitExceeded as exc:
         logger.error("Task timed out for session %s", session_id)
         _publish_error(redis_client, channel, _format_worker_error(exc))

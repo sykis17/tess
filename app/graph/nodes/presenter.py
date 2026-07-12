@@ -191,6 +191,7 @@ def presenter_node(state: GraphState) -> dict[str, Any]:
         agent_traces=[*state.get("agent_traces", []), presenter_trace],
         data_tier="final" if usable_answers else None,
         pov_sources=collect_pov_sources(active_agents),
+        product_mode=state.get("product_mode") if state.get("product_mode") != "auto" else None,
     )
 
     return {

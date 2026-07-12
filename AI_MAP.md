@@ -77,8 +77,8 @@ flowchart TB
 | **POV Agents** | One per field of study / discipline (chemistry, art, ui_design, …); each answers from that lens | **Mayor data** — raw output tagged with `pov` |
 | **Specialist Agents** | Media and tool specialists (photo, video, audio, coder) | **Mayor data** — processed artifacts |
 | **Search** | Resource finder locates sources; resource reader extracts content | **Mayor data** — grounded excerpts and citations |
-| **Combiner Mayor** | Gathers all mayor data from parallel agents + search | **Micro data** — structured, cross-topic synthesis |
-| **Combiner Micro** | Refines micro data into coherent answer units | **Usable answers** — ranked, actionable segments |
+| **Combiner Mayor** | Gathers all mayor data from parallel agents + search | **Micro data** — sorted catalog with per-segment `source_agents` and `overlap_notes` |
+| **Combiner Micro** | Dedupes catalog into user-facing segments | **Usable answers** — consensus prose, no repeated themes (`source_agents` per segment) |
 | **Collector** | Collects usable answers and sorts them logically | Ordered answer set for presentation |
 | **Defense** | QA layer: delegator, review, big-picture check, detail check, implication check | Pass / revise / reject per segment |
 | **Presenter** | Formats collector output into typed Panel JSON for the frontend | `Panel` stream |
@@ -87,8 +87,8 @@ flowchart TB
 
 ```
 Mayor data  →  raw agent output (per topic / search / specialist)
-Micro data  →  cross-agent synthesis (Combiner Mayor)
-Usable answers  →  refined segments ready for review (Combiner Micro)
+Micro data  →  sorted catalog with overlap flags (Combiner Mayor)
+Usable answers  →  deduplicated consensus segments (Combiner Micro)
 Panel  →  user-facing payload (Presenter, after Defense)
 ```
 
@@ -98,8 +98,8 @@ User asks a multi-perspective question (e.g. *"Design a school app UI — cover 
 
 1. **WR** alarms e.g. `art` + `ui_design` + optional `coder` POV agents (+ `photo` for diagram plan).
 2. Each POV agent produces mayor data from its disciplinary lens.
-3. **Combiner Mayor** weaves perspectives into micro data (Art: visual hierarchy… / UI Design: patterns…).
-4. **Combiner Micro** → **Collector** → **Defense** (keep length reasonable, safe, aligned) → **Presenter**.
+3. **Combiner Mayor** catalogs and sorts perspectives; flags overlaps in `overlap_notes`.
+4. **Combiner Micro** deduplicates into consensus segments → **Collector** → **Defense** → **Presenter**.
 
 Legacy example (multi-subject factual): *"Compare renewable energy economics and chemistry"* → `economics` + `chemistry` POVs + optional search.
 
@@ -114,11 +114,11 @@ These are user-facing capabilities that WR routes into — not separate graphs, 
 | **Coding platform** | Code generation, debugging, project scaffolding |
 | **Builder** | Assembly of artifacts (docs, configs, multi-step outputs) |
 
-Each mode influences WR routing (which topic/specialist agents to alarm) and which combiner depth is needed.
+Each mode influences WR routing (which topic/specialist agents to alarm) and which combiner depth is needed. **Phase 16 (live):** mode selector in frontend header; `product_mode` travels WebSocket → worker → `GraphState` → WR prompts and routing nudges; echoed on Panels.
 
 ---
 
-## Current Implementation (Phase 15B — live)
+## Current Implementation (Phase 16 — live)
 
 The deployed graph uses **POV agents** — one disciplinary lens per agent (chemistry, art, ui_design, …). WR routes 1–3 relevant perspectives; combiners weave cross-POV answers; defense reviews before presentation.
 
@@ -141,12 +141,12 @@ defense_delegator → defense_review → [pass → presenter | revise → combin
 
 | Node | Status | Notes |
 |------|--------|-------|
-| Wide Receiver | ✅ Live | Routes to 1–3 specialists; POV keyword override corrects and prunes wrong-discipline misroutes |
+| Wide Receiver | ✅ Live | Routes to 1–3 specialists; POV keyword override; **product mode** rules and routing nudges (Phase 16) |
 | POV Agents | ✅ Live | Chemistry, Biology, Economics, Art, UI Design — one lens per discipline; `researcher` fallback for off-matrix topics |
 | Specialist Agents (media) | ✅ Live | Photo, Video, Audio — diagram plans, scripts, outlines (text-first; URL when provided) |
 | Search | ✅ Live | Resource finder (DuckDuckGo / Tavily) → resource reader; feeds `mayor_data` with citations |
-| Combiner Mayor | ✅ Live | Aggregates `mayor_data` → `micro_data` (cross-POV synthesis) |
-| Combiner Micro | ✅ Live | Refines `micro_data` → `usable_answers` (3–5 segments with POV attribution) |
+| Combiner Mayor | ✅ Live | Curates `mayor_data` → sorted `micro_data` with `overlap_notes` |
+| Combiner Micro | ✅ Live | Dedupes `micro_data` → `usable_answers` with consensus language |
 | Collector | ✅ Live | Deterministic sort by `order_hint` |
 | Defense Delegator | ✅ Live | Normalizes segments for review (wraps bypass `mayor_data` when needed) |
 | Defense Review | ✅ Live | Single LLM call returns all three checks per segment; length cap guidance; emits `review_passed` Panel |
@@ -187,6 +187,7 @@ Config pattern: `app/agents/<name>/config.py` + `prompt.py`, registered in `app/
 - **`agents_involved`** — human-readable pipeline on each Panel (all parallel agents + search when active)
 - **`MayorData`** — per-specialist raw output in graph state before combiner stages; POV agents set `pov`; `resource_reader` populates `citations`
 - **`pov_sources`** — disciplinary lenses on WR, combiner, defense, and completed Panels (Phase 15B)
+- **`product_mode`** — intent profile echoed on processing and completed Panels when not `auto` (Phase 16)
 - **`MicroData`** / **`UsableAnswer`** — combiner pipeline types; Presenter reads ordered `usable_answers` on synthesis path
 - **Processing Panel** — WR streams `status: processing` immediately with all alarmed agent badges (including combiners when predicted); combiner nodes publish pre-LLM progress panels and emit intermediate Panels with `data_tier` and `pov_sources`
 - Worker uses `astream(stream_mode="updates")` for incremental Redis publish; Celery soft limit **720s** (~12 min) for multi-POV pipelines

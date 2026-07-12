@@ -19,20 +19,14 @@
 - [x] **Phase 14:** Media specialist agents — Photo, Video, Audio; Panel `content_type` audio/video; WR routes media alongside topic agents; text-first plans/scripts (Option A).
 - [x] **Phase 15:** Subject agent scaffolding — Chemistry, Biology, Economics registry; interim `*_major`/`*_minor` depth tiers (superseded by 15B).
 - [x] **Phase 15B:** POV agent matrix — five disciplinary lenses (`chemistry`, `biology`, `economics`, `art`, `ui_design`); `MayorData.pov`; WR routes perspectives not depth; POV keyword override fixes wrong-discipline misroutes; cross-POV combiner prompts; defense length guidance; `pov_sources` on Panels; frontend POV badges.
+- [x] **Phase 15C:** Combiner role split — Mayor curates/sorts inventory with `overlap_notes` and per-segment `source_agents`; Micro deduplicates into consensus-style `usable_answers`.
+- [x] **Phase 16:** Product modes — mode selector in frontend; `product_mode` in GraphState and Panels; JSON WebSocket envelope with plain-text fallback; WR mode rules and routing nudges; combiner/defense mode hints.
 
 ---
 
 ## Next — Full AI Chain
 
 Phases below map to the [target architecture](AI_MAP.md#target-ai-chain-full-vision). Each phase should keep backward-compatible Panels and deployable increments.
-
-### Phase 16 — Product modes
-
-- **Research** — deep synthesis, citations, L3+ chain default.
-- **Planner** — structured plans and timelines.
-- **Coding platform** — project-scoped coding workflows.
-- **Builder** — multi-artifact assembly.
-- Mode selector in frontend; WR receives `product_mode` in state.
 
 ### Phase 17 — Output levels (research feature)
 

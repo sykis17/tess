@@ -1,8 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ConnectionStatus } from "./components/ConnectionStatus";
 import { ErrorBanner } from "./components/ErrorBanner";
 import { MessageInput } from "./components/MessageInput";
+import { ModeSelector, type ProductMode } from "./components/ModeSelector";
 import { PanelCard } from "./components/PanelCard";
 import { useSessionId } from "./hooks/useSessionId";
 import { useWebSocket } from "./hooks/useWebSocket";
@@ -14,6 +15,7 @@ function truncateSessionId(sessionId: string): string {
 
 function App() {
   const sessionId = useSessionId();
+  const [selectedMode, setSelectedMode] = useState<ProductMode>("auto");
   const {
     connectionState,
     panels,
@@ -30,6 +32,10 @@ function App() {
 
   const isConnected = connectionState === "connected";
 
+  const handleSend = (text: string) => {
+    sendMessage(text, selectedMode);
+  };
+
   return (
     <div className="app">
       <header className="app-header">
@@ -39,7 +45,10 @@ function App() {
             Session: {truncateSessionId(sessionId)}
           </span>
         </div>
-        <ConnectionStatus state={connectionState} />
+        <div className="app-header__controls">
+          <ModeSelector value={selectedMode} onChange={setSelectedMode} />
+          <ConnectionStatus state={connectionState} />
+        </div>
       </header>
 
       <main className="app-main">
@@ -65,7 +74,8 @@ function App() {
                 agentsInvolved={panel.agents_involved}
                 agentTraces={panel.agent_traces}
                 povSources={panel.pov_sources}
-                onFollowUp={sendMessage}
+                productMode={panel.product_mode}
+                onFollowUp={handleSend}
               />
             ))}
             <div ref={panelsEndRef} />
@@ -79,7 +89,7 @@ function App() {
         )}
         <MessageInput
           disabled={!isConnected || isProcessing}
-          onSend={sendMessage}
+          onSend={handleSend}
         />
       </footer>
     </div>

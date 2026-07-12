@@ -6,7 +6,7 @@ from app.agents.subjects.registry import collect_pov_sources
 from app.graph.combiner_utils import combiner_pipeline_names, should_predict_combiners
 from app.graph.defense_utils import defense_pipeline_names, should_predict_defense
 from app.graph.fan_in_utils import build_expected_fan_in_branches
-from app.graph.prompts import WIDE_RECEIVER_SYSTEM_PROMPT
+from app.graph.prompts import build_wr_system_prompt
 from app.graph.routing import parse_routing_decision
 from app.graph.schemas import AgentTrace, Panel
 from app.graph.state import GraphState
@@ -43,17 +43,23 @@ async def wide_receiver_node(state: GraphState) -> dict[str, Any]:
     """Analyze user input and produce a routing decision for specialist agents."""
     user_input = state["user_input"]
     conversation_history = state["conversation_history"]
-    logger.info("Wide Receiver received user input: %s", user_input)
+    product_mode = state.get("product_mode", "auto")
+    logger.info("Wide Receiver received user input: %s (mode=%s)", user_input, product_mode)
 
+    system_prompt = build_wr_system_prompt(product_mode)
     messages: list[LLMMessage] = [
-        LLMMessage(role="system", content=WIDE_RECEIVER_SYSTEM_PROMPT),
+        LLMMessage(role="system", content=system_prompt),
         *conversation_history,
         LLMMessage(role="user", content=user_input),
     ]
 
     llm = create_llm()
     response = await llm.generate(LLMRequest(messages=messages))
-    decision = parse_routing_decision(response.content, fallback_task=user_input)
+    decision = parse_routing_decision(
+        response.content,
+        fallback_task=user_input,
+        product_mode=product_mode,
+    )
 
     logger.info(
         "Wide Receiver routed to %s via %s (%s); task=%s",
@@ -100,6 +106,7 @@ async def wide_receiver_node(state: GraphState) -> dict[str, Any]:
         agents_involved=agents_involved,
         agent_traces=[wr_trace],
         pov_sources=collect_pov_sources(routed_agents),
+        product_mode=product_mode if product_mode != "auto" else None,
     )
 
     return {

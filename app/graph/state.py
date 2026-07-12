@@ -39,6 +39,7 @@ class GraphState(TypedDict):
     defense_notes: str
     expected_fan_in_branches: list[str]
     fan_in_branches_done: Annotated[list[str], operator.add]
+    product_mode: str
 
 
 def build_initial_state(
@@ -46,6 +47,7 @@ def build_initial_state(
     conversation_history: list[LLMMessage] | None = None,
     panel_id: str = "",
     session_id: str = "",
+    product_mode: str = "auto",
 ) -> GraphState:
     """Build the initial LangGraph state for a new user input."""
     return {
@@ -70,4 +72,5 @@ def build_initial_state(
         "defense_notes": "",
         "expected_fan_in_branches": [],
         "fan_in_branches_done": [],
+        "product_mode": product_mode,
     }

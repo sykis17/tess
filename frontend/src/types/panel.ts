@@ -20,6 +20,7 @@ export interface Panel {
   agent_traces?: AgentTrace[];
   data_tier?: DataTier;
   pov_sources?: string[];
+  product_mode?: string;
 }
 
 export interface WorkerError {

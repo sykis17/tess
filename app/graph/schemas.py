@@ -48,14 +48,16 @@ class MayorData(BaseModel):
 
 
 class MicroDataSegment(BaseModel):
-    """A single cross-topic synthesis segment from Combiner Mayor."""
+    """A sorted catalog entry from Combiner Mayor — one theme or POV slice."""
 
     title: str
     content: str
+    source_agents: list[str] = Field(default_factory=list)
+    overlap_notes: str | None = None
 
 
 class MicroData(BaseModel):
-    """Combiner Mayor output — cross-topic synthesis across mayor data."""
+    """Combiner Mayor output — sorted inventory with overlap annotations."""
 
     combiner: Literal["mayor"] = "mayor"
     segments: list[MicroDataSegment]
@@ -63,13 +65,14 @@ class MicroData(BaseModel):
 
 
 class UsableAnswer(BaseModel):
-    """Combiner Micro output — refined segment ready for collection."""
+    """Combiner Micro output — deduplicated segment ready for collection."""
 
     segment_id: str
     order_hint: int
     title: str
     content: str
     review_status: ReviewStatus = "pending"
+    source_agents: list[str] = Field(default_factory=list)
 
 
 class DefenseChecks(BaseModel):
@@ -102,3 +105,4 @@ class Panel(BaseModel):
     agent_traces: list[AgentTrace] = Field(default_factory=list)
     data_tier: DataTier | None = None
     pov_sources: list[str] = Field(default_factory=list)
+    product_mode: str | None = None

@@ -10,7 +10,7 @@ from app.graph.combiner_utils import (
     serialize_micro_data_for_llm,
 )
 from app.graph.panel_stream import publish_panel
-from app.graph.prompts import COMBINER_MICRO_SYSTEM_PROMPT
+from app.graph.prompts import build_combiner_micro_prompt
 from app.graph.schemas import AgentTrace, OUTPUT_PREVIEW_MAX_CHARS, Panel
 from app.graph.state import GraphState
 from app.graph.trace_utils import truncate_preview
@@ -54,7 +54,7 @@ async def combiner_micro_node(state: GraphState) -> dict[str, Any]:
             folder_path=_resolve_folder_path(state),
             status="processing",
             content_type="markdown",
-            content=f"Refining answer segments ({segment_count} parts)…",
+            content=f"Refining answer segments ({segment_count} cataloged themes)…",
             follow_up_options=[],
             agents_involved=build_agents_involved(state, include_combiners=True),
             agent_traces=state.get("agent_traces", []),
@@ -70,8 +70,9 @@ async def combiner_micro_node(state: GraphState) -> dict[str, Any]:
     if defense_notes:
         user_message += f"\n\nDefense revision notes (address these):\n{defense_notes}"
 
+    product_mode = state.get("product_mode", "auto")
     messages: list[LLMMessage] = [
-        LLMMessage(role="system", content=COMBINER_MICRO_SYSTEM_PROMPT),
+        LLMMessage(role="system", content=build_combiner_micro_prompt(product_mode)),
         LLMMessage(role="user", content=user_message),
     ]
 

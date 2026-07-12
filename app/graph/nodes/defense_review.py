@@ -12,7 +12,7 @@ from app.graph.defense_utils import (
     parse_defense_reviews_json,
     serialize_segments_for_llm,
 )
-from app.graph.prompts import DEFENSE_REVIEW_SYSTEM_PROMPT
+from app.graph.prompts import build_defense_prompt
 from app.graph.schemas import AgentTrace, Panel
 from app.graph.state import GraphState
 from app.llm.factory import create_llm
@@ -52,8 +52,9 @@ async def defense_review_node(state: GraphState) -> dict[str, Any]:
     if defense_notes:
         user_parts.append(f"\nPrior revision notes (for context):\n{defense_notes}")
 
+    product_mode = state.get("product_mode", "auto")
     messages: list[LLMMessage] = [
-        LLMMessage(role="system", content=DEFENSE_REVIEW_SYSTEM_PROMPT),
+        LLMMessage(role="system", content=build_defense_prompt(product_mode)),
         LLMMessage(role="user", content="\n".join(user_parts)),
     ]
 

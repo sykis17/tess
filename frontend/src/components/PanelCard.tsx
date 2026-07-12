@@ -1,5 +1,6 @@
 import type { AgentTrace, ContentType } from "../types/panel";
 import { formatAgentDisplayName } from "../types/panel";
+import { formatProductModeDisplayName } from "./ModeSelector";
 import { PanelContent } from "./PanelContent";
 
 interface PanelCardProps {
@@ -11,6 +12,7 @@ interface PanelCardProps {
   agentsInvolved?: string[];
   agentTraces?: AgentTrace[];
   povSources?: string[];
+  productMode?: string;
   onFollowUp: (option: string) => void;
 }
 
@@ -30,6 +32,7 @@ export function PanelCard({
   agentsInvolved = [],
   agentTraces = [],
   povSources = [],
+  productMode,
   onFollowUp,
 }: PanelCardProps) {
   const isProcessing = status === "processing";
@@ -49,6 +52,14 @@ export function PanelCard({
           {status.replace("_", " ")}
         </span>
       </header>
+
+      {productMode && productMode !== "auto" && (
+        <div className="panel-card__mode">
+          <span className="panel-card__mode-badge">
+            {formatProductModeDisplayName(productMode)}
+          </span>
+        </div>
+      )}
 
       {povSources.length > 0 && (
         <div className="panel-card__pov-sources">

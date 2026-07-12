@@ -10,7 +10,7 @@ from app.graph.combiner_utils import (
     serialize_mayor_data_for_llm,
 )
 from app.graph.panel_stream import publish_panel
-from app.graph.prompts import COMBINER_MAYOR_SYSTEM_PROMPT
+from app.graph.prompts import build_combiner_mayor_prompt
 from app.graph.schemas import AgentTrace, OUTPUT_PREVIEW_MAX_CHARS, Panel
 from app.graph.state import GraphState
 from app.graph.trace_utils import truncate_preview
@@ -32,8 +32,8 @@ def _resolve_folder_path(state: GraphState) -> str:
 def _synthesis_progress_message(active_agents: list[str]) -> str:
     pov_labels = collect_pov_sources(active_agents)
     if pov_labels:
-        return f"Synthesizing {' + '.join(pov_labels)} perspectives…"
-    return "Synthesizing cross-topic perspectives…"
+        return f"Sorting and cataloging {' + '.join(pov_labels)} perspectives…"
+    return "Sorting and cataloging specialist perspectives…"
 
 
 async def combiner_mayor_node(state: GraphState) -> dict[str, Any]:
@@ -69,8 +69,9 @@ async def combiner_mayor_node(state: GraphState) -> dict[str, Any]:
         f"Mayor data from agents:\n\n{mayor_text}"
     )
 
+    product_mode = state.get("product_mode", "auto")
     messages: list[LLMMessage] = [
-        LLMMessage(role="system", content=COMBINER_MAYOR_SYSTEM_PROMPT),
+        LLMMessage(role="system", content=build_combiner_mayor_prompt(product_mode)),
         LLMMessage(role="user", content=user_message),
     ]
 
@@ -109,7 +110,7 @@ async def combiner_mayor_node(state: GraphState) -> dict[str, Any]:
         folder_path=_resolve_folder_path(state),
         status="processing",
         content_type="markdown",
-        content=f"Synthesizing cross-topic output ({len(micro_data.segments)} segments)…",
+        content=f"Cataloged {len(micro_data.segments)} sorted themes…",
         follow_up_options=[],
         agents_involved=build_agents_involved(state, include_combiners=True),
         agent_traces=[*state.get("agent_traces", []), trace],

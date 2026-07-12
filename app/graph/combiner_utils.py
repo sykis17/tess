@@ -98,17 +98,55 @@ def format_mayor_segment_title(entry: MayorData) -> str:
 
 
 def _fallback_micro_data(mayor_data: list[MayorData], active_agents: list[str]) -> MicroData:
-    """Build a single-segment MicroData fallback from raw mayor content."""
+    """Build per-source catalog segments from raw mayor content."""
     ordered = order_mayor_data(mayor_data, active_agents)
     segments = [
         MicroDataSegment(
             title=format_mayor_segment_title(entry),
             content=entry.content,
+            source_agents=[entry.source_agent],
         )
         for entry in ordered
     ]
     source_agents = [entry.source_agent for entry in ordered]
     return MicroData(segments=segments, source_agents=source_agents)
+
+
+def normalize_micro_data(
+    micro: MicroData,
+    mayor_data: list[MayorData],
+    active_agents: list[str],
+) -> MicroData:
+    """Fill missing per-segment source_agents and root source_agents after LLM parse."""
+    ordered = order_mayor_data(mayor_data, active_agents)
+    default_sources = [entry.source_agent for entry in ordered]
+    normalized_segments: list[MicroDataSegment] = []
+
+    for index, segment in enumerate(micro.segments):
+        segment_sources = [agent for agent in segment.source_agents if agent]
+        if not segment_sources and index < len(ordered):
+            segment_sources = [ordered[index].source_agent]
+        if not segment_sources and default_sources:
+            segment_sources = default_sources[:1]
+
+        normalized_segments.append(
+            segment.model_copy(update={"source_agents": segment_sources})
+        )
+
+    root_sources = micro.source_agents or default_sources
+    if not root_sources:
+        root_sources = sorted({
+            agent
+            for segment in normalized_segments
+            for agent in segment.source_agents
+        })
+
+    return micro.model_copy(
+        update={
+            "segments": normalized_segments,
+            "source_agents": root_sources,
+        }
+    )
 
 
 def parse_micro_data_json(
@@ -123,23 +161,29 @@ def parse_micro_data_json(
         micro = MicroData.model_validate(data)
         if not micro.segments:
             raise ValueError("MicroData has no segments")
-        return micro
+        return normalize_micro_data(micro, mayor_data, active_agents)
     except (json.JSONDecodeError, ValueError) as exc:
         logger.warning("Failed to parse MicroData JSON; using fallback: %s", exc)
         return _fallback_micro_data(mayor_data, active_agents)
 
 
 def _fallback_usable_answers(micro_data: MicroData) -> list[UsableAnswer]:
-    """Build usable answers directly from micro data segments."""
-    return [
-        UsableAnswer(
-            segment_id=str(uuid.uuid4()),
-            order_hint=index + 1,
-            title=segment.title,
-            content=segment.content,
+    """Build usable answers from micro inventory, collapsing obvious overlaps."""
+    answers: list[UsableAnswer] = []
+    for index, segment in enumerate(micro_data.segments[:MAX_USABLE_ANSWERS]):
+        content = segment.content
+        if segment.overlap_notes:
+            content = f"{segment.overlap_notes}\n\n{content}"
+        answers.append(
+            UsableAnswer(
+                segment_id=str(uuid.uuid4()),
+                order_hint=index + 1,
+                title=segment.title,
+                content=content,
+                source_agents=list(segment.source_agents),
+            )
         )
-        for index, segment in enumerate(micro_data.segments[:MAX_USABLE_ANSWERS])
-    ]
+    return answers
 
 
 def parse_usable_answers_json(raw: str, micro_data: MicroData) -> list[UsableAnswer]:
@@ -161,6 +205,10 @@ def parse_usable_answers_json(raw: str, micro_data: MicroData) -> list[UsableAns
                 answer = answer.model_copy(update={"segment_id": str(uuid.uuid4())})
             if answer.order_hint <= 0:
                 answer = answer.model_copy(update={"order_hint": index + 1})
+            if not answer.source_agents and index < len(micro_data.segments):
+                answer = answer.model_copy(
+                    update={"source_agents": list(micro_data.segments[index].source_agents)}
+                )
             answers.append(answer)
         if not answers:
             raise ValueError("No usable answers parsed")
@@ -195,10 +243,17 @@ def format_usable_answers_markdown(answers: list[UsableAnswer]) -> str:
 
 
 def serialize_micro_data_for_llm(micro_data: MicroData) -> str:
-    """Serialize micro data into a prompt-friendly text block."""
+    """Serialize micro data inventory into a prompt-friendly text block."""
     blocks: list[str] = []
     for segment in micro_data.segments:
-        blocks.append(f"### {segment.title}\n\n{segment.content}")
+        lines = [f"### {segment.title}"]
+        if segment.source_agents:
+            sources = ", ".join(format_agent_display_name(agent) for agent in segment.source_agents)
+            lines.append(f"**Sources:** {sources}")
+        if segment.overlap_notes:
+            lines.append(f"**Overlap:** {segment.overlap_notes}")
+        lines.extend(["", segment.content])
+        blocks.append("\n".join(lines))
     return "\n\n---\n\n".join(blocks)
 
 

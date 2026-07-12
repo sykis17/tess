@@ -7,6 +7,7 @@ from langgraph.types import Send
 from app.agents.registry import AGENT_REGISTRY, DEFAULT_AGENT_NAME
 from app.agents.schemas import RoutingDecision
 from app.agents.subjects.registry import infer_pov_agents_from_keywords, is_pov_agent
+from app.core.product_modes import ProductMode
 
 logger = logging.getLogger(__name__)
 
@@ -242,7 +243,143 @@ def _normalize_search_queries(queries: list[str]) -> list[str]:
     return cleaned[:MAX_SEARCH_QUERIES]
 
 
-def parse_routing_decision(raw: str, fallback_task: str) -> RoutingDecision:
+_RESEARCH_SOURCE_SIGNALS = (
+    "cite",
+    "citation",
+    "citations",
+    "source",
+    "sources",
+    "reference",
+    "references",
+    "latest",
+    "recent",
+    "current",
+    "with sources",
+)
+
+_PLAN_LANGUAGE_SIGNALS = (
+    "plan",
+    "timeline",
+    "roadmap",
+    "schedule",
+    "milestone",
+    "checklist",
+    "steps",
+    "sprint",
+)
+
+_CODER_SIGNALS = (
+    "write a python",
+    "write python",
+    "debug ",
+    "refactor ",
+    "fastapi",
+    "hello-world",
+    "hello world",
+    "sort function",
+    "cli tool",
+    "build a ",
+    "code ",
+    "python ",
+    "javascript ",
+    "typescript ",
+    "function",
+    "module",
+    "api route",
+)
+
+_BUILDER_DELIVERABLE_SIGNALS = (
+    "readme",
+    "wireframe",
+    "html",
+    "css",
+    "config",
+    "documentation",
+    "docs",
+    "starter",
+    "package",
+    "landing page",
+)
+
+
+def _looks_like_code_request(user_input: str) -> bool:
+    text = user_input.lower()
+    return any(signal in text for signal in _CODER_SIGNALS)
+
+
+def _count_builder_deliverables(user_input: str) -> int:
+    text = user_input.lower()
+    return sum(1 for signal in _BUILDER_DELIVERABLE_SIGNALS if signal in text)
+
+
+def _needs_research_search(user_input: str) -> bool:
+    text = user_input.lower()
+    return any(signal in text for signal in _RESEARCH_SOURCE_SIGNALS)
+
+
+def _infer_search_query_from_input(user_input: str) -> str:
+    """Build a simple search query from user input for research mode nudges."""
+    text = user_input.strip()
+    if len(text) > 120:
+        text = text[:120]
+    return text
+
+
+def apply_product_mode_routing(
+    mode: str,
+    decision: RoutingDecision,
+    user_input: str,
+) -> RoutingDecision:
+    """Apply lightweight post-processing nudges after POV/media overrides."""
+    if mode == ProductMode.AUTO.value:
+        return decision
+
+    active_agents = list(decision.active_agents)
+    current_task = decision.current_task
+    search_queries = list(decision.search_queries)
+
+    if mode == ProductMode.RESEARCH.value:
+        if _needs_research_search(user_input) and not search_queries:
+            search_queries = [_infer_search_query_from_input(user_input)]
+            logger.info("Product mode research: inferred search query from user input")
+
+    elif mode == ProductMode.PLANNER.value:
+        task_lower = current_task.lower()
+        if not any(signal in task_lower for signal in _PLAN_LANGUAGE_SIGNALS):
+            current_task = f"{current_task} — structured plan"
+            logger.info("Product mode planner: appended structured plan to current_task")
+
+    elif mode == ProductMode.CODING.value:
+        if "coder" not in active_agents and _looks_like_code_request(user_input):
+            active_agents = _dedupe_known_agents(["coder"])
+            logger.info("Product mode coding: prioritized coder for code-like input")
+
+    elif mode == ProductMode.BUILDER.value:
+        deliverable_count = _count_builder_deliverables(user_input)
+        if len(active_agents) == 1 and deliverable_count >= 2:
+            keyword_agents = _infer_agents_from_keywords(user_input)
+            expanded = _dedupe_known_agents([*active_agents, *keyword_agents])
+            if len(expanded) > len(active_agents):
+                active_agents = expanded
+                logger.info(
+                    "Product mode builder: expanded agents to %s for multi-deliverable input",
+                    active_agents,
+                )
+        if deliverable_count >= 2 and "deliverable" not in current_task.lower():
+            current_task = f"{current_task} — multiple deliverables"
+
+    return RoutingDecision(
+        active_agents=active_agents,
+        current_task=current_task,
+        search_queries=_normalize_search_queries(search_queries),
+    )
+
+
+def parse_routing_decision(
+    raw: str,
+    fallback_task: str,
+    product_mode: str = "auto",
+) -> RoutingDecision:
     """Parse the Wide Receiver routing JSON with a safe fallback."""
     payload = _extract_json_payload(raw)
 
@@ -251,28 +388,31 @@ def parse_routing_decision(raw: str, fallback_task: str) -> RoutingDecision:
         decision = RoutingDecision.model_validate(data)
     except (json.JSONDecodeError, ValueError) as exc:
         logger.warning("Failed to parse routing decision; using keyword fallback: %s", exc)
-        return RoutingDecision(
+        fallback = RoutingDecision(
             active_agents=_infer_agents_from_keywords(fallback_task),
             current_task=fallback_task,
         )
+        return apply_product_mode_routing(product_mode, fallback, fallback_task)
 
     known_agents = _dedupe_known_agents(decision.active_agents)
     if not known_agents:
         logger.warning("Routing decision had no active agents; using keyword fallback.")
-        return RoutingDecision(
+        fallback = RoutingDecision(
             active_agents=_infer_agents_from_keywords(fallback_task),
             current_task=decision.current_task or fallback_task,
             search_queries=_normalize_search_queries(decision.search_queries),
         )
+        return apply_product_mode_routing(product_mode, fallback, fallback_task)
 
     corrected_agents = _apply_keyword_media_override(fallback_task, known_agents)
     corrected_agents = _apply_keyword_pov_override(fallback_task, corrected_agents)
 
-    return RoutingDecision(
+    routed = RoutingDecision(
         active_agents=corrected_agents,
         current_task=decision.current_task or fallback_task,
         search_queries=_normalize_search_queries(decision.search_queries),
     )
+    return apply_product_mode_routing(product_mode, routed, fallback_task)
 
 
 def fan_out_from_wr(state: dict) -> list[Send]:

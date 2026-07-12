@@ -61,18 +61,18 @@ Media specialist agents use `folder_path` values: `Media/Photo`, `Media/Video`, 
 |-------|------|--------|-------------|
 | `data_tier` | `str` | Live (Phase 12) | `mayor`, `micro`, `usable`, `final` — for intermediate stream Panels |
 
-### Live Panel fields (Phase 15B)
+### Live Panel fields (Phase 15B–16)
 
 | Field | Type | Status | Description |
 |-------|------|--------|-------------|
 | `pov_sources` | `list[str]` | Live (Phase 15B) | Disciplinary lenses on processing, combiner, defense, and completed Panels (e.g. `["Chemistry", "Art"]`) |
+| `product_mode` | `str \| null` | Live (Phase 16) | Active intent profile: `research`, `planner`, `coding`, `builder`; omitted or `null` for `auto` |
 
 ### Planned Panel fields
 
 | Field | Type | Phase | Description |
 |-------|------|-------|-------------|
 | `output_level` | `str` | 17 | Chain profile used (`L0`–`L4`) for research comparison |
-| `product_mode` | `str` | 16 | `research`, `planner`, `coding`, `builder` |
 | `pipeline_stage` | `str` | 18 | Current chain stage for status wall (`routing`, `agents`, `combining`, `defense`, `done`) |
 
 ---
@@ -108,22 +108,21 @@ Wide Receiver routing JSON. Supports 1–3 agents per message (capped at 3) and 
 | `current_task` | `str` | Concise task summary for specialists |
 | `search_queries` | `list[str]` | 0–1 web search queries for resource finder |
 
-### Planned extensions (Phase 15B+)
+### Live extensions (Phase 16)
+
+WebSocket inbound envelope (backward compatible — plain text still maps to `auto`):
 
 ```json
 {
-  "active_agents": ["chemistry", "art", "photo"],
-  "current_task": "Design a science poster with accurate chemistry and strong visual layout",
-  "search_queries": [],
-  "product_mode": "research",
-  "chain_profile": "L4"
+  "text": "Explain photosynthesis with citations",
+  "product_mode": "research"
 }
 ```
 
 | Field | Phase | Description |
 |-------|-------|-------------|
-| `product_mode` | 16 | Research / planner / coding / builder |
-| `chain_profile` | 17 | Output level L0–L4 |
+| `product_mode` | 16 (live) | Research / planner / coding / builder; `auto` when omitted or plain text |
+| `chain_profile` | 17 (planned) | Output level L0–L4 |
 
 POV agents use keys such as `chemistry`, `art`, `ui_design` (one disciplinary lens per agent).
 
@@ -147,31 +146,43 @@ Raw output from a POV agent, specialist, or search reader. Stored in graph state
 }
 ```
 
-### MicroData (live — Phase 12)
+### MicroData (live — Phase 12, curator role Phase 15C)
 
-Combiner Mayor output — cross-POV synthesis.
+Combiner Mayor output — sorted inventory (not final user prose).
 
 ```json
 {
   "combiner": "mayor",
   "segments": [
-    { "title": "Cross-topic comparison", "content": "..." }
+    {
+      "title": "Visual composition (Art POV)",
+      "content": "- Blue palette\n- Open Sans for headings",
+      "source_agents": ["art"],
+      "overlap_notes": null
+    },
+    {
+      "title": "Shared typography",
+      "content": "- Open Sans body text",
+      "source_agents": ["art", "ui_design"],
+      "overlap_notes": "Art and ui_design both recommend Open Sans."
+    }
   ],
-  "source_agents": ["chemistry", "economics"]
+  "source_agents": ["art", "ui_design"]
 }
 ```
 
-### UsableAnswer (live — Phase 12)
+### UsableAnswer (live — Phase 12, editor role Phase 15C)
 
-Combiner Micro output — refined segment ready for collection.
+Combiner Micro output — deduplicated segment ready for collection.
 
 ```json
 {
   "segment_id": "uuid4",
   "order_hint": 1,
-  "title": "Introduction",
-  "content": "...",
-  "review_status": "pending"
+  "title": "Overview",
+  "content": "Multiple sources confirm a clean grid and Open Sans typography.",
+  "review_status": "pending",
+  "source_agents": ["art", "ui_design"]
 }
 ```
 

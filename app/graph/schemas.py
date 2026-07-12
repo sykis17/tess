@@ -38,12 +38,12 @@ class SearchResult(BaseModel):
 
 
 class MayorData(BaseModel):
-    """Raw output from a topic agent before combiner stages."""
+    """Raw output from a POV or specialist agent before combiner stages."""
 
     source_agent: str
     content: str
     topic: str | None = None
-    depth: str | None = None
+    pov: str | None = None
     citations: list[str] = Field(default_factory=list)
 
 
@@ -101,3 +101,4 @@ class Panel(BaseModel):
     agents_involved: list[str] = Field(default_factory=list)
     agent_traces: list[AgentTrace] = Field(default_factory=list)
     data_tier: DataTier | None = None
+    pov_sources: list[str] = Field(default_factory=list)

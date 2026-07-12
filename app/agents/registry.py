@@ -1,15 +1,14 @@
+from app.agents.art.config import ART_CONFIG
 from app.agents.audio.config import AUDIO_CONFIG
-from app.agents.biology_major.config import BIOLOGY_MAJOR_CONFIG
-from app.agents.biology_minor.config import BIOLOGY_MINOR_CONFIG
-from app.agents.chemistry_major.config import CHEMISTRY_MAJOR_CONFIG
-from app.agents.chemistry_minor.config import CHEMISTRY_MINOR_CONFIG
+from app.agents.biology.config import BIOLOGY_CONFIG
+from app.agents.chemistry.config import CHEMISTRY_CONFIG
 from app.agents.coder.config import CODER_CONFIG
-from app.agents.economics_major.config import ECONOMICS_MAJOR_CONFIG
-from app.agents.economics_minor.config import ECONOMICS_MINOR_CONFIG
+from app.agents.economics.config import ECONOMICS_CONFIG
 from app.agents.general_assistant.config import GENERAL_ASSISTANT_CONFIG
 from app.agents.photo.config import PHOTO_CONFIG
 from app.agents.researcher.config import RESEARCHER_CONFIG
 from app.agents.schemas import AgentConfig
+from app.agents.ui_design.config import UI_DESIGN_CONFIG
 from app.agents.video.config import VIDEO_CONFIG
 
 AGENT_REGISTRY: dict[str, AgentConfig] = {
@@ -19,12 +18,11 @@ AGENT_REGISTRY: dict[str, AgentConfig] = {
     PHOTO_CONFIG.name: PHOTO_CONFIG,
     VIDEO_CONFIG.name: VIDEO_CONFIG,
     AUDIO_CONFIG.name: AUDIO_CONFIG,
-    CHEMISTRY_MAJOR_CONFIG.name: CHEMISTRY_MAJOR_CONFIG,
-    CHEMISTRY_MINOR_CONFIG.name: CHEMISTRY_MINOR_CONFIG,
-    BIOLOGY_MAJOR_CONFIG.name: BIOLOGY_MAJOR_CONFIG,
-    BIOLOGY_MINOR_CONFIG.name: BIOLOGY_MINOR_CONFIG,
-    ECONOMICS_MAJOR_CONFIG.name: ECONOMICS_MAJOR_CONFIG,
-    ECONOMICS_MINOR_CONFIG.name: ECONOMICS_MINOR_CONFIG,
+    CHEMISTRY_CONFIG.name: CHEMISTRY_CONFIG,
+    BIOLOGY_CONFIG.name: BIOLOGY_CONFIG,
+    ECONOMICS_CONFIG.name: ECONOMICS_CONFIG,
+    ART_CONFIG.name: ART_CONFIG,
+    UI_DESIGN_CONFIG.name: UI_DESIGN_CONFIG,
 }
 
 DEFAULT_AGENT_NAME = GENERAL_ASSISTANT_CONFIG.name
@@ -42,12 +40,11 @@ _DISPLAY_NAME_OVERRIDES: dict[str, str] = {
     "photo": "Photo",
     "video": "Video",
     "audio": "Audio",
-    "chemistry_major": "Chemistry Major",
-    "chemistry_minor": "Chemistry Minor",
-    "biology_major": "Biology Major",
-    "biology_minor": "Biology Minor",
-    "economics_major": "Economics Major",
-    "economics_minor": "Economics Minor",
+    "chemistry": "Chemistry",
+    "biology": "Biology",
+    "economics": "Economics",
+    "art": "Art",
+    "ui_design": "UI Design",
 }
 
 
@@ -65,9 +62,8 @@ def format_agent_display_name(registry_key: str) -> str:
 
     if registry_key in AGENT_REGISTRY:
         agent = AGENT_REGISTRY[registry_key]
-        if agent.subject and agent.depth:
-            depth_label = agent.depth.title()
-            return f"{agent.subject} {depth_label}"
+        if agent.pov:
+            return agent.pov
 
     return registry_key.replace("_", " ").title()
 
@@ -80,11 +76,11 @@ def list_agents_for_prompt() -> str:
     return "\n".join(lines)
 
 
-def list_topic_agents_for_prompt() -> str:
-    """Format topic agents for the Wide Receiver routing prompt."""
+def list_pov_agents_for_prompt() -> str:
+    """Format POV agents for the Wide Receiver routing prompt."""
     lines: list[str] = []
     for agent in AGENT_REGISTRY.values():
-        if agent.agent_kind == "topic":
+        if agent.agent_kind == "pov":
             lines.append(f'- "{agent.name}": {agent.description}')
     return "\n".join(lines)
 

@@ -104,6 +104,24 @@
   background: #1e1e1e;
 }
 
+.panel-card__pov-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.5rem 1rem 0;
+  background: #1e1e1e;
+}
+
+.panel-card__pov-badge {
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: #1a2e3d;
+  color: #7ec8e3;
+  border: 1px solid #2a5a7a;
+}
+
 .panel-card__agent-badge {
   padding: 0.15rem 0.5rem;
   border-radius: 999px;

@@ -38,7 +38,7 @@ flowchart TB
     end
 
     subgraph agents [Agent Layer]
-        TA[Topic Agents\nschool subjects\nminor + mayor]
+        POV[POV Agents\ndisciplinary lenses\nchemistry art ui_design]
         SA[Specialist Agents\nphoto video audio]
         SR[Search\nresource finder\nresource reader]
     end
@@ -57,10 +57,10 @@ flowchart TB
         PRE[Presenter\nPanel JSON]
     end
 
-    WR --> TA
+    WR --> POV
     WR --> SA
     WR --> SR
-    TA --> CM
+    POV --> CM
     SA --> CM
     SR --> CM
     CM --> Cm
@@ -74,8 +74,8 @@ flowchart TB
 | Layer | Role | Output |
 |-------|------|--------|
 | **Wide Receiver** | Reads the user message, interprets intent, alarms the required agents | Routing plan (`active_agents`, tasks, search triggers) |
-| **Topic Agents** | One per school subject (and minor/major depth variants); domain reasoning | **Mayor data** — raw specialist output per topic |
-| **Specialist Agents** | Media and tool specialists (photo, video, audio) | **Mayor data** — processed media artifacts |
+| **POV Agents** | One per field of study / discipline (chemistry, art, ui_design, …); each answers from that lens | **Mayor data** — raw output tagged with `pov` |
+| **Specialist Agents** | Media and tool specialists (photo, video, audio, coder) | **Mayor data** — processed artifacts |
 | **Search** | Resource finder locates sources; resource reader extracts content | **Mayor data** — grounded excerpts and citations |
 | **Combiner Mayor** | Gathers all mayor data from parallel agents + search | **Micro data** — structured, cross-topic synthesis |
 | **Combiner Micro** | Refines micro data into coherent answer units | **Usable answers** — ranked, actionable segments |
@@ -94,15 +94,14 @@ Panel  →  user-facing payload (Presenter, after Defense)
 
 ### Complex Question Example
 
-User asks a multi-domain question (e.g. *"Compare renewable energy economics and chemistry for a school project, include a diagram plan, and cite recent sources"*).
+User asks a multi-perspective question (e.g. *"Design a school app UI — cover aesthetics and implementation"*).
 
-1. **WR** alarms e.g. 4 topic agents (Economics, Chemistry, …) + 1 specialist (photo/diagram) + search.
-2. **Search** runs resource finder → resource reader; results feed **Combiner Mayor** alongside topic agent mayor data.
-3. **Combiner Mayor** produces micro data cross-linking topics and sources.
-4. **Combiner Micro** turns micro data into usable answer segments.
-5. **Collector** sorts segments (intro → comparison → diagram plan → citations).
-6. **Defense** reviews each segment (accuracy, completeness, implications).
-7. **Presenter** streams one or more Panels with `agents_involved` and `agent_traces`.
+1. **WR** alarms e.g. `art` + `ui_design` + optional `coder` POV agents (+ `photo` for diagram plan).
+2. Each POV agent produces mayor data from its disciplinary lens.
+3. **Combiner Mayor** weaves perspectives into micro data (Art: visual hierarchy… / UI Design: patterns…).
+4. **Combiner Micro** → **Collector** → **Defense** (keep length reasonable, safe, aligned) → **Presenter**.
+
+Legacy example (multi-subject factual): *"Compare renewable energy economics and chemistry"* → `economics` + `chemistry` POVs + optional search.
 
 ### Main Product Functions (Modes)
 
@@ -119,12 +118,12 @@ Each mode influences WR routing (which topic/specialist agents to alarm) and whi
 
 ---
 
-## Current Implementation (Phase 15)
+## Current Implementation (Phase 15B — live)
 
-What is **built and deployed today** is a parallel multi-specialist chain with school-subject topic agents (major/minor depth), optional search, combiner synthesis, media specialists, and a Defense QA gate before Presenter. WR can alarm 1–3 specialists (topic + tool/media) and optionally trigger web search; they run concurrently via LangGraph `Send` fan-out. Multi-agent or search-grounded paths pass through Combiner Mayor → Combiner Micro → Collector; all paths pass through Defense before Presenter.
+The deployed graph uses **POV agents** — one disciplinary lens per agent (chemistry, art, ui_design, …). WR routes 1–3 relevant perspectives; combiners weave cross-POV answers; defense reviews before presentation.
 
 ```
-START → wide_receiver → [parallel: topic agents (major/minor) | coder | researcher | general_assistant | photo | video | audio] + [optional: resource_finder → resource_reader]
+START → wide_receiver → [parallel: POV agents | coder | researcher | general_assistant | photo | video | audio] + [optional: resource_finder → resource_reader]
       → post_fan_in → [bypass → defense | combiners → defense] → presenter → END
 ```
 
@@ -142,35 +141,32 @@ defense_delegator → defense_review → [pass → presenter | revise → combin
 
 | Node | Status | Notes |
 |------|--------|-------|
-| Wide Receiver | ✅ Live | Routes to 1–3 specialists; emits `search_queries` (0–1) when sources needed |
-| Topic Agents (subjects) | ✅ Live | Chemistry, Biology, Economics — major + minor variants; `researcher` fallback for off-matrix topics |
+| Wide Receiver | ✅ Live | Routes to 1–3 specialists; POV keyword override corrects wrong-discipline misroutes |
+| POV Agents | ✅ Live | Chemistry, Biology, Economics, Art, UI Design — one lens per discipline; `researcher` fallback for off-matrix topics |
 | Specialist Agents (media) | ✅ Live | Photo, Video, Audio — diagram plans, scripts, outlines (text-first; URL when provided) |
 | Search | ✅ Live | Resource finder (DuckDuckGo / Tavily) → resource reader; feeds `mayor_data` with citations |
-| Combiner Mayor | ✅ Live | Aggregates `mayor_data` → `micro_data` (cross-topic synthesis) |
-| Combiner Micro | ✅ Live | Refines `micro_data` → `usable_answers` (3–5 segments) |
+| Combiner Mayor | ✅ Live | Aggregates `mayor_data` → `micro_data` (cross-POV synthesis) |
+| Combiner Micro | ✅ Live | Refines `micro_data` → `usable_answers` (3–5 segments with POV attribution) |
 | Collector | ✅ Live | Deterministic sort by `order_hint` |
 | Defense Delegator | ✅ Live | Normalizes segments for review (wraps bypass `mayor_data` when needed) |
-| Defense Review | ✅ Live | Single LLM call returns all three checks per segment; emits `review_passed` Panel |
-| Presenter | ✅ Live | Reads approved `usable_answers`; emits `completed` Panel after defense pass |
+| Defense Review | ✅ Live | Single LLM call returns all three checks per segment; length cap guidance; emits `review_passed` Panel |
+| Presenter | ✅ Live | Reads approved `usable_answers`; emits `completed` Panel with `pov_sources` |
 
 **Bypass rule:** Skip combiners when `len(active_agents) <= 1` and no `resource_reader` entry — single-agent prompts stay fast. Defense always runs (lightweight single-check review on all paths).
 
-**Defense retry:** On `revise`, loops back to `combiner_micro` (synthesis path) or originating specialist (bypass path); capped at `MAX_DEFENSE_RETRIES=2`. Phase 13.1: fan-in join waits for all parallel branches; refusal auto-revise; WR routes listed subjects to topic agents, off-matrix factual topics to researcher.
+**Defense retry:** On `revise`, loops back to `combiner_micro` (synthesis path) or originating specialist (bypass path); capped at `MAX_DEFENSE_RETRIES=2`. Fan-in join waits for all parallel branches; refusal auto-revise; WR routes listed POV topics to POV agents, off-matrix factual topics to researcher.
 
 **Fan-in join (13.1):** `post_fan_in` waits until all expected branches (`active_agents` + optional `resource_reader`) report done before routing downstream.
 
-### Live Topic Agents (Phase 15)
+### Live POV Agents (Phase 15B)
 
-| Agent | `folder_path` | Depth | Routes when |
-|-------|---------------|-------|-------------|
-| `chemistry_major` | `Science/Chemistry` | major | In-depth chemistry, lab concepts, bonding, reactions |
-| `chemistry_minor` | `Science/Chemistry` | minor | Brief chemistry overviews |
-| `biology_major` | `Science/Biology` | major | In-depth biology, cells, genetics, ecosystems |
-| `biology_minor` | `Science/Biology` | minor | Brief biology overviews |
-| `economics_major` | `Social Studies/Economics` | major | In-depth economics, markets, supply/demand |
-| `economics_minor` | `Social Studies/Economics` | minor | Brief economics overviews |
-
-Topic agents set `MayorData.topic` (subject name) and `MayorData.depth` (`major` or `minor`). Subject registry: `app/agents/subjects/registry.py`.
+| Agent | `folder_path` | Lens | Routes when |
+|-------|---------------|------|-------------|
+| `chemistry` | `Science/Chemistry` | Chemistry | Bonding, reactions, materials, stoichiometry |
+| `biology` | `Science/Biology` | Biology | Cells, ecosystems, physiology, genetics |
+| `economics` | `Social Studies/Economics` | Economics | Supply, demand, markets, trade-offs |
+| `art` | `Arts/Visual` | Art | Composition, color, aesthetics, visual hierarchy |
+| `ui_design` | `Design/UI` | UI Design | Layout, usability, patterns, accessibility |
 
 ### Live Tool & Media Agents
 
@@ -189,7 +185,8 @@ Config pattern: `app/agents/<name>/config.py` + `prompt.py`, registered in `app/
 
 - **`AgentTrace`** — per-node record (`agent_name`, `inputs_seen`, `task_summary`, `output_preview`)
 - **`agents_involved`** — human-readable pipeline on each Panel (all parallel agents + search when active)
-- **`MayorData`** — per-specialist raw output in graph state before combiner stages; `resource_reader` populates `citations`
+- **`MayorData`** — per-specialist raw output in graph state before combiner stages; POV agents set `pov`; `resource_reader` populates `citations`
+- **`pov_sources`** — disciplinary lenses on processing/completed Panels (Phase 15B)
 - **`MicroData`** / **`UsableAnswer`** — combiner pipeline types; Presenter reads ordered `usable_answers` on synthesis path
 - **Processing Panel** — WR streams `status: processing` immediately with all alarmed agent badges (including combiners when predicted); combiner nodes may emit intermediate Panels with `data_tier`
 - Worker uses `astream(stream_mode="updates")` for incremental Redis publish
@@ -242,6 +239,7 @@ A high-value research feature: let the user **select an output level** and compa
 | Search utilities | `app/search/provider.py`, `app/search/fetcher.py`, `app/search/extractor.py` |
 | Specialist nodes | `app/graph/nodes/<name>.py` |
 | Agent registry | `app/agents/registry.py`, `app/agents/subjects/registry.py` |
+| Phase 15B brief | `PHASE_15B_OPENER.md` |
 | Shared specialist runner | `app/agents/base.py` |
 | Presenter | `app/graph/nodes/presenter.py` |
 | Panel schema | `app/graph/schemas.py`, `SCHEMA.md` |

@@ -64,6 +64,7 @@ function App() {
                 followUpOptions={panel.follow_up_options}
                 agentsInvolved={panel.agents_involved}
                 agentTraces={panel.agent_traces}
+                povSources={panel.pov_sources}
                 onFollowUp={sendMessage}
               />
             ))}

@@ -10,6 +10,7 @@ interface PanelCardProps {
   followUpOptions: string[];
   agentsInvolved?: string[];
   agentTraces?: AgentTrace[];
+  povSources?: string[];
   onFollowUp: (option: string) => void;
 }
 
@@ -28,6 +29,7 @@ export function PanelCard({
   followUpOptions,
   agentsInvolved = [],
   agentTraces = [],
+  povSources = [],
   onFollowUp,
 }: PanelCardProps) {
   const isProcessing = status === "processing";
@@ -47,6 +49,16 @@ export function PanelCard({
           {status.replace("_", " ")}
         </span>
       </header>
+
+      {povSources.length > 0 && (
+        <div className="panel-card__pov-sources">
+          {povSources.map((pov) => (
+            <span key={pov} className="panel-card__pov-badge">
+              {pov}
+            </span>
+          ))}
+        </div>
+      )}
 
       {agentsInvolved.length > 0 && (
         <div className="panel-card__agents">

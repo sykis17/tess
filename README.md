@@ -9,16 +9,18 @@ Event-driven AI orchestration engine with multi-agent LangGraph pipelines, WebSo
 
 | Doc | Contents |
 |-----|----------|
-| [AI_MAP.md](AI_MAP.md) | Full target AI chain, current Phase 10 graph, output-level research concept |
-| [ROADMAP.md](ROADMAP.md) | Completed phases 1–10 and planned phases 11–18 |
-| [SCHEMA.md](SCHEMA.md) | Panel, AgentTrace, and planned pipeline types |
+| [AI_MAP.md](AI_MAP.md) | Full target AI chain, POV agent vision, current implementation |
+| [ROADMAP.md](ROADMAP.md) | Completed phases 1–15B and planned phases 16–20 |
+| [SCHEMA.md](SCHEMA.md) | Panel, AgentTrace, MayorData, and planned pipeline types |
+| [PHASE_15B_OPENER.md](PHASE_15B_OPENER.md) | Session brief for Phase 15B POV agent matrix |
 | [LOCAL_DEV.md](LOCAL_DEV.md) | Windows + Docker Compose + Ollama local setup |
 | [deploy/DEPLOY.md](deploy/DEPLOY.md) | Hetzner production deployment |
 
-## Current graph (Phase 10)
+## Current graph (Phase 15B — POV agents)
 
 ```
-START → wide_receiver → [parallel: coder | researcher | general_assistant] → presenter → END
+START → wide_receiver → [parallel: POV agents | coder | researcher | media] + [optional: search]
+      → post_fan_in → [combiners or bypass] → defense → presenter → END
 ```
 
 ## Quick start (local)

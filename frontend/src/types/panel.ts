@@ -19,6 +19,7 @@ export interface Panel {
   agents_involved?: string[];
   agent_traces?: AgentTrace[];
   data_tier?: DataTier;
+  pov_sources?: string[];
 }
 
 export interface WorkerError {
@@ -60,12 +61,11 @@ export function formatAgentDisplayName(registryKey: string): string {
     photo: "Photo",
     video: "Video",
     audio: "Audio",
-    chemistry_major: "Chemistry Major",
-    chemistry_minor: "Chemistry Minor",
-    biology_major: "Biology Major",
-    biology_minor: "Biology Minor",
-    economics_major: "Economics Major",
-    economics_minor: "Economics Minor",
+    chemistry: "Chemistry",
+    biology: "Biology",
+    economics: "Economics",
+    art: "Art",
+    ui_design: "UI Design",
   };
   if (overrides[registryKey]) {
     return overrides[registryKey];

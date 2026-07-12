@@ -6,7 +6,7 @@ from langgraph.types import Send
 
 from app.agents.registry import AGENT_REGISTRY, DEFAULT_AGENT_NAME
 from app.agents.schemas import RoutingDecision
-from app.agents.subjects.registry import infer_subject_agents_from_keywords, is_topic_agent
+from app.agents.subjects.registry import infer_pov_agents_from_keywords, is_pov_agent
 
 logger = logging.getLogger(__name__)
 
@@ -130,9 +130,9 @@ def _infer_agents_from_keywords(user_input: str) -> list[str]:
     if any(signal in text for signal in coder_signals):
         agents.append("coder")
 
-    subject_agents = infer_subject_agents_from_keywords(text)
-    if subject_agents:
-        agents.extend(subject_agents)
+    pov_agents = infer_pov_agents_from_keywords(text)
+    if pov_agents:
+        agents.extend(pov_agents)
     elif any(signal in text for signal in research_signals):
         agents.append("researcher")
 
@@ -174,35 +174,49 @@ def _apply_keyword_media_override(
     return merged
 
 
-def _apply_keyword_subject_override(
+def _apply_keyword_pov_override(
     user_input: str,
     active_agents: list[str],
 ) -> list[str]:
-    """Correct WR misroutes when user input clearly matches a listed subject."""
-    keyword_subjects = infer_subject_agents_from_keywords(user_input)
-    if not keyword_subjects:
+    """Correct WR misroutes when user input clearly matches POV keywords."""
+    keyword_povs = infer_pov_agents_from_keywords(user_input)
+    if not keyword_povs:
         return active_agents
 
-    routed_subjects = [agent for agent in active_agents if is_topic_agent(agent)]
-    if routed_subjects:
-        return active_agents
+    routed_povs = [agent for agent in active_agents if is_pov_agent(agent)]
+    non_pov_agents = [agent for agent in active_agents if not is_pov_agent(agent)]
 
-    if len(active_agents) == 1 and active_agents[0] in FALLBACK_AGENTS:
-        logger.info(
-            "Keyword override: replacing %s with %s for subject intent",
-            active_agents,
-            keyword_subjects,
-        )
-        return _dedupe_known_agents(keyword_subjects)
+    keyword_set = set(keyword_povs)
+    routed_pov_set = set(routed_povs)
 
-    merged = _dedupe_known_agents([*active_agents, *keyword_subjects])
-    if merged != active_agents:
+    if routed_povs and routed_pov_set.isdisjoint(keyword_set):
         logger.info(
-            "Keyword override: added subject agents %s to routing %s",
-            keyword_subjects,
-            active_agents,
+            "Keyword override: replacing wrong POV %s with %s",
+            routed_povs,
+            keyword_povs,
         )
-    return merged
+        return _dedupe_known_agents([*keyword_povs, *non_pov_agents])
+
+    if not routed_povs and len(active_agents) == 1 and active_agents[0] in FALLBACK_AGENTS:
+        logger.info(
+            "Keyword override: replacing %s with %s for POV intent",
+            active_agents,
+            keyword_povs,
+        )
+        return _dedupe_known_agents(keyword_povs)
+
+    missing_povs = [pov for pov in keyword_povs if pov not in routed_pov_set]
+    if missing_povs:
+        merged = _dedupe_known_agents([*active_agents, *missing_povs])
+        if merged != active_agents:
+            logger.info(
+                "Keyword override: added POV agents %s to routing %s",
+                missing_povs,
+                active_agents,
+            )
+        return merged
+
+    return active_agents
 
 
 def _dedupe_known_agents(agents: list[str]) -> list[str]:
@@ -248,7 +262,7 @@ def parse_routing_decision(raw: str, fallback_task: str) -> RoutingDecision:
         )
 
     corrected_agents = _apply_keyword_media_override(fallback_task, known_agents)
-    corrected_agents = _apply_keyword_subject_override(fallback_task, corrected_agents)
+    corrected_agents = _apply_keyword_pov_override(fallback_task, corrected_agents)
 
     return RoutingDecision(
         active_agents=corrected_agents,

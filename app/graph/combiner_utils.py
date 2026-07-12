@@ -75,11 +75,10 @@ def serialize_mayor_data_for_llm(
     for entry in ordered:
         display = format_agent_display_name(entry.source_agent)
         header = f"### {display}"
-        if entry.topic:
-            header += f" ({entry.topic}"
-            if entry.depth:
-                header += f", {entry.depth}"
-            header += ")"
+        if entry.pov:
+            header += f" ({entry.pov} POV)"
+        elif entry.topic:
+            header += f" ({entry.topic})"
         block_lines = [header, "", entry.content]
         if entry.citations:
             block_lines.extend(["", "**Citations:**"])

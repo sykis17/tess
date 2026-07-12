@@ -17,18 +17,14 @@
 - [x] **Phase 13:** Defense layer — Defense Delegator + Defense Review (single LLM, three checks per segment); `review_passed` Panel before `completed`; bounded revise loops to combiner_micro or specialist; `DefenseReview` live in schemas.
 - [x] **Phase 13.1:** Fan-in join fix; WR routes factual/explore topics to researcher; GA prompt anti-refusal; defense auto-revise on refusal phrases.
 - [x] **Phase 14:** Media specialist agents — Photo, Video, Audio; Panel `content_type` audio/video; WR routes media alongside topic agents; text-first plans/scripts (Option A).
-- [x] **Phase 15:** Topic agent matrix — Chemistry, Biology, Economics (major + minor); subject registry; auto-generated WR rules; `MayorData.depth`/`topic`; researcher fallback for off-matrix topics.
+- [x] **Phase 15:** Subject agent scaffolding — Chemistry, Biology, Economics registry; interim `*_major`/`*_minor` depth tiers (superseded by 15B).
+- [x] **Phase 15B:** POV agent matrix — five disciplinary lenses (`chemistry`, `biology`, `economics`, `art`, `ui_design`); `MayorData.pov`; WR routes perspectives not depth; POV keyword override fixes wrong-discipline misroutes; cross-POV combiner prompts; defense length guidance; `pov_sources` on Panels; frontend POV badges.
 
 ---
 
 ## Next — Full AI Chain
 
 Phases below map to the [target architecture](AI_MAP.md#target-ai-chain-full-vision). Each phase should keep backward-compatible Panels and deployable increments.
-
-### Phase 15 follow-up (Option B — future)
-
-- Add Physics, Mathematics, History subject agents.
-- Retire researcher from WR prompt for covered subjects.
 
 ### Phase 16 — Product modes
 
@@ -45,12 +41,32 @@ Phases below map to the [target architecture](AI_MAP.md#target-ai-chain-full-vis
 - L0 bypass graph for baseline benchmarking.
 - Research UI: diff view using `agent_traces` across levels.
 
-### Phase 18 — Streaming & polish
+### Phase 18 — Pipeline status wall & results wall
+
+- **Status wall / info bar** — persistent UI from WR through Presenter showing what will happen and what is happening (agent badges, stage, ETA hints).
+- **Results wall** — folder-tree navigation opens a wall of Panels/results per virtual folder (e.g. `Science/Chemistry`, `Design/UI`).
+- POV segments visible in completed Panels (which lens contributed what).
+
+### Phase 19 — Interactive learning UX
+
+- **Click title → drill down** — clicking a segment title auto-sends "tell me more about this" in context.
+- **Context-related questions** — WR or post-presenter suggestions to clarify user needs and improve accuracy.
+- **Context-deviating questions** — adjacent-topic suggestions to broaden exploration.
+- **Structured list formats** — "10 best beaches", "top careers", ranked/itemized output templates.
+- **Choice themes** — present 4 options/themes for user to steer next step.
+- LLM-generated `follow_up_options` replace static mock buttons where possible.
+
+### Phase 20 — Streaming & polish
 
 - Token streaming to frontend (partial Panel content).
-- LLM-generated follow-up options.
 - Interrupt / steer mid-chain via `interruption_flag`.
 - Performance tuning for CPX11 (4 GB RAM) production constraints.
+
+### Future (post–Phase 20)
+
+- Expand POV catalog (physics, history, psychology, …).
+- Raise 3-agent parallel cap when CPX11 or cloud budget allows.
+- Full K–12 / professional discipline matrix (100+ POV agents with grouped WR routing).
 
 ---
 
@@ -60,3 +76,4 @@ Phases below map to the [target architecture](AI_MAP.md#target-ai-chain-full-vis
 2. **Panels stay backward-compatible** — new fields optional; frontend degrades gracefully.
 3. **Visibility first** — every new node writes `AgentTrace`; users see the chain grow.
 4. **Ollama for dev, Gemini when ready** — chain profiles testable locally on small models.
+5. **POV over depth** — agents represent disciplinary lenses on a question, not brief vs deep variants of one subject.

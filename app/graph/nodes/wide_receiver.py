@@ -2,6 +2,7 @@ import logging
 from typing import Any
 
 from app.agents.registry import format_agent_display_name, get_agent
+from app.agents.subjects.registry import collect_pov_sources
 from app.graph.combiner_utils import combiner_pipeline_names, should_predict_combiners
 from app.graph.defense_utils import defense_pipeline_names, should_predict_defense
 from app.graph.fan_in_utils import build_expected_fan_in_branches
@@ -98,6 +99,7 @@ async def wide_receiver_node(state: GraphState) -> dict[str, Any]:
         follow_up_options=[],
         agents_involved=agents_involved,
         agent_traces=[wr_trace],
+        pov_sources=collect_pov_sources(routed_agents),
     )
 
     return {

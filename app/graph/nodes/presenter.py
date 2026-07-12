@@ -1,6 +1,7 @@
 from typing import Any
 
 from app.agents.registry import DEFAULT_AGENT_NAME, format_agent_display_name, get_agent
+from app.agents.subjects.registry import collect_pov_sources
 from app.graph.combiner_utils import (
     format_usable_answers_markdown,
     order_mayor_data,
@@ -189,6 +190,7 @@ def presenter_node(state: GraphState) -> dict[str, Any]:
         agents_involved=agents_involved,
         agent_traces=[*state.get("agent_traces", []), presenter_trace],
         data_tier="final" if usable_answers else None,
+        pov_sources=collect_pov_sources(active_agents),
     )
 
     return {

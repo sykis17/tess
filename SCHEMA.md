@@ -61,12 +61,19 @@ Media specialist agents use `folder_path` values: `Media/Photo`, `Media/Video`, 
 |-------|------|--------|-------------|
 | `data_tier` | `str` | Live (Phase 12) | `mayor`, `micro`, `usable`, `final` — for intermediate stream Panels |
 
+### Live Panel fields (Phase 15B)
+
+| Field | Type | Status | Description |
+|-------|------|--------|-------------|
+| `pov_sources` | `list[str]` | Live (Phase 15B) | Disciplinary lenses that contributed to this Panel (e.g. `["Chemistry", "Art"]`) |
+
 ### Planned Panel fields
 
 | Field | Type | Phase | Description |
 |-------|------|-------|-------------|
 | `output_level` | `str` | 17 | Chain profile used (`L0`–`L4`) for research comparison |
 | `product_mode` | `str` | 16 | `research`, `planner`, `coding`, `builder` |
+| `pipeline_stage` | `str` | 18 | Current chain stage for status wall (`routing`, `agents`, `combining`, `defense`, `done`) |
 
 ---
 
@@ -101,13 +108,13 @@ Wide Receiver routing JSON. Supports 1–3 agents per message (capped at 3) and 
 | `current_task` | `str` | Concise task summary for specialists |
 | `search_queries` | `list[str]` | 0–1 web search queries for resource finder |
 
-### Planned extensions (Phase 16+)
+### Planned extensions (Phase 15B+)
 
 ```json
 {
-  "active_agents": ["chemistry_major", "economics_minor", "photo"],
-  "current_task": "Compare renewable energy economics and chemistry",
-  "search_queries": ["renewable energy cost trends 2025"],
+  "active_agents": ["chemistry", "art", "photo"],
+  "current_task": "Design a science poster with accurate chemistry and strong visual layout",
+  "search_queries": [],
   "product_mode": "research",
   "chain_profile": "L4"
 }
@@ -118,29 +125,31 @@ Wide Receiver routing JSON. Supports 1–3 agents per message (capped at 3) and 
 | `product_mode` | 16 | Research / planner / coding / builder |
 | `chain_profile` | 17 | Output level L0–L4 |
 
+POV agents use keys such as `chemistry`, `art`, `ui_design` (one disciplinary lens per agent).
+
 ---
 
 ## 4. Data pipeline types
 
 Internal graph state types for the full chain. `MayorData` is live in Phase 10–11; `MicroData` and `UsableAnswer` are live in Phase 12.
 
-### MayorData (live — Phase 10–15)
+### MayorData (live — Phase 10–15B)
 
-Raw output from a topic agent, specialist, or search reader. Stored in graph state via reducer; merged by Presenter. `resource_reader` populates `citations`. Topic agents populate `topic` (subject name) and `depth` (`major` or `minor`).
+Raw output from a POV agent, specialist, or search reader. Stored in graph state via reducer; merged by Presenter. POV agents set `pov` and `topic`; `resource_reader` populates `citations`.
 
 ```json
 {
-  "source_agent": "chemistry_major",
+  "source_agent": "chemistry",
   "topic": "Chemistry",
-  "depth": "major",
-  "content": "### Ionic bonding\n\nIonic bonds form when...",
+  "pov": "Chemistry",
+  "content": "### Ionic bonding (chemistry lens)\n\nIonic bonds form when...",
   "citations": []
 }
 ```
 
 ### MicroData (live — Phase 12)
 
-Combiner Mayor output — cross-topic synthesis.
+Combiner Mayor output — cross-POV synthesis.
 
 ```json
 {
@@ -148,7 +157,7 @@ Combiner Mayor output — cross-topic synthesis.
   "segments": [
     { "title": "Cross-topic comparison", "content": "..." }
   ],
-  "source_agents": ["chemistry_major", "economics_minor"]
+  "source_agents": ["chemistry", "economics"]
 }
 ```
 

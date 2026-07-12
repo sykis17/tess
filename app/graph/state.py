@@ -37,6 +37,8 @@ class GraphState(TypedDict):
     defense_reviews: list[DefenseReview]
     defense_retry_count: int
     defense_notes: str
+    expected_fan_in_branches: list[str]
+    fan_in_branches_done: Annotated[list[str], operator.add]
 
 
 def build_initial_state(
@@ -66,4 +68,6 @@ def build_initial_state(
         "defense_reviews": [],
         "defense_retry_count": 0,
         "defense_notes": "",
+        "expected_fan_in_branches": [],
+        "fan_in_branches_done": [],
     }

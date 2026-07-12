@@ -23,7 +23,14 @@ celery_app = Celery(
     backend=settings.redis_url,
 )
 
-_REDUCER_KEYS = frozenset({"collected_data", "mayor_data", "panels", "agent_traces", "search_results"})
+_REDUCER_KEYS = frozenset({
+    "collected_data",
+    "mayor_data",
+    "panels",
+    "agent_traces",
+    "search_results",
+    "fan_in_branches_done",
+})
 
 
 def _publish_error(redis_client, channel: str, message: str) -> None:

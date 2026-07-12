@@ -15,6 +15,7 @@
 - [x] **Phase 11:** Search layer — resource finder (DuckDuckGo / Tavily) + resource reader; `search_queries` on WR routing; grounded excerpts in `mayor_data` with citations; optional Redis search cache.
 - [x] **Phase 12:** Combiners + Collector — Combiner Mayor/Micro LLM synthesis; deterministic Collector; bypass for single-agent fast path; `MicroData` / `UsableAnswer` live; optional `data_tier` on intermediate Panels.
 - [x] **Phase 13:** Defense layer — Defense Delegator + Defense Review (single LLM, three checks per segment); `review_passed` Panel before `completed`; bounded revise loops to combiner_micro or specialist; `DefenseReview` live in schemas.
+- [x] **Phase 13.1:** Fan-in join fix; WR routes factual/explore topics to researcher; GA prompt anti-refusal; defense auto-revise on refusal phrases.
 
 ---
 

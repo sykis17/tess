@@ -1,6 +1,7 @@
 import logging
 from typing import Any
 
+from app.graph.fan_in_utils import RESOURCE_READER_BRANCH, fan_in_branch_complete
 from app.graph.schemas import AgentTrace, MayorData, SearchResult
 from app.graph.state import GraphState
 from app.graph.trace_utils import truncate_preview
@@ -33,7 +34,10 @@ async def resource_reader_node(state: GraphState) -> dict[str, Any]:
             task_summary=state.get("current_task") or None,
             output_preview="No URLs to read — search returned no results.",
         )
-        return {"agent_traces": [reader_trace]}
+        return {
+            "agent_traces": [reader_trace],
+            **fan_in_branch_complete(state, RESOURCE_READER_BRANCH),
+        }
 
     logger.info("Resource Reader processing %d URLs", len(search_results))
 
@@ -55,7 +59,10 @@ async def resource_reader_node(state: GraphState) -> dict[str, Any]:
             task_summary=state.get("current_task") or None,
             output_preview="No excerpts extracted from search results.",
         )
-        return {"agent_traces": [reader_trace]}
+        return {
+            "agent_traces": [reader_trace],
+            **fan_in_branch_complete(state, RESOURCE_READER_BRANCH),
+        }
 
     content_lines: list[str] = []
     citations: list[str] = []
@@ -84,4 +91,5 @@ async def resource_reader_node(state: GraphState) -> dict[str, Any]:
     return {
         "mayor_data": [mayor_entry],
         "agent_traces": [reader_trace],
+        **fan_in_branch_complete(state, RESOURCE_READER_BRANCH),
     }

@@ -155,7 +155,9 @@ defense_delegator → defense_review → [pass → presenter | revise → combin
 
 **Bypass rule:** Skip combiners when `len(mayor_data) <= 1` and no `resource_reader` entry — single-agent prompts stay fast. Defense always runs (lightweight single-check review on all paths).
 
-**Defense retry:** On `revise`, loops back to `combiner_micro` (synthesis path) or originating specialist (bypass path); capped at `MAX_DEFENSE_RETRIES=2`.
+**Defense retry:** On `revise`, loops back to `combiner_micro` (synthesis path) or originating specialist (bypass path); capped at `MAX_DEFENSE_RETRIES=2`. Phase 13.1: fan-in join waits for all parallel branches; refusal auto-revise; WR routes factual topics to researcher.
+
+**Fan-in join (13.1):** `post_fan_in` waits until all expected branches (`active_agents` + optional `resource_reader`) report done before routing downstream.
 
 ### Live Specialist Agents
 
@@ -217,6 +219,7 @@ A high-value research feature: let the user **select an output level** and compa
 | Combiner nodes | `app/graph/nodes/combiner_mayor.py`, `combiner_micro.py`, `collector.py`, `post_fan_in.py` |
 | Defense nodes | `app/graph/nodes/defense_delegator.py`, `defense_review.py` |
 | Defense utilities | `app/graph/defense_utils.py` |
+| Fan-in utilities | `app/graph/fan_in_utils.py` |
 | Combiner utilities | `app/graph/combiner_utils.py` |
 | WR routing | `app/graph/nodes/wide_receiver.py`, `app/graph/routing.py` |
 | Search nodes | `app/graph/nodes/resource_finder.py`, `app/graph/nodes/resource_reader.py` |

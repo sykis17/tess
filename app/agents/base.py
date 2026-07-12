@@ -2,6 +2,7 @@ import logging
 from typing import Any
 
 from app.agents.registry import get_agent
+from app.graph.fan_in_utils import fan_in_branch_complete
 from app.graph.schemas import AgentTrace, MayorData, OUTPUT_PREVIEW_MAX_CHARS
 from app.graph.state import GraphState
 from app.graph.trace_utils import conversation_turn_count, format_history_input, truncate_preview
@@ -83,4 +84,5 @@ async def run_specialist(state: GraphState, agent_name: str) -> dict[str, Any]:
         "mayor_data": [mayor_entry],
         "agent_traces": [specialist_trace],
         "defense_retry_count": _maybe_increment_defense_retry(state),
+        **fan_in_branch_complete(state, agent_name),
     }

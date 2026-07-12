@@ -91,7 +91,12 @@ def fan_out_to_specialists(state: dict) -> list[Send]:
 
 
 def route_after_fan_in(state: dict) -> str:
-    """Route to combiners or defense after parallel fan-in."""
+    """Route to combiners or defense after all parallel branches complete."""
+    from app.graph.fan_in_utils import all_fan_in_branches_complete
+
+    if not all_fan_in_branches_complete(state):
+        return "fan_in_wait"
+
     if state.get("combiners_bypassed"):
         return "defense_delegator"
     return "combiner_mayor"

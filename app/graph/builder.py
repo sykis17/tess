@@ -8,6 +8,7 @@ from app.graph.nodes.combiner_micro import combiner_micro_node
 from app.graph.nodes.collector import collector_node
 from app.graph.nodes.defense_delegator import defense_delegator_node
 from app.graph.nodes.defense_review import defense_review_node
+from app.graph.nodes.fan_in_wait import fan_in_wait_node
 from app.graph.nodes.general_assistant import general_assistant_node
 from app.graph.nodes.post_fan_in import post_fan_in_node
 from app.graph.nodes.presenter import presenter_node
@@ -31,6 +32,7 @@ def build_graph() -> CompiledStateGraph:
 
     builder.add_node("wide_receiver", wide_receiver_node)
     builder.add_node("post_fan_in", post_fan_in_node)
+    builder.add_node("fan_in_wait", fan_in_wait_node)
     builder.add_node("combiner_mayor", combiner_mayor_node)
     builder.add_node("combiner_micro", combiner_micro_node)
     builder.add_node("collector", collector_node)
@@ -50,6 +52,7 @@ def build_graph() -> CompiledStateGraph:
     builder.add_edge(START, "wide_receiver")
     builder.add_conditional_edges("wide_receiver", fan_out_from_wr)
     builder.add_conditional_edges("post_fan_in", route_after_fan_in)
+    builder.add_edge("fan_in_wait", END)
     builder.add_edge("combiner_mayor", "combiner_micro")
     builder.add_edge("combiner_micro", "collector")
     builder.add_edge("collector", "defense_delegator")

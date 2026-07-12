@@ -4,6 +4,7 @@ from typing import Any
 from app.agents.registry import format_agent_display_name, get_agent
 from app.graph.combiner_utils import combiner_pipeline_names, should_predict_combiners
 from app.graph.defense_utils import defense_pipeline_names, should_predict_defense
+from app.graph.fan_in_utils import build_expected_fan_in_branches
 from app.graph.prompts import WIDE_RECEIVER_SYSTEM_PROMPT
 from app.graph.routing import parse_routing_decision
 from app.graph.schemas import AgentTrace, Panel
@@ -103,6 +104,10 @@ async def wide_receiver_node(state: GraphState) -> dict[str, Any]:
         "current_task": decision.current_task,
         "active_agents": decision.active_agents,
         "search_queries": search_queries,
+        "expected_fan_in_branches": build_expected_fan_in_branches(
+            decision.active_agents,
+            search_queries,
+        ),
         "agent_traces": [wr_trace],
         "panels": [processing_panel],
     }

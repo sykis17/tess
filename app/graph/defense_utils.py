@@ -18,6 +18,16 @@ logger = logging.getLogger(__name__)
 MAX_DEFENSE_RETRIES = 2
 
 _JSON_FENCE_PATTERN = re.compile(r"```(?:json)?\s*([\s\S]*?)\s*```", re.IGNORECASE)
+_REFUSAL_PATTERNS = (
+    re.compile(r"i can'?t help you with that", re.IGNORECASE),
+    re.compile(r"i can'?t help with that", re.IGNORECASE),
+    re.compile(r"i can'?t assist with that", re.IGNORECASE),
+    re.compile(r"i cannot help you", re.IGNORECASE),
+    re.compile(r"i'?m not able to help", re.IGNORECASE),
+    re.compile(r"i am not able to help", re.IGNORECASE),
+    re.compile(r"i'?m unable to help", re.IGNORECASE),
+    re.compile(r"as an ai language model, i can'?t", re.IGNORECASE),
+)
 
 
 def _extract_json_payload(raw: str) -> str:
@@ -110,6 +120,46 @@ def _fallback_auto_pass(segments: list[UsableAnswer]) -> list[DefenseReview]:
     ]
 
 
+def segment_contains_refusal(content: str) -> bool:
+    """Return True when segment content looks like a specialist refusal."""
+    normalized = content.strip()
+    if len(normalized) > 300:
+        return False
+    return any(pattern.search(normalized) for pattern in _REFUSAL_PATTERNS)
+
+
+def apply_refusal_overrides(
+    segments: list[UsableAnswer],
+    reviews: list[DefenseReview],
+) -> list[DefenseReview]:
+    """Force revise verdicts when segment content is a refusal."""
+    segment_by_id = {segment.segment_id: segment for segment in segments}
+    updated: list[DefenseReview] = []
+
+    for review in reviews:
+        segment = segment_by_id.get(review.segment_id)
+        if segment is None or not segment_contains_refusal(segment.content):
+            updated.append(review)
+            continue
+
+        updated.append(
+            review.model_copy(
+                update={
+                    "verdict": "revise",
+                    "checks": DefenseChecks(
+                        big_picture="revise",
+                        detail="revise",
+                        implication="revise",
+                    ),
+                    "notes": review.notes.strip()
+                    or "Specialist refused to answer; provide a helpful response to the user's task.",
+                }
+            )
+        )
+
+    return updated
+
+
 def parse_defense_reviews_json(raw: str, segments: list[UsableAnswer]) -> list[DefenseReview]:
     """Parse Defense Review JSON with a safe fallback to auto-pass."""
     payload = _extract_json_payload(raw)
@@ -149,10 +199,11 @@ def parse_defense_reviews_json(raw: str, segments: list[UsableAnswer]) -> list[D
 
         if not reviews:
             raise ValueError("No defense reviews parsed")
-        return reviews
+        return apply_refusal_overrides(segments, reviews)
     except (json.JSONDecodeError, ValueError) as exc:
         logger.warning("Failed to parse DefenseReview JSON; using auto-pass fallback: %s", exc)
-        return _fallback_auto_pass(segments)
+        fallback = _fallback_auto_pass(segments)
+        return apply_refusal_overrides(segments, fallback)
 
 
 def apply_defense_verdicts(
@@ -259,7 +310,15 @@ def build_agents_involved_with_defense(
 
 def resolve_retry_specialist(state: GraphState) -> str:
     """Return the specialist agent to re-run on bypass defense retry."""
+    from app.agents.registry import AGENT_REGISTRY
+
     active_agents = state.get("active_agents") or []
-    if active_agents:
-        return active_agents[0]
+    agent = active_agents[0] if active_agents else DEFAULT_AGENT_NAME
+
+    if agent == "general_assistant" and state.get("search_queries"):
+        if "researcher" in AGENT_REGISTRY:
+            return "researcher"
+
+    if agent in AGENT_REGISTRY:
+        return agent
     return DEFAULT_AGENT_NAME

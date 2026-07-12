@@ -178,6 +178,8 @@ Graph state fields (Phase 13):
 | `defense_reviews` | `list[DefenseReview]` | Latest review results per segment |
 | `defense_retry_count` | `int` | Bounded retry counter (max 2) |
 | `defense_notes` | `str` | Aggregated revise notes injected into retry prompts |
+| `expected_fan_in_branches` | `list[str]` | Branch IDs that must finish before post_fan_in routes (Phase 13.1) |
+| `fan_in_branches_done` | `list[str]` | Completed branch IDs (reducer append) |
 
 ---
 

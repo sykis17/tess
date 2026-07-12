@@ -16,10 +16,12 @@ Rules:
 - Use exactly 1 agent for simple, single-domain requests.
 - Use 2 or 3 agents when the question clearly spans multiple domains (e.g. coding AND research).
 - Route coding tasks, tool building, and debugging to "coder".
-- Route factual research, explanations, and summaries to "researcher".
-- Route casual conversation and greetings to "general_assistant" only — not for code or tool requests.
+- Route factual research, explanations, summaries, and "explore/tell me about X" requests to "researcher".
+- Route casual conversation and greetings to "general_assistant" only — not for code, research, or factual topics.
+- Use "researcher" (not "general_assistant") for topics like kubernetes/k8s, devops, blockchain, crypto, science, history, news, or any request that asks to explore or explain a subject.
+- When search_queries is non-empty for a factual topic, prefer "researcher" over "general_assistant".
 - Summarize the user's intent in current_task so specialists can act on it.
-- Use conversation history to interpret follow-ups such as "continue with this".
+- Use conversation history to interpret follow-ups such as "continue with this" or "tell me more about [topic from prior answer]".
 - If unsure between specialists, prefer the most specific agent (coder or researcher) over general_assistant.
 - search_queries: include 0 or 1 web search query when the user needs grounded sources.
   Set a search query when the user asks for citations, sources, references, "cite", "with sources",
@@ -32,6 +34,8 @@ Examples:
 - "Build a CLI tool in Python" → {{"active_agents": ["coder"], "current_task": "Build a CLI tool in Python", "search_queries": []}}
 - "What is photosynthesis?" → {{"active_agents": ["researcher"], "current_task": "Explain photosynthesis", "search_queries": []}}
 - "Hey, how are you?" → {{"active_agents": ["general_assistant"], "current_task": "Casual greeting", "search_queries": []}}
+- "Explain kubernetes k8s" → {{"active_agents": ["researcher"], "current_task": "Explain Kubernetes (k8s)", "search_queries": []}}
+- "Explore blockchain and cryptocurrency" → {{"active_agents": ["researcher"], "current_task": "Explore blockchain and cryptocurrency", "search_queries": ["blockchain news 2026"]}}
 - "Explain photosynthesis and cite sources" → {{"active_agents": ["researcher"], "current_task": "Explain photosynthesis with cited sources", "search_queries": ["photosynthesis mechanism 2024"]}}
 - "Latest renewable energy cost trends 2025" → {{"active_agents": ["researcher"], "current_task": "Summarize latest renewable energy cost trends 2025", "search_queries": ["renewable energy cost trends 2025"]}}
 - "Compare async Python and explain photosynthesis with sources" → {{"active_agents": ["coder", "researcher"], "current_task": "Compare Python async patterns and explain photosynthesis with sources", "search_queries": ["photosynthesis mechanism 2024"]}}

@@ -108,6 +108,10 @@ def route_after_defense(state: dict) -> str:
 
     reviews = state.get("defense_reviews") or []
     retry_count = state.get("defense_retry_count") or 0
+    usable_answers = state.get("usable_answers") or []
+
+    if not reviews and not usable_answers:
+        return "presenter"
 
     if all_segments_approved(reviews) or retry_count >= MAX_DEFENSE_RETRIES:
         return "presenter"

@@ -35,7 +35,9 @@ MODES: dict[str, ProductModeConfig] = {
         wr_rules=(
             "Active product mode: research\n"
             "- Favor search_queries when the user needs citations, sources, or grounded facts.\n"
-            "- Prefer multi-POV routing when the question spans disciplines.\n"
+            "- Only alarm POV agents when user text clearly matches a POV discipline.\n"
+            "- For industry, business, or general factual topics without POV keywords, use researcher with search_queries.\n"
+            "- Prefer multi-POV routing only when the question clearly spans matched disciplines.\n"
             "- Do not route casual chat to researcher."
         ),
         combiner_hint="Catalog per-source inventory; Micro should write synthesis with explicit source agreement.",

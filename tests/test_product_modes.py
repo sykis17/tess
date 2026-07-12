@@ -133,3 +133,54 @@ def test_apply_product_mode_routing_auto_noop() -> None:
     )
     result = apply_product_mode_routing("auto", decision, "Hey, how are you?")
     assert result == decision
+
+
+def test_research_guard_prunes_unmatched_povs_for_aviation_industry() -> None:
+    """WR over-alarm of POVs without keyword grounding should fall back to researcher + search."""
+    decision = _route(
+        (
+            '{"active_agents": ["economics", "biology", "chemistry"], '
+            '"current_task": "Aviation industry needs and company requirements", "search_queries": []}'
+        ),
+        "Aviation industry needs and company requirements",
+        product_mode="research",
+    )
+    assert decision.active_agents == ["researcher"]
+    assert len(decision.search_queries) == 1
+
+
+def test_research_guard_keeps_keyword_matched_multi_pov() -> None:
+    decision = _route(
+        (
+            '{"active_agents": ["economics", "chemistry", "biology"], '
+            '"current_task": "Compare renewable energy economics and chemistry", "search_queries": []}'
+        ),
+        "Compare renewable energy economics and chemistry",
+        product_mode="research",
+    )
+    assert "economics" in decision.active_agents
+    assert "chemistry" in decision.active_agents
+    assert "biology" not in decision.active_agents
+
+
+def test_research_guard_keeps_biology_for_photosynthesis() -> None:
+    decision = _route(
+        '{"active_agents": ["biology"], "current_task": "Explain photosynthesis", "search_queries": []}',
+        "Explain photosynthesis",
+        product_mode="research",
+    )
+    assert decision.active_agents == ["biology"]
+    assert len(decision.search_queries) == 1
+
+
+def test_auto_mode_does_not_apply_research_guard() -> None:
+    decision = _route(
+        (
+            '{"active_agents": ["economics", "biology", "chemistry"], '
+            '"current_task": "Aviation industry needs", "search_queries": []}'
+        ),
+        "Aviation industry needs and company requirements",
+        product_mode="auto",
+    )
+    assert decision.active_agents == ["economics", "biology", "chemistry"]
+    assert decision.search_queries == []

@@ -301,6 +301,28 @@ _BUILDER_DELIVERABLE_SIGNALS = (
     "landing page",
 )
 
+_BROAD_RESEARCH_SIGNALS = (
+    "industry",
+    "market",
+    "sector",
+    "company",
+    "companies",
+    "business",
+    "requirements",
+    "needs",
+    "overview",
+    "trends",
+    "aviation",
+    "aerospace",
+    "explain ",
+    "what is ",
+    "how does ",
+    "tell me about",
+    "summarize ",
+    "compare ",
+    "research ",
+)
+
 
 def _looks_like_code_request(user_input: str) -> bool:
     text = user_input.lower()
@@ -325,6 +347,43 @@ def _infer_search_query_from_input(user_input: str) -> str:
     return text
 
 
+def _looks_like_broad_research_topic(user_input: str) -> bool:
+    """Detect industry, business, or general factual questions suited to researcher + search."""
+    text = user_input.lower()
+    return any(signal in text for signal in _BROAD_RESEARCH_SIGNALS)
+
+
+def _apply_research_pov_guard(user_input: str, active_agents: list[str]) -> list[str]:
+    """Prune POV agents without keyword grounding; fall back to researcher for broad topics."""
+    keyword_povs = infer_pov_agents_from_keywords(user_input)
+    non_pov_agents = [agent for agent in active_agents if not is_pov_agent(agent)]
+    routed_povs = [agent for agent in active_agents if is_pov_agent(agent)]
+
+    if not routed_povs:
+        return active_agents
+
+    keyword_set = set(keyword_povs)
+
+    if keyword_povs:
+        supported_povs = [pov for pov in routed_povs if pov in keyword_set]
+        pruned_povs = [pov for pov in routed_povs if pov not in keyword_set]
+        if pruned_povs:
+            logger.info("Research guard: pruned unmatched POVs %s", pruned_povs)
+        if supported_povs:
+            return _dedupe_known_agents([*supported_povs, *non_pov_agents])
+        return _dedupe_known_agents([*keyword_povs, *non_pov_agents])
+
+    logger.info(
+        "Research guard: no POV keywords in input; replacing %s with researcher",
+        routed_povs,
+    )
+    if non_pov_agents and "researcher" not in non_pov_agents:
+        return _dedupe_known_agents([*non_pov_agents, "researcher"])
+    if non_pov_agents:
+        return _dedupe_known_agents(non_pov_agents)
+    return ["researcher"]
+
+
 def apply_product_mode_routing(
     mode: str,
     decision: RoutingDecision,
@@ -339,7 +398,14 @@ def apply_product_mode_routing(
     search_queries = list(decision.search_queries)
 
     if mode == ProductMode.RESEARCH.value:
-        if _needs_research_search(user_input) and not search_queries:
+        guarded_agents = _apply_research_pov_guard(user_input, active_agents)
+        if guarded_agents != active_agents:
+            active_agents = guarded_agents
+        if not search_queries and (
+            _needs_research_search(user_input)
+            or "researcher" in active_agents
+            or _looks_like_broad_research_topic(user_input)
+        ):
             search_queries = [_infer_search_query_from_input(user_input)]
             logger.info("Product mode research: inferred search query from user input")
 

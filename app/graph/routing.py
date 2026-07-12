@@ -134,6 +134,40 @@ def _infer_agents_from_keywords(user_input: str) -> list[str]:
     return _dedupe_known_agents(agents) or [DEFAULT_AGENT_NAME]
 
 
+MEDIA_AGENTS = frozenset({"photo", "video", "audio"})
+
+
+def _apply_keyword_media_override(
+    user_input: str,
+    active_agents: list[str],
+) -> list[str]:
+    """Correct WR misroutes when user input clearly requests a media specialist."""
+    keyword_agents = _infer_agents_from_keywords(user_input)
+    keyword_media = [agent for agent in keyword_agents if agent in MEDIA_AGENTS]
+    if not keyword_media:
+        return active_agents
+
+    routed_media = [agent for agent in active_agents if agent in MEDIA_AGENTS]
+    if routed_media:
+        return active_agents
+
+    if DEFAULT_AGENT_NAME in active_agents and len(active_agents) == 1:
+        logger.info(
+            "Keyword override: replacing general_assistant with %s for media intent",
+            keyword_media,
+        )
+        return _dedupe_known_agents(keyword_media)
+
+    merged = _dedupe_known_agents([*active_agents, *keyword_media])
+    if merged != active_agents:
+        logger.info(
+            "Keyword override: added media agents %s to routing %s",
+            keyword_media,
+            active_agents,
+        )
+    return merged
+
+
 def _dedupe_known_agents(agents: list[str]) -> list[str]:
     """Filter to registered agents, dedupe, and cap at MAX_PARALLEL_AGENTS."""
     seen: set[str] = set()
@@ -176,8 +210,10 @@ def parse_routing_decision(raw: str, fallback_task: str) -> RoutingDecision:
             search_queries=_normalize_search_queries(decision.search_queries),
         )
 
+    corrected_agents = _apply_keyword_media_override(fallback_task, known_agents)
+
     return RoutingDecision(
-        active_agents=known_agents,
+        active_agents=corrected_agents,
         current_task=decision.current_task or fallback_task,
         search_queries=_normalize_search_queries(decision.search_queries),
     )

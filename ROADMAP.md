@@ -32,7 +32,13 @@
 
 Phases below map to the [target architecture](AI_MAP.md#target-ai-chain-full-vision). Each phase should keep backward-compatible Panels and deployable increments.
 
-### Future (post–Phase 20)
+### Phase 21 — Presenter gap & final-answer delivery
+
+Production issue (2026-07-12): after defense passes, UI freezes on *"Quality checks passed — formatting final answer…"* for many minutes. Root cause: presenter blocks on **`generate_follow_up_options` LLM** with no progress Panel; status wall stays on **Defense** because `review_passed` Panel sets `pipeline_stage=defense`.
+
+See [PHASE_21_OPENER.md](PHASE_21_OPENER.md) for full brief, deliverables (two-phase presenter recommended), and test matrix.
+
+### Future (post–Phase 21)
 
 - Expand POV catalog (physics, history, psychology, …).
 - Raise 3-agent parallel cap when CPX11 or cloud budget allows.

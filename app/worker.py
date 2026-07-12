@@ -160,6 +160,13 @@ async def _run_graph_with_streaming(
                 node_elapsed,
                 cumulative_elapsed,
             )
+            if node_name == "presenter":
+                pre_presenter_elapsed = cumulative_elapsed - node_elapsed
+                if pre_presenter_elapsed > 720:
+                    logger.warning(
+                        "Pipeline exceeded 12 min before presenter (%.1fs pre-presenter)",
+                        pre_presenter_elapsed,
+                    )
             node_start = time.monotonic()
 
             _merge_node_output(merged, node_output)

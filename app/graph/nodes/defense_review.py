@@ -128,7 +128,7 @@ async def defense_review_node(state: GraphState) -> dict[str, Any]:
         data_tier="usable",
         pov_sources=collect_pov_sources(state.get("active_agents") or []),
         output_level=state.get("chain_profile"),
-        pipeline_stage=PipelineStage.DEFENSE,
+        pipeline_stage=PipelineStage.PRESENTING,
     )
 
     return {

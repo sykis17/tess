@@ -124,13 +124,16 @@ def test_generate_follow_up_options_fallback_on_error(mock_create_llm) -> None:
     assert kinds[:3] == ["choice", "choice", "choice"]
 
 
+@patch("app.graph.nodes.presenter.is_session_interrupted", return_value=False)
+@patch("app.graph.nodes.presenter.publish_panel")
 @patch("app.graph.follow_up_utils.create_llm")
-def test_presenter_emits_generated_follow_ups(mock_create_llm) -> None:
+def test_presenter_emits_generated_follow_ups(mock_create_llm, _mock_publish, _mock_interrupt) -> None:
     mock_llm = AsyncMock()
     mock_llm.generate.return_value = _mock_llm_response(_sample_follow_up_json())
     mock_create_llm.return_value = mock_llm
 
     state = build_initial_state("Design a science app UI", panel_id="fu-panel")
+    state["session_id"] = "sess-fu"
     state["active_agents"] = ["art", "ui_design"]
     state["combiners_bypassed"] = False
     state["usable_answers"] = [
@@ -144,27 +147,32 @@ def test_presenter_emits_generated_follow_ups(mock_create_llm) -> None:
         ),
     ]
 
-    result = asyncio.run(presenter_node(state))
+    with patch("app.graph.nodes.presenter.should_skip_llm_follow_ups", return_value=False):
+        result = asyncio.run(presenter_node(state))
     panel = result["panels"][0]
 
     assert panel.follow_up_options != list(DEFAULT_FOLLOW_UP_OPTIONS)
     assert len(panel.follow_up_kinds) == len(panel.follow_up_options)
 
 
+@patch("app.graph.nodes.presenter.is_session_interrupted", return_value=False)
+@patch("app.graph.nodes.presenter.publish_panel")
 @patch("app.graph.follow_up_utils.create_llm")
-def test_presenter_fallback_follow_ups_on_llm_error(mock_create_llm) -> None:
+def test_presenter_fallback_follow_ups_on_llm_error(mock_create_llm, _mock_publish, _mock_interrupt) -> None:
     mock_llm = AsyncMock()
     mock_llm.generate.side_effect = RuntimeError("timeout")
     mock_create_llm.return_value = mock_llm
 
     state = build_initial_state("Hello", panel_id="fallback-panel")
+    state["session_id"] = "sess-fallback-legacy"
     state["collected_data"] = ["Hi there."]
     state["mayor_data"] = [
         MayorData(source_agent="general_assistant", content="Hi there."),
     ]
     state["active_agents"] = ["general_assistant"]
 
-    result = asyncio.run(presenter_node(state))
+    with patch("app.graph.nodes.presenter.should_skip_llm_follow_ups", return_value=False):
+        result = asyncio.run(presenter_node(state))
     panel = result["panels"][0]
 
     assert panel.follow_up_options[:3] == DEFAULT_FOLLOW_UP_OPTIONS

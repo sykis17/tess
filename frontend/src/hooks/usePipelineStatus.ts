@@ -124,7 +124,17 @@ function agentsForCurrentStage(
   }
 }
 
+function effectiveStage(panel: Panel): string | null {
+  if (panel.status === "review_passed") {
+    return "presenting";
+  }
+  return panel.pipeline_stage ?? null;
+}
+
 function formatStatusSubtitle(panel: Panel): string {
+  if (panel.status === "review_passed") {
+    return "Formatting final answer…";
+  }
   const content = panel.content;
   if (panel.is_streaming && content.length > 100) {
     return `${content.slice(0, 100).trim()}…`;
@@ -204,12 +214,12 @@ export function usePipelineStatus(
 
   const stageAgents = useMemo(() => {
     const agents = focusPanel?.agents_involved ?? [];
-    return agentsForCurrentStage(focusPanel?.pipeline_stage, agents);
+    return agentsForCurrentStage(effectiveStage(focusPanel), agents);
   }, [focusPanel]);
 
   return {
     visible: isProcessing && focusPanel !== null,
-    currentStage: focusPanel?.pipeline_stage ?? null,
+    currentStage: focusPanel ? effectiveStage(focusPanel) : null,
     predictedSteps,
     activeAgents: stageAgents,
     subtitle:

@@ -30,5 +30,14 @@ class Settings(BaseSettings):
     pipeline_soft_time_limit_seconds: int = 900
     pipeline_hard_time_limit_seconds: int = 910
 
+    skip_llm_follow_ups: bool = False
+
 
 settings = Settings()
+
+
+def should_skip_llm_follow_ups() -> bool:
+    """Return True when presenter should skip the follow-up LLM call."""
+    if settings.skip_llm_follow_ups:
+        return True
+    return ":1b" in settings.ollama_model

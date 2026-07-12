@@ -1,7 +1,11 @@
+import logging
+import time
 from typing import Any
 
 from app.agents.registry import DEFAULT_AGENT_NAME, format_agent_display_name, get_agent
 from app.agents.subjects.registry import collect_pov_sources
+from app.core.config import should_skip_llm_follow_ups
+from app.core.session_control import is_session_interrupted
 from app.graph.combiner_utils import (
     format_usable_answers_markdown,
     order_mayor_data,
@@ -10,9 +14,10 @@ from app.graph.defense_utils import (
     build_panel_agents_involved,
     defense_exhausted_retries,
 )
-from app.graph.follow_up_utils import generate_follow_up_options
+from app.graph.follow_up_utils import build_fallback_follow_ups, generate_follow_up_options
 from app.graph.list_format_utils import apply_list_format
 from app.graph.media_utils import extract_typed_media_content, resolve_content_type
+from app.graph.panel_stream import publish_panel
 from app.graph.pipeline_stages import PipelineStage
 from app.graph.pov_segments import build_pov_segments
 from app.graph.schemas import (
@@ -23,6 +28,8 @@ from app.graph.schemas import (
     Panel,
 )
 from app.graph.state import GraphState
+
+logger = logging.getLogger(__name__)
 
 RESOURCE_READER_AGENT = "resource_reader"
 
@@ -143,8 +150,68 @@ def _resolve_panel_output(
     return content, content_type
 
 
+def _build_presenter_trace(
+    state: GraphState,
+    *,
+    usable_answers: list,
+    mayor_data: list[MayorData],
+    collected_data: list[str],
+    combiners_bypassed: bool,
+) -> AgentTrace:
+    return AgentTrace(
+        agent_name="presenter",
+        inputs_seen=[
+            f"usable_answers ({len(usable_answers)} segments)",
+            f"mayor_data ({len(mayor_data)} entries)",
+            f"collected_data ({len(collected_data)} entries)",
+            f"combiners_bypassed ({combiners_bypassed})",
+            f"defense_reviews ({len(state.get('defense_reviews') or [])})",
+            f"search_queries ({len(state.get('search_queries') or [])})",
+        ],
+        task_summary=state.get("current_task") or None,
+        output_preview="Formatted synthesized output into Panel JSON."
+        if usable_answers
+        else "Formatted specialist output into Panel JSON.",
+    )
+
+
+def _build_completed_panel(
+    state: GraphState,
+    *,
+    content: str,
+    content_type: ContentType,
+    content_format: ContentFormat | None,
+    pov_segments: list,
+    follow_up_options: list[str],
+    follow_up_kinds: list[str],
+    agents_involved: list[str],
+    presenter_trace: AgentTrace,
+    usable_answers: list,
+    product_mode: str | None,
+) -> Panel:
+    return Panel(
+        panel_id=state["panel_id"],
+        folder_path=_resolve_folder_path(state),
+        status="completed",
+        content_type=content_type,
+        content=content,
+        follow_up_options=follow_up_options,
+        follow_up_kinds=follow_up_kinds,
+        agents_involved=agents_involved,
+        agent_traces=[*state.get("agent_traces", []), presenter_trace],
+        data_tier="final" if usable_answers else None,
+        pov_sources=collect_pov_sources(state.get("active_agents") or []),
+        product_mode=product_mode if product_mode != "auto" else None,
+        output_level=state.get("chain_profile"),
+        pipeline_stage=PipelineStage.DONE,
+        pov_segments=pov_segments,
+        content_format=content_format,
+    )
+
+
 async def presenter_node(state: GraphState) -> dict[str, Any]:
-    """Format collected or synthesized data into a strictly typed Panel for frontend streaming."""
+    """Format collected or synthesized data into a Panel; ship answer first, chips second."""
+    presenter_start = time.monotonic()
     usable_answers = state.get("usable_answers") or []
     mayor_data = state.get("mayor_data") or []
     collected_data = state["collected_data"]
@@ -154,6 +221,7 @@ async def presenter_node(state: GraphState) -> dict[str, Any]:
     exhausted = defense_exhausted_retries(state)
     user_input = state["user_input"]
     product_mode = state.get("product_mode")
+    session_id = state.get("session_id", "")
 
     content, content_type = _resolve_panel_output(
         usable_answers,
@@ -178,56 +246,128 @@ async def presenter_node(state: GraphState) -> dict[str, Any]:
         exhausted,
     )
 
-    follow_up_options, follow_up_kinds = await generate_follow_up_options(
-        content,
-        pov_segments,
-        product_mode if product_mode != "auto" else None,
-        active_agents,
-        user_input,
-    )
+    format_ms = int((time.monotonic() - presenter_start) * 1000)
 
     include_combiners = not combiners_bypassed and bool(usable_answers)
     agents_involved = build_panel_agents_involved(
         state,
         include_combiners=include_combiners,
     )
-
-    presenter_trace = AgentTrace(
-        agent_name="presenter",
-        inputs_seen=[
-            f"usable_answers ({len(usable_answers)} segments)",
-            f"mayor_data ({len(mayor_data)} entries)",
-            f"collected_data ({len(collected_data)} entries)",
-            f"combiners_bypassed ({combiners_bypassed})",
-            f"defense_reviews ({len(state.get('defense_reviews') or [])})",
-            f"search_queries ({len(state.get('search_queries') or [])})",
-        ],
-        task_summary=state.get("current_task") or None,
-        output_preview="Formatted synthesized output into Panel JSON."
-        if usable_answers
-        else "Formatted specialist output into Panel JSON.",
+    presenter_trace = _build_presenter_trace(
+        state,
+        usable_answers=usable_answers,
+        mayor_data=mayor_data,
+        collected_data=collected_data,
+        combiners_bypassed=combiners_bypassed,
     )
 
-    panel = Panel(
-        panel_id=state["panel_id"],
-        folder_path=_resolve_folder_path(state),
-        status="completed",
-        content_type=content_type,
+    fallback_options, fallback_kinds = build_fallback_follow_ups(
+        pov_segments,
+        content,
+        active_agents,
+    )
+
+    phase_a_panel = _build_completed_panel(
+        state,
         content=content,
+        content_type=content_type,
+        content_format=content_format,
+        pov_segments=pov_segments,
+        follow_up_options=fallback_options,
+        follow_up_kinds=fallback_kinds,
+        agents_involved=agents_involved,
+        presenter_trace=presenter_trace,
+        usable_answers=usable_answers,
+        product_mode=product_mode,
+    )
+
+    if session_id:
+        publish_panel(phase_a_panel, session_id)
+
+    skip_llm = should_skip_llm_follow_ups()
+    follow_up_llm_ms = 0
+
+    if skip_llm or (session_id and is_session_interrupted(session_id)):
+        total_ms = int((time.monotonic() - presenter_start) * 1000)
+        logger.info(
+            "Presenter finished: format_ms=%d follow_up_llm_ms=%d total_ms=%d skip_llm=%s",
+            format_ms,
+            follow_up_llm_ms,
+            total_ms,
+            skip_llm,
+        )
+        return {
+            "agent_traces": [presenter_trace],
+            "panels": [phase_a_panel],
+        }
+
+    follow_up_start = time.monotonic()
+    try:
+        follow_up_options, follow_up_kinds = await generate_follow_up_options(
+            content,
+            pov_segments,
+            product_mode if product_mode != "auto" else None,
+            active_agents,
+            user_input,
+        )
+    except Exception as exc:
+        logger.warning("Presenter follow-up LLM failed, keeping fallback chips: %s", exc)
+        total_ms = int((time.monotonic() - presenter_start) * 1000)
+        logger.info(
+            "Presenter finished: format_ms=%d follow_up_llm_ms=%d total_ms=%d skip_llm=%s",
+            format_ms,
+            follow_up_llm_ms,
+            total_ms,
+            False,
+        )
+        return {
+            "agent_traces": [presenter_trace],
+            "panels": [phase_a_panel],
+        }
+
+    follow_up_llm_ms = int((time.monotonic() - follow_up_start) * 1000)
+
+    if session_id and is_session_interrupted(session_id):
+        total_ms = int((time.monotonic() - presenter_start) * 1000)
+        logger.info(
+            "Presenter finished: format_ms=%d follow_up_llm_ms=%d total_ms=%d skip_llm=%s",
+            format_ms,
+            follow_up_llm_ms,
+            total_ms,
+            False,
+        )
+        return {
+            "agent_traces": [presenter_trace],
+            "panels": [phase_a_panel],
+        }
+
+    final_panel = _build_completed_panel(
+        state,
+        content=content,
+        content_type=content_type,
+        content_format=content_format,
+        pov_segments=pov_segments,
         follow_up_options=follow_up_options,
         follow_up_kinds=follow_up_kinds,
         agents_involved=agents_involved,
-        agent_traces=[*state.get("agent_traces", []), presenter_trace],
-        data_tier="final" if usable_answers else None,
-        pov_sources=collect_pov_sources(active_agents),
-        product_mode=product_mode if product_mode != "auto" else None,
-        output_level=state.get("chain_profile"),
-        pipeline_stage=PipelineStage.DONE,
-        pov_segments=pov_segments,
-        content_format=content_format,
+        presenter_trace=presenter_trace,
+        usable_answers=usable_answers,
+        product_mode=product_mode,
+    )
+
+    if session_id:
+        publish_panel(final_panel, session_id)
+
+    total_ms = int((time.monotonic() - presenter_start) * 1000)
+    logger.info(
+        "Presenter finished: format_ms=%d follow_up_llm_ms=%d total_ms=%d skip_llm=%s",
+        format_ms,
+        follow_up_llm_ms,
+        total_ms,
+        False,
     )
 
     return {
         "agent_traces": [presenter_trace],
-        "panels": [panel],
+        "panels": [final_panel],
     }

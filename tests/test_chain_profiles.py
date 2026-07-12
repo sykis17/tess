@@ -34,7 +34,12 @@ def _run_presenter(state):
         provider="test",
         model="test-model",
     )
-    with patch("app.graph.follow_up_utils.create_llm", return_value=mock_llm):
+    with (
+        patch("app.graph.follow_up_utils.create_llm", return_value=mock_llm),
+        patch("app.graph.nodes.presenter.publish_panel"),
+        patch("app.graph.nodes.presenter.should_skip_llm_follow_ups", return_value=False),
+        patch("app.graph.nodes.presenter.is_session_interrupted", return_value=False),
+    ):
         return asyncio.run(presenter_node(state))
 
 

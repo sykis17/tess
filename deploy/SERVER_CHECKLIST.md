@@ -104,7 +104,15 @@ Then open **http://5.78.186.223** in your browser, hard-refresh (`Ctrl+Shift+R`)
 
 First response may take 30–60 seconds while the model loads.
 
-**Multi-POV requests** (e.g. art + ui_design) run 6+ sequential LLM calls. The pipeline allows up to **12 minutes** before timing out. On CPX11 with `llama3.2:1b`, expect several minutes for combiner stages.
+**Multi-POV requests** (e.g. art + ui_design) run 6+ sequential LLM calls. The pipeline allows up to **15 minutes** before timing out. On CPX11 with `llama3.2:1b`, expect several minutes for combiner stages. Phase 21 ships the final answer immediately after defense; follow-up chips may still take extra time unless skipped.
+
+**Phase 21 — skip presenter follow-up LLM (CPX11 fast path):** add to `.env.prod`:
+
+```env
+SKIP_LLM_FOLLOW_UPS=true
+```
+
+Presenter finishes in seconds after defense with static/topic-fallback chips. Also auto-enabled when `OLLAMA_MODEL` contains `:1b` unless you set `SKIP_LLM_FOLLOW_UPS=false` explicitly.
 
 ---
 
@@ -118,7 +126,8 @@ First response may take 30–60 seconds while the model loads.
 | Gemini 429 error | Free quota exhausted | Use Ollama (`DEFAULT_LLM_PROVIDER=ollama`) or enable billing |
 | Deploy script fails on npm | Node not installed | Install Node.js (one-time setup above) |
 | Out of memory / `signal: killed` | CPX11 has 4 GB RAM; llama3.2 is too large | Use `OLLAMA_MODEL=llama3.2:1b`, add swap (see below), redeploy |
-| Multi-POV timeout after ~12 minutes | 6+ sequential LLM calls on small hardware | Use `llama3.2:1b`, simplify prompt; L0/specialist stages now stream tokens for live feedback |
+| Multi-POV timeout after ~15 minutes | 8+ sequential LLM calls on small hardware | Use `llama3.2:1b`, `SKIP_LLM_FOLLOW_UPS=true`, or simplify prompt |
+| Stuck on defense after "Quality checks passed" | Presenter follow-up LLM (Phase 21 ships answer first) | Hard refresh after Phase 21 deploy; or set `SKIP_LLM_FOLLOW_UPS=true` |
 | Steer while processing | User sends new message during pipeline | Expected — previous task revoked; wait for new Panel; combiner stages may still take minutes |
 
 ---

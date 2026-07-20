@@ -32,6 +32,24 @@ class Settings(BaseSettings):
 
     skip_llm_follow_ups: bool = False
 
+    # Multi-cloud ops control plane
+    ops_local_base_url: str = "http://127.0.0.1:8000"
+    ops_hetzner_region: str = "fsn1"
+    ops_aws_base_url: str | None = None
+    ops_aws_region: str = "us-east-1"
+    ops_aws_credentials_ref: str | None = "AWS_ROLE_ARN"
+    ops_gcp_base_url: str | None = None
+    ops_gcp_region: str = "us-central1"
+    ops_gcp_credentials_ref: str | None = "GCP_SERVICE_ACCOUNT_JSON"
+    ops_preferred_provider_id: str | None = None
+    ops_admin_token: str | None = None
+    ops_probe_interval_seconds: float = 30.0
+    ops_failover_failure_threshold: int = 3
+    ops_failover_recovery_threshold: int = 2
+    ops_latency_threshold_ms: float = 5000.0
+    ops_probe_enabled: bool = True
+    ops_persist_enabled: bool = True
+
 
 settings = Settings()
 

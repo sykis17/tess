@@ -10,6 +10,10 @@
         reverse_proxy web:8000
     }
 
+    handle /ops/* {
+        reverse_proxy web:8000
+    }
+
     handle {
         try_files {path} /index.html
         file_server

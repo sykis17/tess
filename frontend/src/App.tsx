@@ -42,10 +42,12 @@ function App() {
     panels,
     lastError,
     cancelNotice,
+    providerNotice,
     isProcessing,
     sendMessage,
     clearError,
     clearCancelNotice,
+    clearProviderNotice,
   } = useWebSocket(sessionId);
   const pipelineStatus = usePipelineStatus(panels, isProcessing);
   const panelsEndRef = useRef<HTMLDivElement>(null);
@@ -138,6 +140,14 @@ function App() {
           <div className="cancel-notice" role="status">
             <span>{cancelNotice}</span>
             <button type="button" onClick={clearCancelNotice}>
+              Dismiss
+            </button>
+          </div>
+        )}
+        {providerNotice && (
+          <div className="cancel-notice" role="status">
+            <span>{providerNotice}</span>
+            <button type="button" onClick={clearProviderNotice}>
               Dismiss
             </button>
           </div>

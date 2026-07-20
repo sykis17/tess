@@ -58,6 +58,28 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
         await pubsub.subscribe(channel)
         redis_task = asyncio.create_task(_forward_redis_messages(pubsub, websocket))
 
+        try:
+            from app.ops.balancer import assign_session
+
+            assignment = assign_session(session_id)
+            provider = None
+            from app.ops.store import get_store
+
+            provider = get_store().get_provider(assignment.provider_id)
+            await websocket.send_json(
+                {
+                    "type": "session_assigned",
+                    "session_id": session_id,
+                    "provider_id": assignment.provider_id,
+                    "policy": assignment.policy.value,
+                    "ws_base_url": (
+                        provider.effective_ws_base_url() if provider else None
+                    ),
+                }
+            )
+        except Exception:
+            logger.debug("session assign skipped for %s", session_id, exc_info=True)
+
         while True:
             user_message = await websocket.receive_text()
 

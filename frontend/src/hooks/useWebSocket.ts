@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   isCancelledMessage,
   isPanel,
+  isProviderChangedMessage,
   isWorkerError,
   type Panel,
 } from "../types/panel";
@@ -15,6 +16,16 @@ export type ConnectionState =
 
 const WS_BASE_URL =
   import.meta.env.VITE_WS_BASE_URL ?? "ws://127.0.0.1:8000";
+
+function httpBaseFromWs(wsBase: string): string {
+  if (wsBase.startsWith("wss://")) {
+    return `https://${wsBase.slice("wss://".length)}`;
+  }
+  if (wsBase.startsWith("ws://")) {
+    return `http://${wsBase.slice("ws://".length)}`;
+  }
+  return wsBase;
+}
 
 const PROCESSING_TIMEOUT_MS = 900_000;
 const PROCESSING_TIMEOUT_MINUTES = PROCESSING_TIMEOUT_MS / 60_000;
@@ -81,9 +92,11 @@ export function useWebSocket(sessionId: string) {
   const [panels, setPanels] = useState<Panel[]>([]);
   const [lastError, setLastError] = useState<string | null>(null);
   const [cancelNotice, setCancelNotice] = useState<string | null>(null);
+  const [providerNotice, setProviderNotice] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const pendingCountRef = useRef(0);
+  const wasProcessingOnCloseRef = useRef(false);
 
   const decrementPending = useCallback(() => {
     pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
@@ -125,6 +138,21 @@ export function useWebSocket(sessionId: string) {
           return;
         }
 
+        if (isProviderChangedMessage(data)) {
+          setProviderNotice(
+            data.message?.trim() ||
+              "Provider changed — in-flight answer was interrupted. Reconnect and resubmit if needed.",
+          );
+          pendingCountRef.current = 0;
+          setIsProcessing(false);
+          if (data.ws_base_url && data.ws_base_url !== WS_BASE_URL) {
+            setProviderNotice(
+              `${data.message} New endpoint: ${data.ws_base_url}`,
+            );
+          }
+          return;
+        }
+
         if (isPanel(data)) {
           if (data.status === "completed") {
             decrementPending();
@@ -157,9 +185,46 @@ export function useWebSocket(sessionId: string) {
     };
 
     ws.onclose = () => {
+      wasProcessingOnCloseRef.current = pendingCountRef.current > 0;
       setConnectionState((current) =>
         current === "error" ? "error" : "disconnected",
       );
+      if (wasProcessingOnCloseRef.current) {
+        pendingCountRef.current = 0;
+        setIsProcessing(false);
+        void (async () => {
+          try {
+            const res = await fetch(
+              `${httpBaseFromWs(WS_BASE_URL)}/ops/routing`,
+            );
+            if (!res.ok) {
+              setProviderNotice(
+                "Connection lost while processing. The answer may have been interrupted — please resubmit.",
+              );
+              return;
+            }
+            const payload = (await res.json()) as {
+              active?: { ws_base_url?: string | null };
+              routing?: { sessions_dropped_last?: number };
+            };
+            const activeWs = payload.active?.ws_base_url;
+            const dropped = payload.routing?.sessions_dropped_last ?? 0;
+            if (dropped > 0 || (activeWs && activeWs !== WS_BASE_URL)) {
+              setProviderNotice(
+                "Provider changed — in-flight answer was interrupted. Reconnect and resubmit if needed.",
+              );
+            } else {
+              setProviderNotice(
+                "Connection lost while processing. Please resubmit if your answer did not finish.",
+              );
+            }
+          } catch {
+            setProviderNotice(
+              "Connection lost while processing. Please resubmit if your answer did not finish.",
+            );
+          }
+        })();
+      }
     };
 
     return () => {
@@ -207,15 +272,21 @@ export function useWebSocket(sessionId: string) {
     setCancelNotice(null);
   }, []);
 
+  const clearProviderNotice = useCallback(() => {
+    setProviderNotice(null);
+  }, []);
+
   return {
     connectionState,
     panels,
     lastError,
     cancelNotice,
+    providerNotice,
     isProcessing,
     sendMessage,
     clearError,
     clearCancelNotice,
+    clearProviderNotice,
   };
 }
-
+

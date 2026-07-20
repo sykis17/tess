@@ -282,6 +282,15 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml ps
 - Verify `GEMINI_API_KEY` is set in `.env.prod`
 - Confirm worker health: `docker compose ... ps`
 
+## Multi-cloud ops
+
+The API exposes a provider registry, health prober, failover (with intentional
+in-flight session drop), share/balance policies, chaos hooks, health/event logs,
+comparison runs, and customer BYO registration under `/ops/*`.
+
+See **[MULTI_CLOUD.md](MULTI_CLOUD.md)** for AWS/GCP connection steps, env vars,
+and failover v1 session behavior.
+
 ## Windows developers
 
 Run the deploy script from WSL or Git Bash on the server. For local frontend development, use `frontend/.env` with `VITE_WS_BASE_URL=ws://127.0.0.1:8000`.

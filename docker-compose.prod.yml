@@ -42,8 +42,6 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      ollama:
-        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.worker.celery_app inspect ping -d celery@$$HOSTNAME"]
       interval: 30s
@@ -52,6 +50,7 @@ services:
       start_period: 30s
 
   ollama:
+    profiles: ["ollama"]
     image: ollama/ollama:latest
     restart: unless-stopped
     volumes:

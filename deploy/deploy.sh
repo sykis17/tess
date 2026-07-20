@@ -53,20 +53,28 @@ npm ci
 npm run build
 cd "${REPO_ROOT}"
 
+COMPOSE_PROFILES=()
+if [[ "${DEFAULT_LLM_PROVIDER:-}" == "ollama" ]]; then
+  COMPOSE_PROFILES=(--profile ollama)
+  echo "Ollama profile enabled (DEFAULT_LLM_PROVIDER=ollama)"
+else
+  echo "Skipping Ollama service (DEFAULT_LLM_PROVIDER=${DEFAULT_LLM_PROVIDER:-gemini})"
+fi
+
 echo "Starting production stack..."
-docker compose --env-file "${ENV_FILE}" -f docker-compose.prod.yml up -d --build
+docker compose "${COMPOSE_PROFILES[@]}" --env-file "${ENV_FILE}" -f docker-compose.prod.yml up -d --build
 
 if [[ "${DEFAULT_LLM_PROVIDER:-}" == "ollama" ]]; then
   OLLAMA_MODEL_NAME="${OLLAMA_MODEL:-llama3.2}"
   echo ""
   echo "Pulling Ollama model ${OLLAMA_MODEL_NAME} (first run may take several minutes)..."
-  docker compose --env-file "${ENV_FILE}" -f docker-compose.prod.yml exec -T ollama ollama pull "${OLLAMA_MODEL_NAME}"
+  docker compose "${COMPOSE_PROFILES[@]}" --env-file "${ENV_FILE}" -f docker-compose.prod.yml exec -T ollama ollama pull "${OLLAMA_MODEL_NAME}"
 fi
 
 echo ""
 echo "Waiting for services to become healthy..."
 sleep 5
-docker compose --env-file "${ENV_FILE}" -f docker-compose.prod.yml ps
+docker compose "${COMPOSE_PROFILES[@]}" --env-file "${ENV_FILE}" -f docker-compose.prod.yml ps
 
 echo ""
 echo "Checking ${HEALTH_URL} ..."

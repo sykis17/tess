@@ -35,6 +35,21 @@ celery_app = Celery(
     backend=settings.redis_url,
 )
 
+
+@celery_app.task(name="ops_probe_providers")
+def ops_probe_providers() -> dict[str, object]:
+    """Celery entry for scheduled multi-cloud health probes + failover."""
+    from app.ops.failover import evaluate_failover
+    from app.ops.prober import probe_all_providers
+
+    snapshots = asyncio.run(probe_all_providers())
+    failover_msg = evaluate_failover(snapshots)
+    return {
+        "probed": len(snapshots),
+        "failover": failover_msg.model_dump(mode="json") if failover_msg else None,
+    }
+
+
 _REDUCER_KEYS = frozenset({
     "collected_data",
     "mayor_data",

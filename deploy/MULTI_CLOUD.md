@@ -58,7 +58,13 @@ build). Enter a Bearer token from
 | Force active | `POST /ops/routing/active/{id}` |
 | Probe now | `POST /ops/probe` |
 
-Full ops status page (scores, events, uptime link) is Session 6 backlog.
+**Ops status page (read-only):** open `/ops-status/` (static
+`frontend/public/ops-status/index.html` → `dist/ops-status/`). Same Bearer /
+`localStorage` key as `/ops-ui/`. Shows active routing, providers, latest scores
+from `GET /ops/health-logs`, recent `GET /ops/events`, and a link to the
+[UptimeRobot monitor](https://dashboard.uptimerobot.com/monitors/803559917)
+(`803559917`). Cross-linked with `/ops-ui/` (Actions ↔ Status). Caddy serves
+`/ops-status*` without SPA fallback (same pattern as `/ops-ui*`).
 
 ## REST surface (`/ops`)
 
@@ -412,12 +418,16 @@ from this job in v1.
 
 ### Last verified
 
+**2026-07-21 (Session 6 ops status page)** — Read-only `/ops-status/` static
+MPA (shared Bearer with `/ops-ui/`): routing, providers, latest health scores,
+recent events, UptimeRobot link. Caddy `handle /ops-status*` + deploy build
+check. Secrets Manager and seamless migration still deferred.
+
 **2026-07-21 (Session 5 provider_changed WS + take-offline UI)** — Failover /
 force-active publish `ProviderChangedMessage` on Redis `ops:provider_changed`;
 WebSocket clients subscribe and forward to the browser banner. Minimal admin
 page at `/ops-ui/` (Bearer via `localStorage`). Unit tests in
-`tests/test_ops_provider_notify.py`. Ops status page and Secrets Manager still
-backlog (Session 6+).
+`tests/test_ops_provider_notify.py`.
 
 **2026-07-21 (Session 4 admin tokens)** — `OPS_ADMIN_TOKENS` JSON + legacy
 `OPS_ADMIN_TOKEN`; sensitive GETs + session assign gated; public

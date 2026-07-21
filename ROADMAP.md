@@ -62,11 +62,14 @@ Session 4 (2026-07-21): Per-operator admin tokens (`OPS_ADMIN_TOKENS`) + hard
 GET gating; public `/ops/routing/notice`.
 
 Session 5 (2026-07-21): `provider_changed` Redis → WebSocket fan-out; minimal
-`/ops-ui/` take-offline admin page (Bearer). Next: ops status page (providers,
-scores, events, uptime link).
+`/ops-ui/` take-offline admin page (Bearer).
 
-See [MULTI_CLOUD_HARDENING_S5_OPENER.md](MULTI_CLOUD_HARDENING_S5_OPENER.md)
-(prior: [MULTI_CLOUD_HARDENING_S4_OPENER.md](MULTI_CLOUD_HARDENING_S4_OPENER.md),
+Session 6 (2026-07-21): Read-only `/ops-status/` (providers, scores, events,
+UptimeRobot link); Caddy + cross-links with `/ops-ui/`.
+
+See [MULTI_CLOUD_HARDENING_S6_OPENER.md](MULTI_CLOUD_HARDENING_S6_OPENER.md)
+(prior: [MULTI_CLOUD_HARDENING_S5_OPENER.md](MULTI_CLOUD_HARDENING_S5_OPENER.md),
+[MULTI_CLOUD_HARDENING_S4_OPENER.md](MULTI_CLOUD_HARDENING_S4_OPENER.md),
 [MULTI_CLOUD_HARDENING_S3_OPENER.md](MULTI_CLOUD_HARDENING_S3_OPENER.md),
 [MULTI_CLOUD_HARDENING_S2_OPENER.md](MULTI_CLOUD_HARDENING_S2_OPENER.md),
 [MULTI_CLOUD_HARDENING_OPENER.md](MULTI_CLOUD_HARDENING_OPENER.md)).

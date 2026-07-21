@@ -55,6 +55,10 @@ if [[ ! -f "${REPO_ROOT}/frontend/dist/ops-ui/index.html" ]]; then
   echo "ERROR: frontend/dist/ops-ui/index.html missing after build (public/ops-ui not copied)."
   exit 1
 fi
+if [[ ! -f "${REPO_ROOT}/frontend/dist/ops-status/index.html" ]]; then
+  echo "ERROR: frontend/dist/ops-status/index.html missing after build (public/ops-status not copied)."
+  exit 1
+fi
 cd "${REPO_ROOT}"
 
 COMPOSE_PROFILES=()
@@ -67,8 +71,8 @@ fi
 
 echo "Starting production stack..."
 docker compose "${COMPOSE_PROFILES[@]}" --env-file "${ENV_FILE}" -f docker-compose.prod.yml up -d --build
-# Caddy does not auto-reload a bind-mounted Caddyfile; recreate so /ops-ui and
-# static dist updates are picked up even when the image is unchanged.
+# Caddy does not auto-reload a bind-mounted Caddyfile; recreate so /ops-ui,
+# /ops-status, and static dist updates are picked up even when the image is unchanged.
 docker compose "${COMPOSE_PROFILES[@]}" --env-file "${ENV_FILE}" -f docker-compose.prod.yml up -d --force-recreate caddy
 
 if [[ "${DEFAULT_LLM_PROVIDER:-}" == "ollama" ]]; then

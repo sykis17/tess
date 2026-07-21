@@ -20,6 +20,12 @@
         file_server
     }
 
+    # Read-only ops status MPA (same Bearer as /ops-ui/).
+    handle /ops-status* {
+        try_files {path} {path}/index.html /ops-status/index.html
+        file_server
+    }
+
     handle {
         try_files {path} {path}/index.html /index.html
         file_server

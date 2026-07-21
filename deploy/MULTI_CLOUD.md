@@ -506,12 +506,71 @@ Stopping instance i-0360ab28632a3c4a0...
 3. Set on control plane:
 
 ```env
-OPS_GCP_BASE_URL=https://<gcp-host>
+OPS_GCP_BASE_URL=http://34.46.222.191
 OPS_GCP_REGION=us-central1
 OPS_GCP_CREDENTIALS_REF=GCP_SERVICE_ACCOUNT_JSON
 ```
 
 4. Connect + probe as above (`prov_gcp`).
+
+## GCP standby (stopped-by-default)
+
+Hetzner stays always-on; GCP can run as a **stopped-by-default** standby (same
+pattern as AWS). Wake it for controlled failover smoke; stop when idle.
+
+### Instance metadata
+
+| Field | Value |
+|-------|-------|
+| Instance name | `tess-gcp-primary` |
+| Static external IP | `34.46.222.191` (reserved — stable across stop/start) |
+| Project | `tess-503119` |
+| Zone | `us-central1-a` |
+| Region | `us-central1` |
+| SSH | `ssh -i ~/.ssh/tess_gcp_ops tessops@34.46.222.191` (key not committed) |
+| Ops provider id | `prov_gcp` |
+| Credentials ref | `GCP_SERVICE_ACCOUNT_JSON` (env name on control plane; key lives on operator laptop / secret store — never commit) |
+
+### serviceAccountUser / stop-start IAM
+
+Wake/sleep uses the **ops** service account (or ADC) against the Compute Engine
+API (`instances.start` / `instances.stop`). The VM does **not** need an attached
+service account for Tess to run.
+
+| Situation | What you need |
+|-----------|----------------|
+| VM has **no** service account | Ops SA needs `compute.instances.start` / `stop` (e.g. `roles/compute.instanceAdmin.v1` scoped to the instance). **No** `serviceAccountUser` required. |
+| VM runs **as** a Compute SA | Ops SA **also** needs `roles/iam.serviceAccountUser` on that VM SA, or start returns 403. |
+| Workaround if you cannot grant `serviceAccountUser` | Detach the VM service account (Console → VM → Edit → Identity → None), then stop/start with Compute permissions only. |
+
+`scripts/gcp_standby.py` surfaces a clear error hint when a 403 mentions
+`serviceAccountUser`.
+
+### Operator commands (laptop)
+
+```powershell
+$env:GOOGLE_APPLICATION_CREDENTIALS = "$env:USERPROFILE\Downloads\<sa-key>.json"
+$env:OPS_GCP_BASE_URL = "http://34.46.222.191"
+$env:OPS_SMOKE_BASE_URL = "http://5.78.186.223"
+$env:OPS_ADMIN_TOKEN = "<from Hetzner .env.prod>"
+$env:OPS_SMOKE_PRIMARY = "prov_hetzner_local"
+$env:OPS_SMOKE_STANDBY = "prov_gcp"
+
+python scripts/gcp_standby.py wake         # start + wait for /health
+python scripts/gcp_standby.py drift-check  # expect TERMINATED when idle
+python scripts/gcp_standby.py cycle        # wake → smoke → sleep
+python scripts/gcp_standby.py sleep        # stop (idempotent)
+```
+
+Or run smoke alone while the GCP stack is already awake:
+
+```powershell
+$env:OPS_SMOKE_STANDBY = "prov_gcp"
+python scripts/ops_failover_live_smoke.py
+```
+
+`GcpAdapter` probes HTTP `/health` (+ latency / redis) for metrics; full GCP
+Monitoring API is deferred.
 
 ## Simulate failover (manual curl)
 

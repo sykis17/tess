@@ -1,15 +1,14 @@
 """Provider adapter + bootstrap tests."""
 
+from unittest.mock import MagicMock, patch
+
 from app.ops.bootstrap import bootstrap_ops_control_plane
-from app.ops.models import ProviderType
+from app.ops.models import CloudProvider, ProviderType
 from app.ops.store import reset_store
-from app.providers.cloud import get_adapter
-from unittest.mock import patch
+from app.providers.cloud import GcpAdapter, get_adapter
 
 
 def test_adapters_validate() -> None:
-    from app.ops.models import CloudProvider
-
     aws = CloudProvider(
         id="a",
         type=ProviderType.AWS,
@@ -23,15 +22,69 @@ def test_adapters_validate() -> None:
     metrics = get_adapter(ProviderType.AWS).fetch_metrics(aws)
     assert metrics["source"] == "cloudwatch"
 
-    gcp_metrics = get_adapter(ProviderType.GCP).fetch_metrics(
-        CloudProvider(
-            id="g",
-            type=ProviderType.GCP,
-            name="GCP",
-            base_url="http://gcp.example",
-        )
+
+def test_gcp_adapter_http_health_not_stub() -> None:
+    gcp = CloudProvider(
+        id="g",
+        type=ProviderType.GCP,
+        name="GCP",
+        base_url="http://gcp.example:8000",
+        credentials_ref="GCP_SERVICE_ACCOUNT_JSON",
+        region="us-central1",
     )
-    assert gcp_metrics["source"] == "gcp_monitoring"
+    adapter = get_adapter(ProviderType.GCP)
+    assert isinstance(adapter, GcpAdapter)
+
+    with patch("app.providers.cloud.httpx.Client") as client_cls:
+        client = MagicMock()
+        client_cls.return_value.__enter__.return_value = client
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {"status": "ok", "redis": "ok"}
+        client.get.return_value = response
+        metrics = adapter.fetch_metrics(gcp)
+
+    assert metrics["source"] == "gcp_http_health"
+    assert metrics["http_ok"] is True
+    assert metrics["redis_ok"] is True
+    assert metrics["status"] == "ok"
+    assert metrics["region"] == "us-central1"
+    assert metrics["credentials_ref_configured"] is True
+    assert isinstance(metrics["latency_ms"], float)
+    assert "Monitoring" in metrics["note"] or "deferred" in metrics["note"].lower()
+    client.get.assert_called_once()
+    assert client.get.call_args[0][0] == "http://gcp.example:8000/health"
+
+
+def test_gcp_adapter_missing_base_url() -> None:
+    gcp = CloudProvider(
+        id="g",
+        type=ProviderType.GCP,
+        name="GCP",
+        base_url="",
+    )
+    metrics = get_adapter(ProviderType.GCP).fetch_metrics(gcp)
+    assert metrics["available"] is False
+    assert metrics["http_ok"] is False
+    assert "missing base_url" in metrics["note"]
+
+
+def test_gcp_adapter_health_failure() -> None:
+    gcp = CloudProvider(
+        id="g",
+        type=ProviderType.GCP,
+        name="GCP",
+        base_url="http://gcp.example",
+    )
+    with patch("app.providers.cloud.httpx.Client") as client_cls:
+        client = MagicMock()
+        client_cls.return_value.__enter__.return_value = client
+        client.get.side_effect = Exception("connection refused")
+        metrics = get_adapter(ProviderType.GCP).fetch_metrics(gcp)
+
+    assert metrics["http_ok"] is False
+    assert metrics["latency_ms"] is not None
+    assert "failed" in metrics["note"]
 
 
 def test_bootstrap_seeds_hetzner_and_cloud_env() -> None:

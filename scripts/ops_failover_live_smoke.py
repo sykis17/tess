@@ -41,7 +41,7 @@ def _headers() -> dict[str, str]:
 
 
 def _active(client: httpx.Client) -> str | None:
-    r = client.get(f"{BASE}/ops/routing")
+    r = client.get(f"{BASE}/ops/routing", headers=_headers())
     r.raise_for_status()
     return r.json()["routing"].get("active_provider_id")
 
@@ -55,8 +55,14 @@ def _probe(client: httpx.Client) -> dict:
 def main() -> int:
     print(f"Smoke against {BASE} primary={PRIMARY} standby={STANDBY}")
     with httpx.Client(timeout=30.0) as client:
-        providers = client.get(f"{BASE}/ops/providers").json()
-        ids = {p["id"] for p in providers}
+        providers_body = client.get(f"{BASE}/ops/providers", headers=_headers()).json()
+        if isinstance(providers_body, list):
+            providers = providers_body
+        elif isinstance(providers_body, dict):
+            providers = providers_body.get("providers") or providers_body.get("items") or []
+        else:
+            providers = []
+        ids = {p["id"] for p in providers if isinstance(p, dict)}
         if PRIMARY not in ids or STANDBY not in ids:
             print(
                 f"Need both providers registered. Have: {sorted(ids)}",
@@ -132,7 +138,7 @@ def main() -> int:
         )
         r.raise_for_status()
         print(f"forced active back to {PRIMARY}")
-        print("PASS: live simulate → probe → failover → recover sequence completed")
+        print("PASS: live simulate -> probe -> failover -> recover sequence completed")
         return 0
 
 

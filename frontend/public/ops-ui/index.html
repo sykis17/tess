@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TESS Ops - Take offline</title>
+    <style>
+      :root {
+        color: #1a1a1a;
+        background: #f0f2f4;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        line-height: 1.45;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; }
+      .ops-page { max-width: 42rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+      h1 { margin: 0; font-size: 1.6rem; font-weight: 650; }
+      .ops-sub { margin: 0.25rem 0 1.25rem; color: #555; }
+      .ops-card {
+        background: #fff;
+        border: 1px solid #d8dde3;
+        border-radius: 6px;
+        padding: 1rem 1.1rem;
+        margin-bottom: 1rem;
+      }
+      .ops-card h2 { margin: 0 0 0.6rem; font-size: 1.05rem; }
+      .ops-hint, .ops-muted { color: #666; font-size: 0.9rem; }
+      .ops-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        align-items: center;
+        margin-top: 0.5rem;
+      }
+      .ops-row-between { justify-content: space-between; margin-top: 0; }
+      .ops-row-between h2 { margin: 0; }
+      input[type="password"] {
+        flex: 1 1 12rem;
+        min-width: 10rem;
+        padding: 0.45rem 0.6rem;
+        border: 1px solid #c5ccd5;
+        border-radius: 4px;
+        font-size: 0.95rem;
+      }
+      button {
+        padding: 0.45rem 0.75rem;
+        border: 1px solid #2f5d8a;
+        border-radius: 4px;
+        background: #2f5d8a;
+        color: #fff;
+        font-size: 0.9rem;
+        cursor: pointer;
+      }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      button.ops-secondary { background: #fff; color: #2f5d8a; }
+      .ops-provider-list { list-style: none; margin: 0; padding: 0; }
+      .ops-provider-list li {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.65rem 0;
+        border-top: 1px solid #e6eaef;
+      }
+      .ops-provider-list li:first-child { border-top: none; padding-top: 0; }
+      .ops-provider-list li.is-active {
+        background: #f5f8fb;
+        margin: 0 -0.4rem;
+        padding-left: 0.4rem;
+        padding-right: 0.4rem;
+        border-radius: 4px;
+      }
+      .ops-badge {
+        display: inline-block;
+        margin-left: 0.4rem;
+        padding: 0.1rem 0.4rem;
+        border-radius: 3px;
+        background: #dce8f4;
+        color: #1e4a70;
+        font-size: 0.75rem;
+        font-weight: 600;
+      }
+      .ops-badge-warn { background: #f5e6d8; color: #7a3e10; }
+      .ops-error { border-color: #c97878; background: #fff5f5; }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 0.8rem;
+        font-family: ui-monospace, Consolas, monospace;
+      }
+      #routing-section, #providers-section { display: none; }
+    </style>
+  </head>
+  <body>
+    <main class="ops-page">
+      <header>
+        <h1>TESS Ops</h1>
+        <p class="ops-sub">Take offline / force active (demo controls)</p>
+      </header>
+
+      <section class="ops-card">
+        <h2>Admin token</h2>
+        <p class="ops-hint">
+          Stored in this browser only (<code>localStorage</code>). Not embedded in the build.
+        </p>
+        <div class="ops-row">
+          <input id="token-input" type="password" autocomplete="off" placeholder="Bearer token" />
+          <button type="button" id="btn-save-token">Save</button>
+          <button type="button" class="ops-secondary" id="btn-clear-token">Clear</button>
+        </div>
+      </section>
+
+      <section class="ops-card" id="routing-section">
+        <div class="ops-row ops-row-between">
+          <h2>Routing</h2>
+          <button type="button" class="ops-secondary" id="btn-refresh">Refresh</button>
+        </div>
+        <p>Active: <strong id="active-id">(none)</strong></p>
+        <p class="ops-muted" id="active-ws"></p>
+        <div class="ops-row">
+          <button type="button" id="btn-offline">Take offline (active)</button>
+          <button type="button" class="ops-secondary" id="btn-online">Bring online</button>
+          <button type="button" class="ops-secondary" id="btn-probe">Probe now</button>
+        </div>
+      </section>
+
+      <section class="ops-card" id="providers-section">
+        <h2>Providers</h2>
+        <ul class="ops-provider-list" id="provider-list"></ul>
+      </section>
+
+      <section class="ops-card ops-error" id="error-section" hidden>
+        <h2>Error</h2>
+        <pre id="error-text"></pre>
+      </section>
+
+      <section class="ops-card" id="result-section" hidden>
+        <h2>Last action</h2>
+        <pre id="result-text"></pre>
+      </section>
+    </main>
+
+    <script>
+      const TOKEN_KEY = "tess_ops_admin_token";
+      let busy = false;
+      let activeId = null;
+      let providers = [];
+
+      const els = {
+        tokenInput: document.getElementById("token-input"),
+        routing: document.getElementById("routing-section"),
+        providers: document.getElementById("providers-section"),
+        activeId: document.getElementById("active-id"),
+        activeWs: document.getElementById("active-ws"),
+        providerList: document.getElementById("provider-list"),
+        errorSection: document.getElementById("error-section"),
+        errorText: document.getElementById("error-text"),
+        resultSection: document.getElementById("result-section"),
+        resultText: document.getElementById("result-text"),
+      };
+
+      function getToken() {
+        return (localStorage.getItem(TOKEN_KEY) || "").trim() || null;
+      }
+
+      function setBusy(next) {
+        busy = next;
+        document.querySelectorAll("button").forEach((b) => {
+          if (b.id === "btn-save-token" || b.id === "btn-clear-token") return;
+          b.disabled = next;
+        });
+      }
+
+      function showError(msg) {
+        els.errorText.textContent = msg;
+        els.errorSection.hidden = !msg;
+      }
+
+      function showResult(label, value) {
+        els.resultText.textContent =
+          label + "\n" + JSON.stringify(value, null, 2);
+        els.resultSection.hidden = false;
+      }
+
+      async function opsFetch(path, init) {
+        const token = getToken();
+        if (!token) throw new Error("No admin token set");
+        const response = await fetch(path, {
+          ...init,
+          headers: {
+            Authorization: "Bearer " + token,
+            Accept: "application/json",
+            ...(init && init.headers ? init.headers : {}),
+          },
+        });
+        if (!response.ok) {
+          let detail = response.statusText || "Request failed";
+          try {
+            const body = await response.json();
+            if (typeof body.detail === "string") detail = body.detail;
+            else if (body.detail != null) detail = JSON.stringify(body.detail);
+          } catch (_) {}
+          const err = new Error(detail);
+          err.status = response.status;
+          throw err;
+        }
+        return response.json();
+      }
+
+      function renderProviders() {
+        els.providerList.innerHTML = "";
+        providers.forEach((p) => {
+          const li = document.createElement("li");
+          if (p.id === activeId) li.className = "is-active";
+          const offline =
+            p.simulate_unhealthy ||
+            (p.chaos && p.chaos.enabled && p.chaos.kind === "mark_unhealthy");
+          const left = document.createElement("div");
+          left.innerHTML =
+            "<strong>" +
+            p.name +
+            "</strong> <span class=\"ops-muted\">(" +
+            p.id +
+            ")</span>" +
+            (p.id === activeId ? '<span class="ops-badge">active</span>' : "") +
+            (offline
+              ? '<span class="ops-badge ops-badge-warn">simulated off</span>'
+              : "");
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.textContent = "Force active";
+          btn.disabled = busy || p.id === activeId;
+          btn.addEventListener("click", () =>
+            runAction("Force active " + p.id, () =>
+              opsFetch("/ops/routing/active/" + encodeURIComponent(p.id), {
+                method: "POST",
+              }),
+            ),
+          );
+          li.appendChild(left);
+          li.appendChild(btn);
+          els.providerList.appendChild(li);
+        });
+      }
+
+      async function loadStatus() {
+        const [routing, list] = await Promise.all([
+          opsFetch("/ops/routing"),
+          opsFetch("/ops/providers"),
+        ]);
+        activeId = routing.routing && routing.routing.active_provider_id;
+        providers = list;
+        els.activeId.textContent = activeId || "(none)";
+        els.activeWs.textContent =
+          routing.active && routing.active.ws_base_url
+            ? "WS: " + routing.active.ws_base_url
+            : "";
+        els.routing.style.display = "block";
+        els.providers.style.display = "block";
+        renderProviders();
+        return {
+          active_provider_id: activeId,
+          providers: providers.length,
+        };
+      }
+
+      async function runAction(label, action) {
+        setBusy(true);
+        showError("");
+        try {
+          const result = await action();
+          showResult(label, result);
+          await loadStatus();
+        } catch (err) {
+          showError(err && err.message ? err.message : String(err));
+          els.resultSection.hidden = true;
+          if (err && (err.status === 401 || err.status === 403)) {
+            localStorage.removeItem(TOKEN_KEY);
+            els.tokenInput.value = "";
+            els.routing.style.display = "none";
+            els.providers.style.display = "none";
+          }
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      document.getElementById("btn-save-token").addEventListener("click", () => {
+        const trimmed = els.tokenInput.value.trim();
+        if (!trimmed) {
+          showError("Enter an admin Bearer token");
+          return;
+        }
+        localStorage.setItem(TOKEN_KEY, trimmed);
+        showError("");
+        runAction("Refresh", () => loadStatus());
+      });
+
+      document.getElementById("btn-clear-token").addEventListener("click", () => {
+        localStorage.removeItem(TOKEN_KEY);
+        els.tokenInput.value = "";
+        els.routing.style.display = "none";
+        els.providers.style.display = "none";
+        showError("");
+        els.resultSection.hidden = true;
+      });
+
+      document.getElementById("btn-refresh").addEventListener("click", () =>
+        runAction("Refresh", () => loadStatus()),
+      );
+
+      document.getElementById("btn-offline").addEventListener("click", () => {
+        if (!activeId) return;
+        runAction("Take offline", () =>
+          opsFetch(
+            "/ops/providers/" +
+              encodeURIComponent(activeId) +
+              "/simulate-unhealthy?enabled=true",
+            { method: "POST" },
+          ),
+        );
+      });
+
+      document.getElementById("btn-online").addEventListener("click", () => {
+        if (!activeId) return;
+        runAction("Bring online", async () => {
+          const cleared = await opsFetch(
+            "/ops/providers/" +
+              encodeURIComponent(activeId) +
+              "/simulate-unhealthy?enabled=false",
+            { method: "POST" },
+          );
+          await opsFetch("/ops/chaos/" + encodeURIComponent(activeId), {
+            method: "DELETE",
+          });
+          return cleared;
+        });
+      });
+
+      document.getElementById("btn-probe").addEventListener("click", () =>
+        runAction("Probe now", () =>
+          opsFetch("/ops/probe", { method: "POST" }),
+        ),
+      );
+
+      const existing = getToken();
+      if (existing) {
+        els.tokenInput.value = existing;
+        runAction("Refresh", () => loadStatus());
+      }
+    </script>
+  </body>
+</html>

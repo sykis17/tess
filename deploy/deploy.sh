@@ -51,6 +51,10 @@ echo "Building frontend with VITE_WS_BASE_URL=${VITE_WS_BASE_URL}"
 cd "${REPO_ROOT}/frontend"
 npm ci
 npm run build
+if [[ ! -f "${REPO_ROOT}/frontend/dist/ops-ui/index.html" ]]; then
+  echo "ERROR: frontend/dist/ops-ui/index.html missing after build (public/ops-ui not copied)."
+  exit 1
+fi
 cd "${REPO_ROOT}"
 
 COMPOSE_PROFILES=()

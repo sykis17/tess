@@ -45,8 +45,9 @@ publishes JSON to Redis `ops:provider_changed`. Each WebSocket in
 session panel channel and forwards the payload. The chat UI already handles
 `provider_changed` ([`useWebSocket.ts`](../frontend/src/hooks/useWebSocket.ts)).
 
-**Take-offline admin page:** open `/ops-ui/` on the control plane (Vite MPA
-entry; built to `frontend/dist/ops-ui/index.html`). Enter a Bearer token from
+**Take-offline admin page:** open `/ops-ui/` on the control plane (static page
+from `frontend/public/ops-ui/index.html`, copied into `frontend/dist/ops-ui/` on
+build). Enter a Bearer token from
 `OPS_ADMIN_TOKEN` or `OPS_ADMIN_TOKENS` once per browser (`localStorage` key
 `tess_ops_admin_token` — never bake secrets into the SPA build). Controls wrap:
 

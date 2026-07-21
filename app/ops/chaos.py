@@ -13,6 +13,7 @@ def set_chaos(
     latency_ms: float = 2500.0,
     enabled: bool = True,
     store: OpsStore | None = None,
+    operator_id: str | None = None,
 ) -> ChaosConfig:
     ops = store or get_store()
     provider = ops.get_provider(provider_id)
@@ -30,16 +31,30 @@ def set_chaos(
 
     provider.chaos = chaos
     ops.upsert_provider(provider)
+    details: dict = {"latency_ms": latency_ms, "enabled": enabled}
+    if operator_id:
+        details["operator_id"] = operator_id
     ops.append_event(
         OpsEvent(
             event_type=f"chaos_{kind.value}",
             provider_id=provider_id,
-            details={"latency_ms": latency_ms, "enabled": enabled},
+            details=details,
         )
     )
     persist_store()
     return chaos
 
 
-def clear_chaos(provider_id: str, *, store: OpsStore | None = None) -> None:
-    set_chaos(provider_id, ChaosKind.NONE, enabled=False, store=store)
+def clear_chaos(
+    provider_id: str,
+    *,
+    store: OpsStore | None = None,
+    operator_id: str | None = None,
+) -> None:
+    set_chaos(
+        provider_id,
+        ChaosKind.NONE,
+        enabled=False,
+        store=store,
+        operator_id=operator_id,
+    )

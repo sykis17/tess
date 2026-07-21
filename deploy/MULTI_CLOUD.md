@@ -8,8 +8,13 @@ and probe `/health` to drive failover, share, and balance policies.
 - Each provider runs its **own** Caddy + web + worker + Redis stack (same as
   [`docker-compose.prod.yml`](../docker-compose.prod.yml)).
 - One host runs the **ops control plane** (this repo’s `/ops/*` API + background prober).
-- **Failover v1 does not migrate in-flight sessions.** On switchover, sessions are
-  dropped; clients show a `provider_changed` / reconnect notice and may resubmit.
+- **Failover v1 does not migrate in-flight sessions.** On switchover, routing
+  assignments are cleared and `active_provider_id` flips. The control plane
+  publishes `type: "provider_changed"` on Redis channel `ops:provider_changed`;
+  every open WebSocket on this host forwards it so the browser can show a
+  reconnect banner (see [Frontend notice](#frontend-notice--ops-ui)). With
+  control-plane-only chaos (`simulate-unhealthy`), the old stack may still
+  finish work, but the notice is no longer silent-only.
 - Seamless mid-session migration is deferred (`GET /ops/seamless-migration`).
 
 ```
@@ -31,28 +36,67 @@ On startup the API bootstraps:
 
 Env keys: see [`.env.example`](../.env.example).
 
+## Frontend notice + ops UI
+
+On failover / force-active, [`app/ops/failover.py`](../app/ops/failover.py)
+`_switch` calls [`publish_provider_changed`](../app/ops/notify.py), which
+publishes JSON to Redis `ops:provider_changed`. Each WebSocket in
+[`app/api/ws.py`](../app/api/ws.py) subscribes to that channel alongside the
+session panel channel and forwards the payload. The chat UI already handles
+`provider_changed` ([`useWebSocket.ts`](../frontend/src/hooks/useWebSocket.ts)).
+
+**Take-offline admin page:** open `/ops-ui/` on the control plane (Vite MPA
+entry; built to `frontend/dist/ops-ui/index.html`). Enter a Bearer token from
+`OPS_ADMIN_TOKEN` or `OPS_ADMIN_TOKENS` once per browser (`localStorage` key
+`tess_ops_admin_token` — never bake secrets into the SPA build). Controls wrap:
+
+| Button | API |
+|--------|-----|
+| Take offline (active) | `POST /ops/providers/{id}/simulate-unhealthy?enabled=true` |
+| Bring online | `POST ...?enabled=false` + `DELETE /ops/chaos/{id}` |
+| Force active | `POST /ops/routing/active/{id}` |
+| Probe now | `POST /ops/probe` |
+
+Full ops status page (scores, events, uptime link) is Session 6 backlog.
+
 ## REST surface (`/ops`)
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET/POST | `/ops/providers` | List / register providers |
-| POST | `/ops/providers/{id}/connect` | Validate adapter + probe |
-| POST | `/ops/probe` | Probe all + evaluate failover |
-| GET | `/ops/health-logs` | Own probes + provider-native metrics |
-| GET | `/ops/events` | Failover, chaos, BYO, policy events |
-| GET/PUT | `/ops/routing`, `/ops/routing/policy` | Active provider + share/balance policy |
-| POST | `/ops/routing/active/{id}` | Force switch (drops sessions) |
-| POST | `/ops/sessions/{id}/assign` | Assign session (share/balance) |
-| POST | `/ops/chaos/{id}?kind=...` | Simulate issues |
+| GET/POST | `/ops/providers` | List / register providers (**admin**) |
+| POST | `/ops/providers/{id}/connect` | Validate adapter + probe (**admin**) |
+| POST | `/ops/probe` | Probe all + evaluate failover (**admin**) |
+| GET | `/ops/health-logs` | Own probes + provider-native metrics (**admin**) |
+| GET | `/ops/events` | Failover, chaos, BYO, policy events (**admin**) |
+| GET | `/ops/routing/notice` | Public: `ws_base_url` + `sessions_dropped_last` only |
+| GET/PUT | `/ops/routing`, `/ops/routing/policy` | Active provider + policy (**admin**) |
+| POST | `/ops/routing/active/{id}` | Force switch — drops sessions (**admin**) |
+| POST | `/ops/sessions/{id}/assign` | Assign session (**admin**) |
+| POST | `/ops/chaos/{id}?kind=...` | Simulate issues (**admin**) |
 | POST | `/ops/providers/{id}/simulate-unhealthy` | Admin unhealthy flag |
-| POST/GET | `/ops/compare` | Combination testing reports |
-| POST | `/ops/byo` | Customer server connect |
-| GET | `/ops/seamless-migration` | Explicit “not available” status |
+| POST/GET | `/ops/compare` | Combination testing reports (**admin**) |
+| POST | `/ops/byo` | Customer server connect (**admin**) |
+| GET | `/ops/seamless-migration` | Explicit “not available” status (**admin**) |
 
-Set `OPS_ADMIN_TOKEN` to a strong secret. **Mutating `/ops` routes fail closed**:
-if the token is unset, they return `503`; missing/wrong Bearer → `401`/`403`.
-This includes `POST /ops/routing/active/{id}` (force switch — drops in-flight sessions),
-chaos injection, simulate-unhealthy, probe, provider CRUD, compare, and BYO.
+Set `OPS_ADMIN_TOKENS` (preferred) and/or `OPS_ADMIN_TOKEN` (legacy).
+**Gated `/ops` routes fail closed**: if both are unset, they return `503`;
+missing/wrong Bearer → `401`/`403`.
+
+| Env | Format | Operator id |
+|-----|--------|-------------|
+| `OPS_ADMIN_TOKENS` | JSON `{"jesse":"<secret>","alice":"<secret>"}` | keys |
+| `OPS_ADMIN_TOKEN` | single shared secret | `legacy` |
+
+Gated surface includes: provider CRUD/connect, probe, force switch, chaos,
+simulate-unhealthy, compare, BYO, session assign, and **sensitive GETs**
+(`/ops/providers`, `/ops/events`, `/ops/health-logs`, `/ops/routing`,
+`/ops/compare`, `/ops/seamless-migration`). Successful mutations record
+`operator_id` on `OpsEvent.details`.
+
+**Public (no auth):** `GET /ops/routing/notice` →
+`{ "ws_base_url", "sessions_dropped_last" }` for the frontend reconnect banner.
+Secrets Manager / Vault for token storage is **later** — tokens live in
+`.env.prod` for now.
 
 ### Routing policies (`PUT /ops/routing/policy`)
 
@@ -106,14 +150,91 @@ compute cost. Wake it only for controlled failover smoke tests.
 | Field | Value |
 |-------|-------|
 | Instance ID | `i-0360ab28632a3c4a0` |
-| Elastic IP | `18.227.172.81` (associated 2026-07-20 — stable across stop/start) |
+| Elastic IP | `18.227.172.81` (associated 2026-07-20 — stable across stop/start; see [cost note](#elastic-ip--public-ipv4-cost)) |
 | Region | `us-east-2` (Ohio) |
 | Type | `t3.micro` |
 | AMI | Ubuntu 26.04 (Docker pre-installed) |
 | Root volume | **20 GB** (resized from default 8 GB — see [disk note](#disk-and-ollama)) |
 | Name tag | `tess-aws-standby` |
-| Key pair | `tess-aws-key` (local `.pem` — do not commit) |
-| Security group | `launch-wizard-1` — SSH restricted to `186.99.129.21/32` (update if dev IP changes) |
+| Key pair | `tess-aws-key` (local `.pem` — do not commit; Hetzner uses separate `hetzner_tess`) |
+| Security group | `launch-wizard-1` — SSH restricted to `186.99.129.21/32` (see [If you're locked out](#if-youre-locked-out)) |
+
+### If you're locked out
+
+SSH to the standby fails silently (hang / timeout) when your public IP is no longer
+`186.99.129.21/32` — the launch-time rule on SG `launch-wizard-1`. Use path B for
+laptop SSH, or path A for console access while the instance is **running**.
+
+**Path B — update security group (fastest for laptop SSH)**
+
+1. EC2 → Security Groups → `launch-wizard-1`
+2. Edit inbound rules → SSH (port 22) → Source **My IP** (or your new CIDR)
+3. Save
+
+Manual only — no IP-drift automation.
+
+**Path A — EC2 Instance Connect (console)**
+
+1. AWS Console → EC2 → select `i-0360ab28632a3c4a0` (must be **running**)
+2. **Connect** → **EC2 Instance Connect** → Connect
+
+Instance Connect does **not** bypass the security group. Console Connect still
+requires inbound SSH from the EC2 Instance Connect service. For `us-east-2`, add
+a one-time inbound SSH rule with source prefix list:
+
+`com.amazonaws.us-east-2.ec2-instance-connect`
+
+Keep the "My IP" rule for laptop SSH alongside that prefix-list rule. Prefer the
+managed prefix list over opening `0.0.0.0/0`. If Instance Connect is not set up,
+fallbacks are **EC2 Serial Console** (if enabled for the account) or a temporary
+SG open — still prefer the prefix list.
+
+### Elastic IP / public IPv4 cost
+
+Since **2024-02-01**, AWS bills **all** public IPv4 addresses — including an EIP
+associated with a **running or stopped** instance, and idle unassociated EIPs.
+See [Elastic IP addresses](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/elastic-ip-addresses-eip.html)
+and the Public IPv4 Address tab on [Amazon VPC pricing](https://aws.amazon.com/vpc/pricing/).
+**Do not hardcode a $/hour here** — rates change; check that page when reviewing cost.
+
+EIP `18.227.172.81` stays associated while the instance is stopped most of the time,
+so expect a **small ongoing** public IPv4 charge even with no compute.
+
+| Choice | Pros | Cons |
+|--------|------|------|
+| **Keep EIP** (current) | Stable `OPS_AWS_BASE_URL` / `DOMAIN` | Ongoing public IPv4 charge |
+| **Release EIP** | Avoid idle IPv4 charge | Public IP changes on wake; patch `prov_aws` + env (wake already supports IP drift via `PATCH /ops/providers/prov_aws` in [`scripts/aws_standby.py`](../scripts/aws_standby.py)) |
+
+**Verify on the bill (laptop, `tess-ops-laptop` creds):**
+
+```powershell
+# Confirm association while stopped
+aws ec2 describe-addresses --region us-east-2 `
+  --filters "Name=public-ip,Values=18.227.172.81" `
+  --query "Addresses[].{PublicIp:PublicIp,InstanceId:InstanceId,AssociationId:AssociationId}"
+
+# Cost Explorer — look for PublicIPv4 / ElasticIP usage types
+aws ce get-cost-and-usage `
+  --time-period Start=2026-07-01,End=2026-07-22 `
+  --granularity MONTHLY `
+  --metrics UnblendedCost `
+  --group-by Type=DIMENSION,Key=USAGE_TYPE `
+  --query "ResultsByTime[].Groups[?contains(Keys[0], 'PublicIPv4') || contains(Keys[0], 'ElasticIP')]"
+```
+
+`tess-ops-laptop` currently lacks `ec2:DescribeAddresses` and `ce:GetCostAndUsage`
+(AccessDenied 2026-07-21). Until those are granted, use console Cost Explorer / Public
+IP insights, or confirm association via `ec2:DescribeInstances` (allowed): a **stopped**
+instance that still shows `PublicIpAddress=18.227.172.81` means the EIP remains attached.
+
+Console fallback: Billing → **Cost Explorer** (filter EC2 - Other and/or VPC; group by
+Usage type — look for `PublicIPv4:InUseAddress`, `PublicIPv4:IdleAddress`, or legacy
+`ElasticIP:*`). Optional: VPC → **Public IP insights** for inventory + estimated cost.
+
+**Decision (2026-07-21):** **Keep EIP** for stable `OPS_AWS_BASE_URL`. Docs confirm a
+small ongoing public IPv4 charge while allocated (running or stopped); exact $/hr not
+recorded here — re-check VPC pricing + Cost Explorer after IAM/`ce:GetCostAndUsage`
+is granted (or via console).
 
 ### Host prerequisites (discovered 2026-07-20)
 
@@ -158,11 +279,11 @@ When `DEFAULT_LLM_PROVIDER` is not `ollama`, [`deploy/deploy.sh`](deploy.sh) omi
 | Install Node.js on AWS host | **Done** | See [host prerequisites](#host-prerequisites-discovered-2026-07-20) |
 | Resize root volume (if 8 GB) | **Done** | 20 GB — only needed because first deploy pulled Ollama |
 | Deploy Tess on AWS | **Done** | `./deploy/deploy.sh` clean; `/health` OK |
-| Verify frontend in browser | **Pending** | Open `http://18.227.172.81` — only `/health` checked so far |
-| Hetzner `OPS_AWS_BASE_URL` + redeploy | **Pending** | See env block below |
-| Control plane connect + probe | **Pending** | `POST .../prov_aws/connect` then `POST /ops/probe` |
-| Stop instance | **Pending** | Still running since launch — use `python scripts/aws_standby.py sleep` |
-| First `cycle` run + last verified | **Pending** | After instance is stopped-by-default |
+| Verify frontend in browser | Optional | Open `http://18.227.172.81` when instance is awake |
+| Hetzner `OPS_AWS_BASE_URL` + redeploy | **Done** | `http://18.227.172.81`, region `us-east-2`; web recreated |
+| Control plane connect + probe | **Done** | `prov_aws` registered; connect `http_ok=True` |
+| Stop instance | **Done** | Stopped-by-default; `cycle` always stops in `finally` |
+| First `cycle` run + last verified | **Done** | 2026-07-21 — see below |
 
 **Deploy env on AWS** (`.env.prod` on the box — not committed):
 
@@ -175,7 +296,7 @@ GEMINI_API_KEY=<set on host>
 
 Verified: `curl http://18.227.172.81/health` → `{"status":"ok","redis":"ok"}`.
 
-**Hetzner control plane** (`.env.prod` on `5.78.186.223` — pending):
+**Hetzner control plane** (`.env.prod` on `5.78.186.223`):
 
 ```env
 OPS_AWS_BASE_URL=http://18.227.172.81
@@ -183,22 +304,7 @@ OPS_AWS_REGION=us-east-2
 OPS_ADMIN_TOKEN=<secret>
 ```
 
-Redeploy Hetzner (`./deploy/deploy.sh`) so bootstrap registers `prov_aws`, then:
-
-```bash
-curl -X POST "https://5.78.186.223/ops/providers/prov_aws/connect" \
-  -H "Authorization: Bearer $OPS_ADMIN_TOKEN"
-curl -X POST "https://5.78.186.223/ops/probe" \
-  -H "Authorization: Bearer $OPS_ADMIN_TOKEN"
-```
-
-**Stop the instance** (do this promptly — compute has been billing since launch):
-
-```bash
-python scripts/aws_standby.py sleep
-```
-
-Note: an EIP on a stopped instance may incur a small hourly charge.
+Use `OPS_SMOKE_BASE_URL=http://5.78.186.223` on the laptop (IP-only deploy — no TLS on :443).
 
 ### Deploy commands (reference)
 
@@ -239,23 +345,147 @@ control plane via `PATCH /ops/providers/prov_aws` before probing.
 
 Env reference: [`.env.example`](../.env.example) (`AWS_STANDBY_*`, `OPS_SMOKE_BASE_URL`).
 
+### External uptime
+
+Something **outside Hetzner** must watch the control plane so a total box death
+is visible even when the in-process prober cannot run.
+
+| Field | Value |
+|-------|-------|
+| Product | [UptimeRobot](https://uptimerobot.com/) (free HTTP(S) monitor) |
+| Dashboard | https://dashboard.uptimerobot.com/ |
+| Monitor | [5.78.186.223/health](https://dashboard.uptimerobot.com/monitors/803559917) (ID `803559917`) |
+| Monitor type | HTTP(S) |
+| Monitor URL | `http://5.78.186.223/health` |
+| Interval | 5 minutes |
+| Expected | HTTP **200** on **GET or HEAD** (UptimeRobot often uses HEAD; Tess accepts both) |
+| Expected body (GET) | `{"status":"ok","redis":"ok"}` |
+| Alert | `jesse.malma@gmail.com` |
+
+**Create (done Session 3):** monitor live; use **Test Notification** on the
+monitor page to confirm the alert channel. If the dashboard briefly shows
+**Down** while `/health` returns 200 from elsewhere, open **Edit** and ensure
+the URL is `http://` (not `https://`) and any keyword is exactly `"status":"ok"`
+(or disable keyword and rely on HTTP 200).
+
+No in-repo watcher this session. Optional later: GitHub Actions cron or AWS
+Lambda from the standby account if the free ping product is unacceptable.
+
+**Endpoint check (2026-07-21):** `GET http://5.78.186.223/health` →
+`200 {"status":"ok","redis":"ok"}` (re-verified Session 3).
+
+**Status (2026-07-21):** **live** — monitor `5.78.186.223/health` ID
+`803559917`; alert `jesse.malma@gmail.com`. Early Down incident was **405 on
+HEAD** (UptimeRobot probes HEAD; `/health` was GET-only) — fixed by accepting
+HEAD+GET (deploy required for NA checks to go green).
+
+### Drift check
+
+Catch a forgotten `wake` / `cycle` that died before `finally`, leaving
+`i-0360ab28632a3c4a0` running and burning compute. **Alert only** — the checker
+never calls stop/start.
+
+| Field | Value |
+|-------|-------|
+| Command | `python scripts/aws_standby.py drift-check` |
+| AWS call | `DescribeInstances` only (Describe-only IAM is enough) |
+| Exit 0 | State is `stopped` or `stopping` |
+| Exit non-zero | State is `running` or `pending` (drift) |
+| Override | `AWS_STANDBY_ALLOW_RUNNING=1` → exit 0 even when running (intentional wake) |
+| Schedule | Once daily on the **operator laptop** (Task Scheduler / cron). Talks to the **AWS API**, not the Hetzner box. |
+| Alerts | Non-zero exit → cron mail, Task Scheduler failure email, or pipe stderr to the same Telegram/email channel used for ops |
+
+**Windows Task Scheduler (example):** daily trigger → action
+`python C:\Users\jesse\tess-engine\scripts\aws_standby.py drift-check` with
+working directory the repo root and AWS credentials available (same profile as
+wake/sleep). On failure (exit ≠ 0), notify via your usual ops channel.
+
+**Linux/macOS cron (example):**
+
+```cron
+0 9 * * * cd /path/to/tess-engine && python scripts/aws_standby.py drift-check
+```
+
+Dry-run when standby should be idle: expect `stopped` → exit 0. Do not auto-stop
+from this job in v1.
+
 ### Last verified
 
-_AWS deploy verified 2026-07-20 (`/health` OK). First `cycle` run pending — complete
-remaining task 0 steps (Hetzner env, stop instance), then paste output here._
+**2026-07-21 (Session 5 provider_changed WS + take-offline UI)** — Failover /
+force-active publish `ProviderChangedMessage` on Redis `ops:provider_changed`;
+WebSocket clients subscribe and forward to the browser banner. Minimal admin
+page at `/ops-ui/` (Bearer via `localStorage`). Unit tests in
+`tests/test_ops_provider_notify.py`. Ops status page and Secrets Manager still
+backlog (Session 6+).
+
+**2026-07-21 (Session 4 admin tokens)** — `OPS_ADMIN_TOKENS` JSON + legacy
+`OPS_ADMIN_TOKEN`; sensitive GETs + session assign gated; public
+`GET /ops/routing/notice`; frontend reconnect fetch updated. Unit tests in
+`tests/test_ops_admin_auth.py`.
+
+**2026-07-21 (Session 3 drift-check dry-run)** — `python scripts/aws_standby.py
+drift-check` against `i-0360ab28632a3c4a0` → `state=stopped`, exit 0. Unit tests
+in `tests/test_aws_standby.py` cover stopped/stopping → 0 and running/pending → 1
+(plus `AWS_STANDBY_ALLOW_RUNNING`). Alert-only; no auto-stop.
+
+**2026-07-21 (mid-session browser failover)** — AWS already running / woken;
+`prov_aws` connected; browser opened `http://5.78.186.223` (WS **Connected**);
+Research + L4 long prompt sent; `simulate-unhealthy` on `prov_hetzner_local` →
+failover to `prov_aws` after 3 probes (`sessions_dropped=3`). **Browser UX:**
+status stayed **Connected**; **no** dismissible `provider_changed` banner; panel
+kept updating (**Wide Receiver** still processing on Hetzner ~1m+ after routing
+flipped). Matches the known gap at the time: control-plane failover did not close the
+Hetzner WS or push `provider_changed`. **Superseded by Session 5** (Redis
+`ops:provider_changed` fan-out + `/ops-ui/`). Cleared simulate,
+forced Hetzner active, AWS stopped.
+
+**2026-07-21 (chaos kinds live)** — AWS woken; each kind injected on
+`prov_hetzner_local` via `POST /ops/chaos/...`; manual `POST /ops/probe` until
+failover or 12 probes; chaos cleared; forced back to Hetzner; AWS stopped after.
+
+| Kind | Failover? | Probe cycles | Notes |
+|------|-----------|--------------|-------|
+| `high_latency` | **No** (score-only by design) | 12 / no trip | Mild pressure: default `latency_ms=2500` → measured ~2512 ms; score 45 ≥ 40; `healthy=True`; failures stayed 0. Prober caps injected sleep at 3 s, so default chaos cannot cross `OPS_LATENCY_THRESHOLD_MS=5000`. Failover is reserved for hard failures / latency **above** the 5 s SLO. |
+| `health_5xx` | Yes → `prov_aws` | 3 | Same flap pattern as `mark_unhealthy` |
+| `worker_down` | Yes → `prov_aws` | 3 | Forces `http_ok=False` in prober (does not stop real worker) |
+| `redis_partition` | Yes → `prov_aws` | 2 | Prober forces `redis_ok=False` (app `/health` still ok); flipped in 2 operator probes — background prober likely added a failure between them (failures jumped 1→3) |
+| `cpu_burn` | Yes → `prov_aws` | 3 | Prober sets `cpu_percent=99` → score 35 (below min 40) → unhealthy |
+
+**Decision (2026-07-21, option 1):** `high_latency` is **score-only** mild
+pressure — it does not need to trip failover at default settings. Keep
+`OPS_LATENCY_THRESHOLD_MS=5000` and the prober 3 s sleep cap; do not raise
+chaos `latency_ms` solely to make the kind flap.
+
+**2026-07-21 (EIP / SSH docs)** — Instance `i-0360ab28632a3c4a0` **stopped** but still
+shows `PublicIpAddress=18.227.172.81` (`DescribeInstances`) → EIP remains associated
+while stopped. Cost Explorer CLI blocked (`ce:GetCostAndUsage` AccessDenied on
+`tess-ops-laptop`); `DescribeAddresses` also denied. Per AWS public IPv4 billing
+(since 2024-02-01), expect a small ongoing charge — **keep EIP** (stable URL). See
+[Elastic IP / public IPv4 cost](#elastic-ip--public-ipv4-cost) and
+[If you're locked out](#if-youre-locked-out).
+
+**2026-07-21** — `python scripts/aws_standby.py cycle` (Windows laptop → Hetzner control plane + AWS standby)
 
 ```
-# AWS deploy (manual, 2026-07-20):
-#   EIP 18.227.172.81 associated
-#   deploy.sh completed; curl http://18.227.172.81/health → {"status":"ok","redis":"ok"}
-#   Containers at deploy time: caddy, ollama, redis, web, worker (all Up/healthy)
-#   Note: future gemini-only deploys skip Ollama via compose profile
-
-# First cycle run (pending):
-# Date:
-# Command: python scripts/aws_standby.py cycle
-# Timings:
-# Exit code:
+AWS budget 'tess-monthly-ops': spent $0.00 / $20.00 (0.0%, threshold 80%)
+Starting instance i-0360ab28632a3c4a0 in us-east-2...
+AWS instance running at 18.227.172.81 (base_url=http://18.227.172.81)
+AWS stack healthy at http://18.227.172.81/health
+connect prov_aws: connected=True http_ok=True
+probe completed after standby wake
+Running ops_failover_live_smoke.py...
+Smoke against http://5.78.186.223 primary=prov_hetzner_local standby=prov_aws
+initial active=prov_hetzner_local
+simulate-unhealthy enabled on prov_hetzner_local
+  probe#1 active=prov_hetzner_local failover=False failures={'prov_hetzner_local': 1, 'prov_aws': 0}
+  probe#2 active=prov_hetzner_local failover=False failures={'prov_hetzner_local': 2, 'prov_aws': 0}
+  probe#3 active=prov_aws failover=True failures={'prov_hetzner_local': 3, 'prov_aws': 0}
+OK: failed over to prov_aws after 3 probes
+cleared simulate-unhealthy on prov_hetzner_local
+forced active back to prov_hetzner_local
+PASS: live simulate → probe → failover → recover sequence completed
+Stopping instance i-0360ab28632a3c4a0...
+# Exit: smoke PASS; AWS stopped in finally
 ```
 
 ## Stand up Google Cloud
@@ -287,8 +517,9 @@ curl -X DELETE "$HOST/ops/chaos/prov_hetzner_local" \
   -H "Authorization: Bearer $OPS_ADMIN_TOKEN"
 ```
 
-Chaos kinds: `none`, `high_latency`, `health_5xx`, `mark_unhealthy`, `worker_down`,
-`redis_partition`, `cpu_burn`.
+Chaos kinds: `none`, `high_latency` (score-only mild pressure at default
+`latency_ms=2500` — does not cross the 5 s latency SLO), `health_5xx`,
+`mark_unhealthy`, `worker_down`, `redis_partition`, `cpu_burn`.
 
 ## Customer BYO
 

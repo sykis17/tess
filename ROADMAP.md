@@ -44,6 +44,33 @@ See [PHASE_21_OPENER.md](PHASE_21_OPENER.md) for full brief, deliverables (two-p
 - Raise 3-agent parallel cap when CPX11 or cloud budget allows.
 - Full K–12 / professional discipline matrix (100+ POV agents with grouped WR routing).
 
+### Multi-cloud ops hardening (parallel track)
+
+Session 1 (2026-07-21): SSH lockout + EIP cost docs; chaos kinds live
+(`health_5xx` / `worker_down` / `redis_partition` / `cpu_burn` failover).
+
+Session 2 (2026-07-21): Mid-session browser failover observed (silent continue —
+no `provider_changed` banner under simulate-unhealthy); `high_latency` decided
+**score-only** (option 1); External uptime subsection + UptimeRobot target on
+`/health` (monitor create pending).
+
+Session 3 (2026-07-21): UptimeRobot monitor live (`803559917`, alert
+`jesse.malma@gmail.com`); `aws_standby.py drift-check` + unit tests + docs.
+HEAD fix for UptimeRobot (GET+HEAD `/health`) deployed.
+
+Session 4 (2026-07-21): Per-operator admin tokens (`OPS_ADMIN_TOKENS`) + hard
+GET gating; public `/ops/routing/notice`.
+
+Session 5 (2026-07-21): `provider_changed` Redis → WebSocket fan-out; minimal
+`/ops-ui/` take-offline admin page (Bearer). Next: ops status page (providers,
+scores, events, uptime link).
+
+See [MULTI_CLOUD_HARDENING_S5_OPENER.md](MULTI_CLOUD_HARDENING_S5_OPENER.md)
+(prior: [MULTI_CLOUD_HARDENING_S4_OPENER.md](MULTI_CLOUD_HARDENING_S4_OPENER.md),
+[MULTI_CLOUD_HARDENING_S3_OPENER.md](MULTI_CLOUD_HARDENING_S3_OPENER.md),
+[MULTI_CLOUD_HARDENING_S2_OPENER.md](MULTI_CLOUD_HARDENING_S2_OPENER.md),
+[MULTI_CLOUD_HARDENING_OPENER.md](MULTI_CLOUD_HARDENING_OPENER.md)).
+
 ---
 
 ## Principles

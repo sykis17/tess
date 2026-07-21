@@ -3,6 +3,8 @@ import redis.asyncio as aioredis
 
 from app.core.config import settings
 
+OPS_PROVIDER_CHANGED_CHANNEL = "ops:provider_changed"
+
 
 def session_channel(session_id: str) -> str:
     """Return the Redis Pub/Sub channel name for a given session."""

@@ -1,8 +1,18 @@
 """Unit tests for failover with intentional session drop."""
 
+from unittest.mock import patch
+
+import pytest
+
 from app.ops.failover import evaluate_failover, force_active_provider
 from app.ops.models import CloudProvider, HealthSnapshot, ProviderType, SessionAssignment
 from app.ops.store import OpsStore
+
+
+@pytest.fixture(autouse=True)
+def _mute_provider_changed_publish():
+    with patch("app.ops.failover.publish_provider_changed"):
+        yield
 
 
 def _provider(pid: str, name: str = "p") -> CloudProvider:

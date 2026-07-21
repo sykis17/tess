@@ -5,7 +5,11 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from redis.asyncio.client import PubSub
 
-from app.core.redis import create_async_redis, session_channel
+from app.core.redis import (
+    OPS_PROVIDER_CHANGED_CHANNEL,
+    create_async_redis,
+    session_channel,
+)
 from app.core.session_control import (
     get_active_task,
     revoke_active_task,
@@ -55,7 +59,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
     redis_task: asyncio.Task[None] | None = None
 
     try:
-        await pubsub.subscribe(channel)
+        await pubsub.subscribe(channel, OPS_PROVIDER_CHANGED_CHANNEL)
         redis_task = asyncio.create_task(_forward_redis_messages(pubsub, websocket))
 
         try:
@@ -105,6 +109,6 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
             except asyncio.CancelledError:
                 pass
 
-        await pubsub.unsubscribe(channel)
+        await pubsub.unsubscribe(channel, OPS_PROVIDER_CHANGED_CHANNEL)
         await pubsub.aclose()
         await redis_client.aclose()

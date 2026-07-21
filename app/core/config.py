@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     ops_gcp_credentials_ref: str | None = "GCP_SERVICE_ACCOUNT_JSON"
     ops_preferred_provider_id: str | None = None
     ops_admin_token: str | None = None
+    # JSON object {"operator_id": "token", ...}; preferred over ops_admin_token
+    ops_admin_tokens: str | None = None
     ops_probe_interval_seconds: float = 30.0
     ops_failover_failure_threshold: int = 3
     ops_failover_recovery_threshold: int = 2

@@ -10,6 +10,7 @@ from app.ops.models import (
     ProviderChangedMessage,
     RoutingState,
 )
+from app.ops.notify import publish_provider_changed
 from app.ops.store import OpsStore, get_store, persist_store
 
 logger = logging.getLogger(__name__)
@@ -122,6 +123,8 @@ def _switch(
     routing: RoutingState,
     from_id: str | None,
     to_id: str,
+    *,
+    operator_id: str | None = None,
 ) -> ProviderChangedMessage:
     dropped = ops.clear_assignments()
 
@@ -141,19 +144,23 @@ def _switch(
         sessions_dropped=dropped,
         ws_base_url=target.effective_ws_base_url() if target else None,
     )
+    details: dict = {
+        "from": from_id,
+        "to": to_id,
+        "sessions_dropped": dropped,
+        "message": msg.message,
+    }
+    if operator_id:
+        details["operator_id"] = operator_id
     ops.append_event(
         OpsEvent(
             event_type="failover",
             provider_id=to_id,
-            details={
-                "from": from_id,
-                "to": to_id,
-                "sessions_dropped": dropped,
-                "message": msg.message,
-            },
+            details=details,
         )
     )
     persist_store()
+    publish_provider_changed(msg)
     logger.warning(
         "Failover %s -> %s (dropped %s sessions)", from_id, to_id, dropped
     )
@@ -164,6 +171,7 @@ def force_active_provider(
     provider_id: str,
     *,
     store: OpsStore | None = None,
+    operator_id: str | None = None,
 ) -> ProviderChangedMessage:
     """Admin override of active provider (still drops in-flight sessions)."""
     ops = store or get_store()
@@ -171,4 +179,10 @@ def force_active_provider(
     if provider is None:
         raise ValueError(f"unknown provider: {provider_id}")
     routing = ops.get_routing()
-    return _switch(ops, routing, routing.active_provider_id, provider_id)
+    return _switch(
+        ops,
+        routing,
+        routing.active_provider_id,
+        provider_id,
+        operator_id=operator_id,
+    )

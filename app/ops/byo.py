@@ -19,6 +19,7 @@ async def register_customer_server(
     *,
     store: OpsStore | None = None,
     require_healthy: bool = True,
+    operator_id: str | None = None,
 ) -> CloudProvider:
     """
     Register a customer-owned Tess-compatible endpoint.
@@ -44,15 +45,18 @@ async def register_customer_server(
 
     snapshot = await probe_provider(provider, store=ops)
     if require_healthy and not snapshot.healthy:
+        reject_details: dict = {
+            "org_id": request.org_id,
+            "reason": snapshot.last_error or "unhealthy",
+            "score": snapshot.score,
+        }
+        if operator_id:
+            reject_details["operator_id"] = operator_id
         ops.append_event(
             OpsEvent(
                 event_type="byo_rejected",
                 provider_id=provider.id,
-                details={
-                    "org_id": request.org_id,
-                    "reason": snapshot.last_error or "unhealthy",
-                    "score": snapshot.score,
-                },
+                details=reject_details,
             )
         )
         raise ValueError(
@@ -61,11 +65,14 @@ async def register_customer_server(
         )
 
     ops.upsert_provider(provider)
+    ok_details: dict = {"org_id": request.org_id, "base_url": provider.base_url}
+    if operator_id:
+        ok_details["operator_id"] = operator_id
     ops.append_event(
         OpsEvent(
             event_type="byo_registered",
             provider_id=provider.id,
-            details={"org_id": request.org_id, "base_url": provider.base_url},
+            details=ok_details,
         )
     )
     persist_store()

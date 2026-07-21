@@ -21,6 +21,7 @@ async def run_comparison(
     request: ComparisonRunRequest,
     *,
     store: OpsStore | None = None,
+    operator_id: str | None = None,
 ) -> ComparisonReport:
     """
     Probe providers (optionally with injected chaos), evaluate failover,
@@ -33,7 +34,7 @@ async def run_comparison(
     for provider_id, kind in request.inject_chaos.items():
         if kind == ChaosKind.NONE:
             continue
-        set_chaos(provider_id, kind, store=ops)
+        set_chaos(provider_id, kind, store=ops, operator_id=operator_id)
         injected.append(provider_id)
         notes.append(f"injected {kind.value} on {provider_id}")
 
@@ -82,15 +83,18 @@ async def run_comparison(
         details=details,
     )
     ops.add_report(report)
+    event_details: dict[str, Any] = {"report_id": report.id, "name": report.name}
+    if operator_id:
+        event_details["operator_id"] = operator_id
     ops.append_event(
         OpsEvent(
             event_type="comparison_run",
-            details={"report_id": report.id, "name": report.name},
+            details=event_details,
         )
     )
 
     for provider_id in injected:
-        clear_chaos(provider_id, store=ops)
+        clear_chaos(provider_id, store=ops, operator_id=operator_id)
 
     persist_store()
     return report

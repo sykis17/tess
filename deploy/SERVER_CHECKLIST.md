@@ -49,11 +49,21 @@ OLLAMA_MODEL=llama3.2
 
 GEMINI_API_KEY=
 GEMINI_MODEL=gemini-2.0-flash
+
+# Ops admin (required before any real client data / multi-operator use)
+# Prefer: OPS_ADMIN_TOKENS={"jesse":"<strong-secret>"}
+OPS_ADMIN_TOKENS=
+OPS_ADMIN_TOKEN=
 ```
 
 Save: `Ctrl+O`, Enter, `Ctrl+X`
 
 **Do not** use `localhost` or `host.docker.internal` for `OLLAMA_BASE_URL` on the server — use `http://ollama:11434` (the Docker service name).
+
+Set at least one of `OPS_ADMIN_TOKENS` / `OPS_ADMIN_TOKEN` before relying on
+`/ops` mutations or sensitive reads (fail-closed `503` if both empty). See
+[MULTI_CLOUD.md](MULTI_CLOUD.md) admin auth section. Secrets Manager is deferred;
+keep tokens in `.env.prod` only (never commit).
 
 ### 3. Install Node.js (only once, for frontend build)
 

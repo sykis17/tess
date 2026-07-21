@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import logging
-import secrets
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
-from app.core.config import settings
+from app.ops.admin_auth import require_admin
 from app.ops.balancer import assign_session, seamless_migration_status
 from app.ops.byo import register_customer_server
 from app.ops.chaos import clear_chaos, set_chaos
@@ -36,41 +35,22 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ops", tags=["ops"])
 
+# Re-export for tests that import _check_admin from this module.
+from app.ops.admin_auth import _check_admin  # noqa: E402
 
-def _check_admin(authorization: str | None) -> None:
-    """
-    Gate mutating ops endpoints (including force switch / chaos).
-
-    Fail closed: if OPS_ADMIN_TOKEN is unset, mutations are rejected (503).
-    A missing or wrong Bearer token yields 401 / 403.
-    """
-    token = settings.ops_admin_token
-    if not token:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "OPS_ADMIN_TOKEN must be configured before mutating ops endpoints "
-                "(including force switch, which drops in-flight sessions)."
-            ),
-        )
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Bearer token required")
-    provided = authorization.removeprefix("Bearer ").strip()
-    if not secrets.compare_digest(provided, token):
-        raise HTTPException(status_code=403, detail="Invalid admin token")
+AdminOperator = Annotated[str, Depends(require_admin)]
 
 
 @router.get("/providers")
-async def list_providers() -> list[CloudProvider]:
+async def list_providers(_operator_id: AdminOperator) -> list[CloudProvider]:
     return get_store().list_providers()
 
 
 @router.post("/providers", status_code=201)
 async def create_provider(
     body: ProviderCreate,
-    authorization: str | None = Header(default=None),
+    operator_id: AdminOperator,
 ) -> CloudProvider:
-    _check_admin(authorization)
     store = get_store()
     provider = CloudProvider(
         id=new_id("prov"),
@@ -92,7 +72,11 @@ async def create_provider(
         OpsEvent(
             event_type="provider_registered",
             provider_id=provider.id,
-            details={"type": provider.type.value, "base_url": provider.base_url},
+            details={
+                "type": provider.type.value,
+                "base_url": provider.base_url,
+                "operator_id": operator_id,
+            },
         )
     )
     persist_store()
@@ -100,7 +84,10 @@ async def create_provider(
 
 
 @router.get("/providers/{provider_id}")
-async def get_provider(provider_id: str) -> CloudProvider:
+async def get_provider(
+    provider_id: str,
+    _operator_id: AdminOperator,
+) -> CloudProvider:
     provider = get_store().get_provider(provider_id)
     if provider is None:
         raise HTTPException(status_code=404, detail="provider not found")
@@ -111,9 +98,8 @@ async def get_provider(provider_id: str) -> CloudProvider:
 async def update_provider(
     provider_id: str,
     body: ProviderUpdate,
-    authorization: str | None = Header(default=None),
+    operator_id: AdminOperator,
 ) -> CloudProvider:
-    _check_admin(authorization)
     store = get_store()
     provider = store.get_provider(provider_id)
     if provider is None:
@@ -121,6 +107,13 @@ async def update_provider(
     data = body.model_dump(exclude_unset=True)
     updated = provider.model_copy(update=data)
     store.upsert_provider(updated)
+    store.append_event(
+        OpsEvent(
+            event_type="provider_updated",
+            provider_id=provider_id,
+            details={"fields": sorted(data.keys()), "operator_id": operator_id},
+        )
+    )
     persist_store()
     return updated
 
@@ -128,27 +121,44 @@ async def update_provider(
 @router.delete("/providers/{provider_id}", status_code=204)
 async def delete_provider(
     provider_id: str,
-    authorization: str | None = Header(default=None),
+    operator_id: AdminOperator,
 ) -> None:
-    _check_admin(authorization)
-    if not get_store().delete_provider(provider_id):
+    store = get_store()
+    if not store.delete_provider(provider_id):
         raise HTTPException(status_code=404, detail="provider not found")
+    store.append_event(
+        OpsEvent(
+            event_type="provider_deleted",
+            provider_id=provider_id,
+            details={"operator_id": operator_id},
+        )
+    )
     persist_store()
 
 
 @router.post("/providers/{provider_id}/connect")
 async def connect_provider(
     provider_id: str,
-    authorization: str | None = Header(default=None),
+    operator_id: AdminOperator,
 ) -> dict[str, Any]:
     """Validate adapter connection and run a health probe."""
-    _check_admin(authorization)
     store = get_store()
     provider = store.get_provider(provider_id)
     if provider is None:
         raise HTTPException(status_code=404, detail="provider not found")
     validation = get_adapter(provider.type).validate_connection(provider)
     snapshot = await probe_provider(provider, store=store)
+    store.append_event(
+        OpsEvent(
+            event_type="provider_connect",
+            provider_id=provider_id,
+            details={
+                "connected": bool(validation.get("ok") and snapshot.http_ok),
+                "operator_id": operator_id,
+            },
+        )
+    )
+    persist_store()
     return {
         "validation": validation,
         "snapshot": snapshot,
@@ -158,11 +168,17 @@ async def connect_provider(
 
 @router.post("/probe")
 async def probe_now(
-    authorization: str | None = Header(default=None),
+    operator_id: AdminOperator,
 ) -> dict[str, Any]:
-    _check_admin(authorization)
     snapshots = await probe_all_providers()
     failover_msg = evaluate_failover(snapshots)
+    get_store().append_event(
+        OpsEvent(
+            event_type="probe_manual",
+            details={"operator_id": operator_id, "failover": bool(failover_msg)},
+        )
+    )
+    persist_store()
     return {
         "snapshots": snapshots,
         "failover": failover_msg,
@@ -172,6 +188,7 @@ async def probe_now(
 
 @router.get("/health-logs")
 async def get_health_logs(
+    _operator_id: AdminOperator,
     provider_id: str | None = None,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
@@ -180,6 +197,7 @@ async def get_health_logs(
 
 @router.get("/events")
 async def get_events(
+    _operator_id: AdminOperator,
     provider_id: str | None = None,
     event_type: str | None = None,
     limit: int = 100,
@@ -189,8 +207,24 @@ async def get_events(
     )
 
 
+@router.get("/routing/notice")
+async def get_routing_notice() -> dict[str, Any]:
+    """Public minimal payload for frontend reconnect / provider-notice banner."""
+    store = get_store()
+    routing = store.get_routing()
+    active = (
+        store.get_provider(routing.active_provider_id)
+        if routing.active_provider_id
+        else None
+    )
+    return {
+        "ws_base_url": active.effective_ws_base_url() if active else None,
+        "sessions_dropped_last": routing.sessions_dropped_last,
+    }
+
+
 @router.get("/routing")
-async def get_routing() -> dict[str, Any]:
+async def get_routing(_operator_id: AdminOperator) -> dict[str, Any]:
     store = get_store()
     routing = store.get_routing()
     policy = store.get_policy()
@@ -214,15 +248,16 @@ async def get_routing() -> dict[str, Any]:
 @router.put("/routing/policy")
 async def put_routing_policy(
     body: RoutingPolicySettings,
-    authorization: str | None = Header(default=None),
+    operator_id: AdminOperator,
 ) -> RoutingPolicySettings:
-    _check_admin(authorization)
     store = get_store()
     store.set_policy(body)
+    details = body.model_dump(mode="json")
+    details["operator_id"] = operator_id
     store.append_event(
         OpsEvent(
             event_type="policy_updated",
-            details=body.model_dump(mode="json"),
+            details=details,
         )
     )
     persist_store()
@@ -232,11 +267,10 @@ async def put_routing_policy(
 @router.post("/routing/active/{provider_id}")
 async def set_active(
     provider_id: str,
-    authorization: str | None = Header(default=None),
+    operator_id: AdminOperator,
 ) -> dict[str, Any]:
-    _check_admin(authorization)
     try:
-        msg = force_active_provider(provider_id)
+        msg = force_active_provider(provider_id, operator_id=operator_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"failover": msg, "routing": get_store().get_routing()}
@@ -245,10 +279,13 @@ async def set_active(
 @router.post("/sessions/{session_id}/assign")
 async def assign_session_route(
     session_id: str,
+    operator_id: AdminOperator,
     org_id: str | None = None,
 ) -> dict[str, Any]:
     try:
-        assignment = assign_session(session_id, org_id=org_id)
+        assignment = assign_session(
+            session_id, org_id=org_id, operator_id=operator_id
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     provider = get_store().get_provider(assignment.provider_id)
@@ -260,7 +297,7 @@ async def assign_session_route(
 
 
 @router.get("/seamless-migration")
-async def get_seamless_migration() -> dict[str, Any]:
+async def get_seamless_migration(_operator_id: AdminOperator) -> dict[str, Any]:
     status = seamless_migration_status()
     return status.model_dump()
 
@@ -268,13 +305,14 @@ async def get_seamless_migration() -> dict[str, Any]:
 @router.post("/chaos/{provider_id}")
 async def inject_chaos(
     provider_id: str,
+    operator_id: AdminOperator,
     kind: ChaosKind,
     latency_ms: float = 2500.0,
-    authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    _check_admin(authorization)
     try:
-        chaos = set_chaos(provider_id, kind, latency_ms=latency_ms)
+        chaos = set_chaos(
+            provider_id, kind, latency_ms=latency_ms, operator_id=operator_id
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"provider_id": provider_id, "chaos": chaos}
@@ -283,11 +321,10 @@ async def inject_chaos(
 @router.delete("/chaos/{provider_id}")
 async def remove_chaos(
     provider_id: str,
-    authorization: str | None = Header(default=None),
+    operator_id: AdminOperator,
 ) -> dict[str, str]:
-    _check_admin(authorization)
     try:
-        clear_chaos(provider_id)
+        clear_chaos(provider_id, operator_id=operator_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"status": "cleared"}
@@ -296,18 +333,22 @@ async def remove_chaos(
 @router.post("/providers/{provider_id}/simulate-unhealthy")
 async def simulate_unhealthy(
     provider_id: str,
+    operator_id: AdminOperator,
     enabled: bool = True,
-    authorization: str | None = Header(default=None),
 ) -> CloudProvider:
-    _check_admin(authorization)
     store = get_store()
     provider = store.get_provider(provider_id)
     if provider is None:
         raise HTTPException(status_code=404, detail="provider not found")
     if enabled:
-        set_chaos(provider_id, ChaosKind.MARK_UNHEALTHY, store=store)
+        set_chaos(
+            provider_id,
+            ChaosKind.MARK_UNHEALTHY,
+            store=store,
+            operator_id=operator_id,
+        )
     else:
-        clear_chaos(provider_id, store=store)
+        clear_chaos(provider_id, store=store, operator_id=operator_id)
     updated = store.get_provider(provider_id)
     assert updated is not None
     return updated
@@ -316,24 +357,22 @@ async def simulate_unhealthy(
 @router.post("/compare", status_code=201)
 async def compare_providers(
     body: ComparisonRunRequest,
-    authorization: str | None = Header(default=None),
+    operator_id: AdminOperator,
 ) -> ComparisonReport:
-    _check_admin(authorization)
-    return await run_comparison(body)
+    return await run_comparison(body, operator_id=operator_id)
 
 
 @router.get("/compare")
-async def list_comparisons() -> list[ComparisonReport]:
+async def list_comparisons(_operator_id: AdminOperator) -> list[ComparisonReport]:
     return get_store().list_reports()
 
 
 @router.post("/byo", status_code=201)
 async def register_byo(
     body: ByoRegisterRequest,
-    authorization: str | None = Header(default=None),
+    operator_id: AdminOperator,
 ) -> CloudProvider:
-    _check_admin(authorization)
     try:
-        return await register_customer_server(body)
+        return await register_customer_server(body, operator_id=operator_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

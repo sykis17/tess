@@ -178,3 +178,69 @@ def test_sleep_is_idempotent_when_already_stopped() -> None:
         standby.sleep()
 
     ec2.stop_instances.assert_not_called()
+
+
+def _instance_describe(
+    state: str,
+    *,
+    public_ip: str | None = "18.227.172.81",
+) -> dict:
+    instance: dict = {"State": {"Name": state}}
+    if public_ip is not None:
+        instance["PublicIpAddress"] = public_ip
+        instance["NetworkInterfaces"] = [
+            {"Association": {"PublicIp": public_ip}}
+        ]
+    return {"Reservations": [{"Instances": [instance]}]}
+
+
+@pytest.mark.parametrize(
+    ("state", "expected_code"),
+    [
+        ("stopped", 0),
+        ("stopping", 0),
+        ("running", 1),
+        ("pending", 1),
+    ],
+)
+def test_drift_check_exit_codes(state: str, expected_code: int) -> None:
+    ec2 = MagicMock()
+    ec2.describe_instances.return_value = _instance_describe(state)
+
+    with patch.object(standby, "_ec2_client", return_value=ec2):
+        code = standby.drift_check(allow_running=False)
+
+    assert code == expected_code
+    ec2.stop_instances.assert_not_called()
+    ec2.start_instances.assert_not_called()
+
+
+def test_drift_check_allow_running_skips_fail() -> None:
+    ec2 = MagicMock()
+    ec2.describe_instances.return_value = _instance_describe("running")
+
+    with patch.object(standby, "_ec2_client", return_value=ec2):
+        assert standby.drift_check(allow_running=True) == 0
+
+    ec2.stop_instances.assert_not_called()
+
+
+def test_drift_check_allow_running_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(standby, "AWS_STANDBY_ALLOW_RUNNING", True)
+    ec2 = MagicMock()
+    ec2.describe_instances.return_value = _instance_describe("pending")
+
+    with patch.object(standby, "_ec2_client", return_value=ec2):
+        assert standby.drift_check() == 0
+
+
+def test_main_drift_check_dispatches() -> None:
+    with patch.object(standby, "drift_check", return_value=0) as drift_mock:
+        assert standby.main(["drift-check"]) == 0
+    drift_mock.assert_called_once_with()
+
+
+def test_main_status_alias_dispatches() -> None:
+    with patch.object(standby, "drift_check", return_value=1) as drift_mock:
+        assert standby.main(["status"]) == 1
+    drift_mock.assert_called_once_with()

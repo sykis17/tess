@@ -195,7 +195,7 @@ export function useWebSocket(sessionId: string) {
         void (async () => {
           try {
             const res = await fetch(
-              `${httpBaseFromWs(WS_BASE_URL)}/ops/routing`,
+              `${httpBaseFromWs(WS_BASE_URL)}/ops/routing/notice`,
             );
             if (!res.ok) {
               setProviderNotice(
@@ -204,11 +204,11 @@ export function useWebSocket(sessionId: string) {
               return;
             }
             const payload = (await res.json()) as {
-              active?: { ws_base_url?: string | null };
-              routing?: { sessions_dropped_last?: number };
+              ws_base_url?: string | null;
+              sessions_dropped_last?: number;
             };
-            const activeWs = payload.active?.ws_base_url;
-            const dropped = payload.routing?.sessions_dropped_last ?? 0;
+            const activeWs = payload.ws_base_url;
+            const dropped = payload.sessions_dropped_last ?? 0;
             if (dropped > 0 || (activeWs && activeWs !== WS_BASE_URL)) {
               setProviderNotice(
                 "Provider changed — in-flight answer was interrupted. Reconnect and resubmit if needed.",

@@ -38,6 +38,7 @@ def assign_session(
     *,
     org_id: str | None = None,
     store: OpsStore | None = None,
+    operator_id: str | None = None,
 ) -> SessionAssignment:
     """
     Assign a new session to a provider per routing policy.
@@ -52,6 +53,29 @@ def assign_session(
     policy = ops.get_policy()
     routing = ops.get_routing()
 
+    def _finalize(provider_id: str) -> SessionAssignment:
+        assignment = SessionAssignment(
+            session_id=session_id,
+            provider_id=provider_id,
+            policy=policy.policy,
+        )
+        ops.set_assignment(assignment)
+        details: dict = {
+            "session_id": session_id,
+            "policy": policy.policy.value,
+        }
+        if operator_id:
+            details["operator_id"] = operator_id
+        ops.append_event(
+            OpsEvent(
+                event_type="session_assigned",
+                provider_id=provider_id,
+                details=details,
+            )
+        )
+        persist_store()
+        return assignment
+
     # Org-scoped customer pool
     if org_id:
         customer_ids = [
@@ -61,14 +85,7 @@ def assign_session(
         ]
         if customer_ids:
             provider_id = _pick(ops, session_id, customer_ids, policy.policy)
-            assignment = SessionAssignment(
-                session_id=session_id,
-                provider_id=provider_id,
-                policy=policy.policy,
-            )
-            ops.set_assignment(assignment)
-            persist_store()
-            return assignment
+            return _finalize(provider_id)
 
     if policy.preferred_provider_id:
         pref = ops.get_provider(policy.preferred_provider_id)
@@ -77,14 +94,7 @@ def assign_session(
             if snap is None or (
                 snap.healthy and snap.score >= policy.min_score_for_healthy
             ):
-                assignment = SessionAssignment(
-                    session_id=session_id,
-                    provider_id=pref.id,
-                    policy=policy.policy,
-                )
-                ops.set_assignment(assignment)
-                persist_store()
-                return assignment
+                return _finalize(pref.id)
 
     if policy.policy == RoutingPolicy.ACTIVE_ONLY:
         provider_id = routing.active_provider_id
@@ -93,14 +103,7 @@ def assign_session(
             provider_id = healthy[0] if healthy else None
         if not provider_id:
             raise RuntimeError("no provider available for assignment")
-        assignment = SessionAssignment(
-            session_id=session_id,
-            provider_id=provider_id,
-            policy=policy.policy,
-        )
-        ops.set_assignment(assignment)
-        persist_store()
-        return assignment
+        return _finalize(provider_id)
 
     healthy = list_healthy_provider_ids(ops)
     if not healthy:
@@ -110,21 +113,7 @@ def assign_session(
             raise RuntimeError("no healthy providers for assignment")
 
     provider_id = _pick(ops, session_id, healthy, policy.policy)
-    assignment = SessionAssignment(
-        session_id=session_id,
-        provider_id=provider_id,
-        policy=policy.policy,
-    )
-    ops.set_assignment(assignment)
-    ops.append_event(
-        OpsEvent(
-            event_type="session_assigned",
-            provider_id=provider_id,
-            details={"session_id": session_id, "policy": policy.policy.value},
-        )
-    )
-    persist_store()
-    return assignment
+    return _finalize(provider_id)
 
 
 def _pick(

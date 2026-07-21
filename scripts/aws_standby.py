@@ -9,6 +9,7 @@ Usage (local operator machine with AWS credentials):
   python scripts/aws_standby.py wake
   python scripts/aws_standby.py sleep
   python scripts/aws_standby.py cycle   # wake → health → smoke → sleep
+  python scripts/aws_standby.py drift-check  # alert if standby is running
 
 Requires OPS_AWS_BASE_URL when Elastic IP is stable; falls back to patching
 prov_aws on the control plane when the public IP drifts.
@@ -30,6 +31,11 @@ import httpx
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SMOKE_SCRIPT = _REPO_ROOT / "scripts" / "ops_failover_live_smoke.py"
+
+# EC2 states that mean the standby is correctly idle (no compute burn).
+_DRIFT_OK_STATES = frozenset({"stopped", "stopping"})
+# EC2 states that mean forgotten wake / cycle died before finally.
+_DRIFT_FAIL_STATES = frozenset({"running", "pending"})
 
 
 def _load_local_env() -> None:
@@ -53,6 +59,13 @@ OPS_AWS_PROVIDER_ID = os.environ.get("OPS_AWS_PROVIDER_ID", "prov_aws")
 AWS_BUDGET_NAME = os.environ.get("AWS_BUDGET_NAME", "")
 AWS_BUDGET_ALERT_THRESHOLD = float(os.environ.get("AWS_BUDGET_ALERT_THRESHOLD", "0.80"))
 HEALTH_TIMEOUT_S = int(os.environ.get("AWS_STANDBY_HEALTH_TIMEOUT_S", "180"))
+# When "1"/"true"/"yes", drift-check exits 0 even if the instance is running
+# (intentional wake in progress). Default off so forgotten wakes still alarm.
+AWS_STANDBY_ALLOW_RUNNING = os.environ.get("AWS_STANDBY_ALLOW_RUNNING", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
 
 
 class BudgetExceededError(RuntimeError):
@@ -173,6 +186,15 @@ def _describe_public_ip(ec2: Any | None = None) -> str:
     return public_ip
 
 
+def _describe_instance(ec2: Any | None = None) -> dict[str, Any]:
+    """Return the EC2 Instance dict for AWS_STANDBY_INSTANCE_ID."""
+    client = ec2 or _ec2_client()
+    reservations = client.describe_instances(InstanceIds=[INSTANCE_ID])["Reservations"]
+    if not reservations or not reservations[0].get("Instances"):
+        raise RuntimeError(f"Instance {INSTANCE_ID} not found in {REGION}")
+    return reservations[0]["Instances"][0]
+
+
 def resolve_host(public_ip: str) -> tuple[str, bool]:
     """
     Return (base_url, needs_ops_update).
@@ -209,10 +231,15 @@ def refresh_ops_provider(base_url: str) -> None:
         print("OPS_SMOKE_BASE_URL unset — skipping control-plane refresh")
         return
     with httpx.Client(timeout=60.0) as client:
-        r = client.post(
-            f"{OPS_SMOKE_BASE_URL}/ops/providers/{OPS_AWS_PROVIDER_ID}/connect",
-            headers=_admin_headers(),
-        )
+        connect_url = f"{OPS_SMOKE_BASE_URL}/ops/providers/{OPS_AWS_PROVIDER_ID}/connect"
+        r = client.post(connect_url, headers=_admin_headers())
+        if r.status_code == 405:
+            raise RuntimeError(
+                f"405 on {connect_url} — Caddy is not routing /ops/* to web. "
+                "On Hetzner: ensure DOMAIN is a bare IP/hostname (no http://), "
+                "confirm deploy/Caddyfile.active has 'handle /ops/*', then "
+                "bash ./deploy/deploy.sh (or recreate the caddy container)."
+            )
         r.raise_for_status()
         body = r.json()
         print(
@@ -290,6 +317,58 @@ def sleep() -> None:
     print("AWS instance stopped")
 
 
+def drift_check(*, allow_running: bool | None = None) -> int:
+    """
+    Alert-only check that the standby instance is stopped when it should be.
+
+    Exit 0 if state is stopped/stopping (or allow_running and running/pending).
+    Exit 1 if state is running/pending without allow_running.
+    Exit 1 for unexpected states.
+
+    Does not stop or start the instance.
+    """
+    allow = AWS_STANDBY_ALLOW_RUNNING if allow_running is None else allow_running
+    instance = _describe_instance()
+    state = instance["State"]["Name"]
+    public_ip = instance.get("PublicIpAddress") or "-"
+    eip = None
+    for association in instance.get("NetworkInterfaces", []):
+        association_meta = association.get("Association") or {}
+        if association_meta.get("PublicIp"):
+            eip = association_meta.get("PublicIp")
+            break
+    eip_display = eip or public_ip
+
+    print(
+        f"drift-check: instance={INSTANCE_ID} region={REGION} "
+        f"state={state} public_ip={public_ip} eip_or_public={eip_display}"
+    )
+
+    if state in _DRIFT_OK_STATES:
+        print(f"OK: standby is {state} (expected idle)")
+        return 0
+
+    if state in _DRIFT_FAIL_STATES:
+        if allow:
+            print(
+                f"OK: standby is {state} but AWS_STANDBY_ALLOW_RUNNING is set "
+                "(intentional wake)"
+            )
+            return 0
+        print(
+            f"DRIFT: standby is {state} — expected stopped. "
+            "Alert only (no auto-stop). Run: python scripts/aws_standby.py sleep",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(
+        f"DRIFT: standby is in unexpected state {state!r}",
+        file=sys.stderr,
+    )
+    return 1
+
+
 def run_smoke() -> int:
     if not _SMOKE_SCRIPT.is_file():
         raise RuntimeError(f"Smoke script not found: {_SMOKE_SCRIPT}")
@@ -310,6 +389,12 @@ def cycle() -> int:
         wait_healthy(base_url)
         refresh_ops_provider(base_url)
         exit_code = run_smoke()
+    except (RuntimeError, TimeoutError, BudgetExceededError, httpx.HTTPError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        if isinstance(exc, BudgetExceededError):
+            exit_code = 2
+        else:
+            exit_code = 1
     finally:
         try:
             sleep()
@@ -334,12 +419,17 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if cmd == "cycle":
             return cycle()
-        print("usage: aws_standby.py [wake|sleep|cycle]", file=sys.stderr)
+        if cmd in ("drift-check", "status"):
+            return drift_check()
+        print(
+            "usage: aws_standby.py [wake|sleep|cycle|drift-check]",
+            file=sys.stderr,
+        )
         return 2
     except BudgetExceededError as exc:
         print(f"BUDGET GUARD: {exc}", file=sys.stderr)
         return 2
-    except (RuntimeError, TimeoutError) as exc:
+    except (RuntimeError, TimeoutError, httpx.HTTPError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 

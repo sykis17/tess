@@ -67,6 +67,9 @@ fi
 
 echo "Starting production stack..."
 docker compose "${COMPOSE_PROFILES[@]}" --env-file "${ENV_FILE}" -f docker-compose.prod.yml up -d --build
+# Caddy does not auto-reload a bind-mounted Caddyfile; recreate so /ops-ui and
+# static dist updates are picked up even when the image is unchanged.
+docker compose "${COMPOSE_PROFILES[@]}" --env-file "${ENV_FILE}" -f docker-compose.prod.yml up -d --force-recreate caddy
 
 if [[ "${DEFAULT_LLM_PROVIDER:-}" == "ollama" ]]; then
   OLLAMA_MODEL_NAME="${OLLAMA_MODEL:-llama3.2}"

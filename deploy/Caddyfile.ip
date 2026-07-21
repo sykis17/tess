@@ -14,8 +14,14 @@
         reverse_proxy web:8000
     }
 
+    # Dedicated ops admin MPA (must not fall through to chat SPA).
+    handle /ops-ui* {
+        try_files {path} {path}/index.html /ops-ui/index.html
+        file_server
+    }
+
     handle {
-        try_files {path} /index.html
+        try_files {path} {path}/index.html /index.html
         file_server
     }
 }

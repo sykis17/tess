@@ -95,7 +95,7 @@ matrix is green.
 |-------------|--------|
 | Swap held (no OOM / SSH hang) after AWS became active? | **Yes** (2026-07-22) — `aws_standby.py cycle` PASS; no SSH hang; probes stayed healthy while `prov_aws` was active |
 | `prov_aws` stayed healthy while active? | **Yes** — connect `http_ok=True`; health-log samples showed score ~87 with `mem_percent` ~61% (t3.micro + 1GB swap) |
-| Verdict: t3.micro OK as real failover target? | **OK for control-plane failover smoke** (simulate-unhealthy → 3 probes → switch → recover). Still thin for heavy LangGraph/LLM traffic — watch OOM if AWS remains active under real user load; consider upsizing if that path is required |
+| Verdict: t3.micro OK as real failover target? | **OK for control-plane failover smoke** (simulate-unhealthy → 3 probes → switch → recover). Still thin for heavy LangGraph/LLM traffic — **sizing parked**; resize only if AWS must stay active under real user load |
 
 ### Step 3 results (2026-07-22)
 
@@ -107,11 +107,11 @@ matrix is green.
 Resting state restored: Hetzner active, AWS stopped, GCP stopped.
 ---
 
-## Steps 4–5 (discuss only — do not implement this session)
+## Steps 4–5 (post–Session 7 decisions)
 
 ### Step 4 — GcpAdapter Cloud Monitoring
 
-**Deferred.** Self-report already feeds scoring apples-to-apples across providers.
+**Skipped.** Self-report already feeds scoring apples-to-apples across providers.
 
 - Keep `/health` self-report as source of truth for scoring
 - If pursued later: enrichment-only fields in `provider_metrics` (no double penalty)
@@ -120,12 +120,15 @@ Resting state restored: Hetzner active, AWS stopped, GCP stopped.
 
 ### Step 5 — Three-way chaos demo (stakeholder)
 
-Ops/demo script, not engine features:
+**Delivered** as ops walkthrough (not new engine features):
 
 1. Wake one standby (time/cost pick)
 2. `/ops-status/` shows host metrics
 3. Take Hetzner offline → streak 1→2→3 → active flips
 4. Clear + recover + sleep standby
+
+See runbook in [`deploy/MULTI_CLOUD.md`](deploy/MULTI_CLOUD.md#stakeholder-three-way-chaos-demo-step-5)
+and `python scripts/ops_three_way_demo.py {aws|gcp} [--guided]`.
 
 Optional later: multi-standby selection in `ops_failover_live_smoke.py`.
 
@@ -147,7 +150,7 @@ Optional later: multi-standby selection in `ops_failover_live_smoke.py`.
 - Seamless mid-session migration
 - Secrets manager / Vault
 - Hetzner Cloud API or AWS CloudWatch live pulls
-- Implementing Cloud Monitoring SDK this session
+- Implementing Cloud Monitoring SDK (Step 4 skipped; self-report SoT)
 
 ---
 
@@ -158,6 +161,7 @@ Optional later: multi-standby selection in `ops_failover_live_smoke.py`.
 | Failover counters | [`app/ops/failover.py`](app/ops/failover.py) |
 | Chaos kinds | [`app/ops/chaos.py`](app/ops/chaos.py), [`app/ops/prober.py`](app/ops/prober.py) |
 | Live smoke | [`scripts/ops_failover_live_smoke.py`](scripts/ops_failover_live_smoke.py) |
+| Stakeholder demo | [`scripts/ops_three_way_demo.py`](scripts/ops_three_way_demo.py) |
 | AWS wake/sleep | [`scripts/aws_standby.py`](scripts/aws_standby.py) |
 | GCP wake/sleep | [`scripts/gcp_standby.py`](scripts/gcp_standby.py) |
 | Control plane | `http://5.78.186.223` |

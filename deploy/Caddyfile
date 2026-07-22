@@ -26,6 +26,12 @@
         file_server
     }
 
+    # Public architecture explainer (React MPA; must not fall through to chat SPA).
+    handle /architecture* {
+        try_files {path} {path}/index.html /architecture/index.html
+        file_server
+    }
+
     handle {
         try_files {path} {path}/index.html /index.html
         file_server

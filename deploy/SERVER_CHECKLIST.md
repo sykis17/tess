@@ -89,7 +89,7 @@ The script will:
 1. Build the frontend
 2. Start all Docker containers (including **Ollama inside Docker**)
 3. Pull the Ollama model automatically
-4. Check `http://5.78.186.223/health`
+4. Check `http://5.78.186.223/health` (expect `cpu_percent` / `mem_percent` after host-metrics rollout — see [HOST_METRICS_ROLLOUT.md](HOST_METRICS_ROLLOUT.md))
 
 ---
 

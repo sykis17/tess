@@ -37,9 +37,12 @@ HTTP latency and Redis status.
 | `mem_percent` | float | 0–100; optional if psutil unavailable |
 | `network` | object | Optional `{bytes_sent, bytes_recv}` (display only; not scored) |
 
-**HEAD** `/health` stays empty-body and cheap (UptimeRobot). Cloud Monitoring /
-CloudWatch / Hetzner Cloud API pulls remain deferred; adapters return metadata
-only and the prober owns the single HTTP probe.
+**HEAD** `/health` stays empty-body and cheap (UptimeRobot). **Step 4 skipped:**
+GCP Cloud Monitoring / CloudWatch / Hetzner Cloud API pulls are **not** used for
+scoring. Self-report remains the source of truth so all three providers stay
+apples-to-apples (no double penalty). Adapters return metadata only; the prober
+owns the single HTTP probe. If Monitoring is revisited later, use
+enrichment-only fields under `provider_metrics` — never a second scored probe.
 
 ## Provider registry
 
@@ -538,6 +541,8 @@ briefly under probe load):
 - Healthy AWS snapshots showed `mem_percent` ~61%, score ~87
 - **Verdict:** adequate for control-plane failover smoke; still undersized for
   sustained LangGraph/LLM traffic if AWS must remain the active provider
+- **Sizing follow-up: parked.** Do **not** resize now. Revisit only if AWS must
+  stay active under real LangGraph/LLM load (OOM risk).
 
 Resting state after both runs: Hetzner active, AWS stopped, GCP stopped.
 
@@ -616,7 +621,55 @@ python scripts/ops_failover_live_smoke.py
 
 Host metrics (CPU / memory) are self-reported in `/health` via psutil; the
 prober scores them on the same 30s cadence. `GcpAdapter` is metadata-only
-(no duplicate HTTP probe). GCP Cloud Monitoring API remains deferred.
+(no duplicate HTTP probe). GCP Cloud Monitoring API is **skipped** (Step 4);
+self-report stays the scoring source of truth.
+
+## Stakeholder three-way chaos demo (Step 5)
+
+Ops walkthrough for stakeholders — not new engine features. Session 7 already
+proved the mechanical path for both standbys; this section is the polished
+script. Prefer waking **one** standby (cost/time pick). Multi-standby race is
+optional/later.
+
+### One-shot (laptop)
+
+```powershell
+$env:OPS_SMOKE_BASE_URL = "http://5.78.186.223"
+$env:OPS_ADMIN_TOKEN = "<from Hetzner .env.prod>"
+# AWS path (needs AWS credentials + SG allows laptop IP):
+python scripts/ops_three_way_demo.py aws
+# Or GCP path (needs GOOGLE_APPLICATION_CREDENTIALS):
+python scripts/ops_three_way_demo.py gcp
+# Guided: pause between wake / smoke / sleep so you can show the UI
+python scripts/ops_three_way_demo.py aws --guided
+# Print steps only (no cloud calls):
+python scripts/ops_three_way_demo.py --print-runbook
+```
+
+### Manual checklist
+
+1. **Wake** one standby: `python scripts/aws_standby.py wake` or
+   `python scripts/gcp_standby.py wake` (preflight warns on SG IP /
+   missing ADC).
+2. **Show proof** — open `http://5.78.186.223/ops-status/` (and optionally
+   `/ops-ui/`) so host metrics + providers are visible.
+3. **Induce failover** — take Hetzner offline via `/ops-ui/` or
+   `simulate-unhealthy`; watch consecutive failures 1→2→3; active flips to the
+   woken standby. Automated: `OPS_SMOKE_STANDBY=prov_aws|prov_gcp` +
+   `python scripts/ops_failover_live_smoke.py`.
+4. **Recover** — clear chaos → force Hetzner active →
+   `python scripts/aws_standby.py sleep` or `python scripts/gcp_standby.py sleep`.
+
+Expected smoke excerpt (threshold 3):
+
+```text
+  probe#1 active=prov_hetzner_local failover=False failures={...: 1, ...}
+  probe#2 active=prov_hetzner_local failover=False failures={...: 2, ...}
+  probe#3 active=prov_aws|prov_gcp failover=True failures={...: 3, ...}
+PASS: live simulate → probe → failover → recover sequence completed
+```
+
+Resting state after the demo: Hetzner active; AWS stopped; GCP stopped.
 
 ## Simulate failover (manual curl)
 

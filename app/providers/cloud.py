@@ -74,8 +74,9 @@ class GcpAdapter(CloudAdapter):
         """
         Metadata only — control-plane prober owns /health (cpu/mem self-report).
 
-        GCP Cloud Monitoring API remains deferred; stop/start uses Compute API
-        from scripts/gcp_standby.py with the ops service account / ADC.
+        GCP Cloud Monitoring API is skipped (self-report remains scoring SoT);
+        stop/start uses Compute API from scripts/gcp_standby.py with the ops
+        service account / ADC.
         """
         return {
             "source": "gcp_self_report",
@@ -84,7 +85,7 @@ class GcpAdapter(CloudAdapter):
             "credentials_ref_configured": bool(provider.credentials_ref),
             "note": (
                 "Host cpu/mem from remote /health self-report; "
-                "GCP Monitoring API deferred. "
+                "GCP Monitoring API skipped (self-report SoT). "
                 "Wake/sleep via scripts/gcp_standby.py (Compute stop/start)."
             ),
         }

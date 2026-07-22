@@ -67,8 +67,23 @@ Session 5 (2026-07-21): `provider_changed` Redis → WebSocket fan-out; minimal
 Session 6 (2026-07-21): Read-only `/ops-status/` (providers, scores, events,
 UptimeRobot link); Caddy + cross-links with `/ops-ui/`.
 
-See [MULTI_CLOUD_HARDENING_S6_OPENER.md](MULTI_CLOUD_HARDENING_S6_OPENER.md)
-(prior: [MULTI_CLOUD_HARDENING_S5_OPENER.md](MULTI_CLOUD_HARDENING_S5_OPENER.md),
+Session 7 (2026-07-22): Three-way chaos failover validated (Hetzner→AWS and
+Hetzner→GCP auto-switch at probe #3); standby wake preflight; host metrics
+self-report scoring live on all three stacks. Resting: Hetzner active, AWS/GCP
+stopped.
+
+Post–Session 7 decisions:
+
+- **Step 4 skipped** — keep `/health` self-report as scoring source of truth;
+  no GcpAdapter Cloud Monitoring / CloudWatch / Hetzner Cloud API pulls.
+- **Step 5** — stakeholder demo runbook + `scripts/ops_three_way_demo.py`
+  (see [deploy/MULTI_CLOUD.md](deploy/MULTI_CLOUD.md#stakeholder-three-way-chaos-demo-step-5)).
+- **AWS sizing parked** — `t3.micro` + 1GB swap OK for control-plane smoke;
+  resize only if AWS must stay active under real LangGraph/LLM load.
+
+See [MULTI_CLOUD_HARDENING_S7_OPENER.md](MULTI_CLOUD_HARDENING_S7_OPENER.md)
+(prior: [MULTI_CLOUD_HARDENING_S6_OPENER.md](MULTI_CLOUD_HARDENING_S6_OPENER.md),
+[MULTI_CLOUD_HARDENING_S5_OPENER.md](MULTI_CLOUD_HARDENING_S5_OPENER.md),
 [MULTI_CLOUD_HARDENING_S4_OPENER.md](MULTI_CLOUD_HARDENING_S4_OPENER.md),
 [MULTI_CLOUD_HARDENING_S3_OPENER.md](MULTI_CLOUD_HARDENING_S3_OPENER.md),
 [MULTI_CLOUD_HARDENING_S2_OPENER.md](MULTI_CLOUD_HARDENING_S2_OPENER.md),

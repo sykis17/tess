@@ -145,6 +145,10 @@ curl -s http://34.46.222.191/health | python3 -m json.tool
 | `cpu_percent` always `0.0` | First psutil sample (interval=0) | Normal on first read; prober will see real values on next probe |
 | Metrics in `/health` but not in ops score | Prober not run yet | `POST /ops/probe` or wait 30s |
 | AWS/GCP unreachable | Instance stopped | `aws_standby.py wake` / `gcp_standby.py wake` |
+| AWS SSH timeout after wake | SG `launch-wizard-1` locked to stale laptop IP | Allow current public IP on TCP/22 (`aws_standby.py` wake prints IP preflight) |
+| AWS hung during `npm`/`docker` build | t3.micro ~1GB RAM, no swap | Add 1GB swapfile + `/etc/fstab`; consider upsizing if failover load OOMs |
+| GCP `git pull` / docker permission denied | Clone owned by `tessops` | `chown -R jesse_malma:… /opt/tess-engine`; add user to `docker` group |
+| GCP wake auth fails | `GOOGLE_APPLICATION_CREDENTIALS` unset in this shell | New terminal after User env set; path `~\.ssh\tess-gcp-ops-key.json` |
 
 ## Rollout checklist
 

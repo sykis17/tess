@@ -122,6 +122,47 @@ def _httpx_verify(base_url: str) -> bool:
     return True
 
 
+def preflight_adc() -> None:
+    """
+    Fail fast when no usable GCP credentials path is visible.
+
+    User env GOOGLE_APPLICATION_CREDENTIALS often needs a *new* terminal after
+    SetEnvironmentVariable. Hint the usual ops key path; do not block if ADC
+    or JSON-in-env credentials_ref can still work.
+    """
+    gac = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
+    if gac and Path(gac).is_file():
+        print(f"preflight: GOOGLE_APPLICATION_CREDENTIALS={gac}")
+        return
+    if gac and not Path(gac).is_file():
+        raise RuntimeError(
+            f"GOOGLE_APPLICATION_CREDENTIALS is set to {gac!r} but the file "
+            "is missing. Fix the path or open a new terminal after "
+            "SetEnvironmentVariable. Expected ops key e.g. "
+            r"C:\Users\jesse\.ssh\tess-gcp-ops-key.json"
+        )
+
+    for env_name in (
+        os.environ.get("OPS_GCP_CREDENTIALS_REF", "GCP_SERVICE_ACCOUNT_JSON"),
+        "GCP_SERVICE_ACCOUNT_JSON",
+    ):
+        raw = os.environ.get(env_name or "", "").strip()
+        if not raw:
+            continue
+        if Path(raw).is_file() or raw.startswith("{"):
+            print(f"preflight: using credentials from env {env_name}")
+            return
+
+    # ADC may still work (gcloud application-default); warn loudly.
+    print(
+        "preflight WARNING: GOOGLE_APPLICATION_CREDENTIALS unset. "
+        "Will try Application Default Credentials. If auth fails, set "
+        r"GOOGLE_APPLICATION_CREDENTIALS=C:\Users\jesse\.ssh\tess-gcp-ops-key.json "
+        "in a new PowerShell session (User env vars need a fresh shell).",
+        file=sys.stderr,
+    )
+
+
 def _credentials() -> Any:
     """Resolve ADC / service-account credentials for Compute Engine API calls."""
     from google.auth.transport.requests import Request
@@ -129,6 +170,7 @@ def _credentials() -> Any:
     import google.auth
 
     scopes = [_COMPUTE_SCOPE]
+    preflight_adc()
     gac = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
     if gac and Path(gac).is_file():
         creds = service_account.Credentials.from_service_account_file(gac, scopes=scopes)

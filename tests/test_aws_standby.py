@@ -244,3 +244,32 @@ def test_main_status_alias_dispatches() -> None:
     with patch.object(standby, "drift_check", return_value=1) as drift_mock:
         assert standby.main(["status"]) == 1
     drift_mock.assert_called_once_with()
+
+
+def test_preflight_ssh_sg_reminder_prints_ip(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("scripts.aws_standby.httpx.Client") as client_cls:
+        client = MagicMock()
+        client_cls.return_value.__enter__.return_value = client
+        response = MagicMock()
+        response.status_code = 200
+        response.text = "203.0.113.9\n"
+        client.get.return_value = response
+        standby.preflight_ssh_sg_reminder()
+
+    out = capsys.readouterr().out
+    assert "203.0.113.9" in out
+    assert "launch-wizard-1" in out
+
+
+def test_wake_calls_ssh_preflight() -> None:
+    ec2 = MagicMock()
+    ec2.describe_instances.return_value = _instance_describe("running")
+    with (
+        patch.object(standby, "check_budget"),
+        patch.object(standby, "preflight_ssh_sg_reminder") as pre,
+        patch.object(standby, "_ec2_client", return_value=ec2),
+        patch.object(standby, "_describe_public_ip", return_value="18.227.172.81"),
+        patch.object(standby, "resolve_host", return_value=("http://18.227.172.81", False)),
+    ):
+        standby.wake(skip_budget=True)
+    pre.assert_called_once()

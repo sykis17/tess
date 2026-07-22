@@ -272,9 +272,33 @@ def wait_healthy(base_url: str, timeout_s: int = HEALTH_TIMEOUT_S) -> None:
     raise TimeoutError(f"AWS stack did not report healthy within {timeout_s}s ({url})")
 
 
+def preflight_ssh_sg_reminder() -> None:
+    """
+    Print laptop public IP + SG reminder before wake.
+
+    Stale SSH ingress on launch-wizard-1 locked operators out when their
+    public IP changed (seen 2026-07-22). Best-effort — never blocks wake.
+    """
+    public_ip = "-"
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            r = client.get("https://checkip.amazonaws.com")
+            if r.status_code == 200:
+                public_ip = r.text.strip()
+    except Exception:
+        pass
+    print(
+        f"preflight: laptop public IP ~ {public_ip}. "
+        "If SSH fails after wake, update security group launch-wizard-1 "
+        "(or your Tess SG) inbound TCP/22 to this IP."
+    )
+
+
 def wake(*, skip_budget: bool = False) -> str:
     if not skip_budget:
         check_budget(required=False)
+
+    preflight_ssh_sg_reminder()
 
     ec2 = _ec2_client()
     state = ec2.describe_instances(InstanceIds=[INSTANCE_ID])["Reservations"][0][

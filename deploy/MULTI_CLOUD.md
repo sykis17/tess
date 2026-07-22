@@ -517,6 +517,33 @@ Stopping instance i-0360ab28632a3c4a0...
 # Exit: smoke PASS; AWS stopped in finally
 ```
 
+## Three-way chaos failover (2026-07-22, Session 7)
+
+Host metrics self-report already live on all three stacks. Re-validated
+`simulate-unhealthy` → consecutive failure streak → automatic switch for
+**both** standbys (not Force active).
+
+| Run | Standby | Failover? | Probe cycles | Notes |
+|-----|---------|-----------|--------------|-------|
+| A | `prov_aws` | Yes | 3 | `aws_standby.py cycle` PASS. Preflight prints laptop public IP for SG `launch-wizard-1`. |
+| B | `prov_gcp` | Yes | 3 | `gcp_standby.py cycle` with `OPS_SMOKE_STANDBY=prov_gcp` PASS. ADC preflight confirms `GOOGLE_APPLICATION_CREDENTIALS`. Hetzner failures jumped 2→4 on the switch probe (background prober race) — still selected `prov_gcp`. |
+
+### t3.micro under failover load
+
+AWS `t3.micro` previously hung during vite/Docker build (2026-07-22) until a
+1GB swapfile was added. During Session 7 Run A smoke (AWS became **active**
+briefly under probe load):
+
+- No OOM / SSH hang observed from the operator laptop
+- Healthy AWS snapshots showed `mem_percent` ~61%, score ~87
+- **Verdict:** adequate for control-plane failover smoke; still undersized for
+  sustained LangGraph/LLM traffic if AWS must remain the active provider
+
+Resting state after both runs: Hetzner active, AWS stopped, GCP stopped.
+
+Standby wake preflight (same PR): AWS prints public IP + SG reminder; GCP fails
+fast / warns on missing `GOOGLE_APPLICATION_CREDENTIALS`.
+
 ## Stand up Google Cloud
 
 1. Create a Compute Engine VM (or GCE MIG) with Docker.

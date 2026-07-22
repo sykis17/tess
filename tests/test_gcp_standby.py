@@ -199,3 +199,26 @@ def test_post_instance_action_surfaces_service_account_user_hint() -> None:
 
     with pytest.raises(RuntimeError, match="serviceAccountUser"):
         standby._post_instance_action("start", session)
+
+
+def test_preflight_adc_ok_when_gac_file_exists(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pytest.TempPathFactory,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    key = tmp_path / "sa.json"
+    key.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(key))
+    standby.preflight_adc()
+    assert str(key) in capsys.readouterr().out
+
+
+def test_preflight_adc_raises_when_gac_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        r"C:\Users\jesse\.ssh\missing-tess-gcp-ops-key.json",
+    )
+    with pytest.raises(RuntimeError, match="missing"):
+        standby.preflight_adc()

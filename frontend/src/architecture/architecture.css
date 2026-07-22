@@ -1,0 +1,435 @@
+:root {
+  --arch-bg: #0e0f10;
+  --arch-bg-elevated: #151719;
+  --arch-surface: #1b1e21;
+  --arch-ink: #e8eaed;
+  --arch-muted: #9aa0a6;
+  --arch-faint: #6b7178;
+  --arch-accent: #c4a574;
+  --arch-accent-soft: rgba(196, 165, 116, 0.14);
+  --arch-rule: #2a2e32;
+  --arch-ok: #6b9f7a;
+  --arch-bad: #c47a6a;
+  --arch-warn: #c4a060;
+  --arch-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --arch-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --arch-display: 'Space Grotesk', 'IBM Plex Sans', sans-serif;
+  --arch-max: 44rem;
+  --arch-wide: 58rem;
+  --arch-toc: 12rem;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--arch-bg);
+  color: var(--arch-ink);
+  font-family: var(--arch-sans);
+  font-size: 1.0625rem;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.arch-page {
+  position: relative;
+  overflow-x: clip;
+}
+
+.arch-page::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 80% 50% at 10% -10%, rgba(196, 165, 116, 0.08), transparent 55%),
+    radial-gradient(ellipse 60% 40% at 90% 20%, rgba(107, 159, 122, 0.05), transparent 50%),
+    linear-gradient(180deg, #121416 0%, var(--arch-bg) 28%, var(--arch-bg) 100%);
+}
+
+.arch-shell {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+  max-width: calc(var(--arch-wide) + var(--arch-toc) + 4rem);
+  margin: 0 auto;
+  padding: 0 1.25rem 4rem;
+}
+
+@media (min-width: 960px) {
+  .arch-shell {
+    grid-template-columns: var(--arch-toc) minmax(0, 1fr);
+    gap: 2.5rem;
+    padding: 0 2rem 5rem;
+  }
+}
+
+.arch-toc {
+  display: none;
+}
+
+@media (min-width: 960px) {
+  .arch-toc {
+    display: block;
+    position: sticky;
+    top: 2rem;
+    align-self: start;
+    padding-top: 2.5rem;
+  }
+}
+
+.arch-toc-label {
+  font-family: var(--arch-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--arch-faint);
+  margin: 0 0 0.85rem;
+}
+
+.arch-toc nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.arch-toc a {
+  color: var(--arch-muted);
+  text-decoration: none;
+  font-size: 0.875rem;
+  line-height: 1.35;
+  padding: 0.2rem 0 0.2rem 0.65rem;
+  border-left: 2px solid transparent;
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+
+.arch-toc a:hover {
+  color: var(--arch-ink);
+}
+
+.arch-toc a.is-active {
+  color: var(--arch-accent);
+  border-left-color: var(--arch-accent);
+}
+
+.arch-main {
+  min-width: 0;
+  max-width: var(--arch-wide);
+}
+
+.arch-hero {
+  padding: 3.5rem 0 2.5rem;
+  max-width: var(--arch-max);
+}
+
+@media (min-width: 720px) {
+  .arch-hero {
+    padding: 5rem 0 3rem;
+  }
+}
+
+.arch-brand {
+  font-family: var(--arch-display);
+  font-weight: 700;
+  font-size: clamp(2.75rem, 8vw, 4.25rem);
+  letter-spacing: -0.03em;
+  line-height: 1;
+  margin: 0 0 0.75rem;
+  color: var(--arch-ink);
+}
+
+.arch-hero-kicker {
+  font-family: var(--arch-mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--arch-accent);
+  margin: 0 0 1.25rem;
+}
+
+.arch-hero-lede {
+  font-size: 1.2rem;
+  line-height: 1.55;
+  color: var(--arch-muted);
+  margin: 0;
+  max-width: 36rem;
+}
+
+.arch-mobile-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin: 0 0 2rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--arch-rule);
+}
+
+@media (min-width: 960px) {
+  .arch-mobile-nav {
+    display: none;
+  }
+}
+
+.arch-mobile-nav a {
+  font-family: var(--arch-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--arch-muted);
+  text-decoration: none;
+}
+
+.arch-mobile-nav a:hover {
+  color: var(--arch-accent);
+}
+
+.arch-context {
+  max-width: var(--arch-max);
+  margin-bottom: 1.5rem;
+}
+
+.arch-context p {
+  margin: 0;
+  color: var(--arch-muted);
+}
+
+.arch-diagram {
+  margin: 1.5rem 0 2.75rem;
+  padding: 1.25rem;
+  background: var(--arch-bg-elevated);
+  border: 1px solid var(--arch-rule);
+  border-radius: 4px;
+  overflow-x: auto;
+}
+
+.arch-diagram svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-width: 520px;
+}
+
+.arch-diagram-caption {
+  margin: 0.85rem 0 0;
+  font-size: 0.875rem;
+  color: var(--arch-faint);
+}
+
+.arch-decision {
+  padding: 2.5rem 0 1rem;
+  border-top: 1px solid var(--arch-rule);
+  opacity: 0;
+  transform: translateY(12px);
+  transition:
+    opacity 0.55s ease,
+    transform 0.55s ease;
+}
+
+.arch-decision.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.arch-decision-eyebrow {
+  font-family: var(--arch-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--arch-accent);
+  margin: 0 0 0.5rem;
+}
+
+.arch-decision h2 {
+  font-family: var(--arch-display);
+  font-weight: 600;
+  font-size: clamp(1.5rem, 3.5vw, 1.85rem);
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  margin: 0 0 1.5rem;
+  max-width: var(--arch-max);
+}
+
+.arch-block {
+  max-width: var(--arch-max);
+  margin-bottom: 1.35rem;
+}
+
+.arch-block h3 {
+  font-family: var(--arch-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--arch-faint);
+  margin: 0 0 0.45rem;
+}
+
+.arch-block p {
+  margin: 0;
+  color: var(--arch-ink);
+}
+
+.arch-block p + p {
+  margin-top: 0.75rem;
+}
+
+.arch-block ul {
+  margin: 0;
+  padding-left: 1.15rem;
+  color: var(--arch-ink);
+}
+
+.arch-block li {
+  margin-bottom: 0.45rem;
+}
+
+.arch-block li::marker {
+  color: var(--arch-accent);
+}
+
+.arch-field-note {
+  max-width: var(--arch-max);
+  margin: 1.5rem 0;
+  padding: 1rem 1.15rem;
+  background: var(--arch-accent-soft);
+  border-left: 3px solid var(--arch-accent);
+  border-radius: 0 4px 4px 0;
+}
+
+.arch-field-note strong {
+  display: block;
+  font-family: var(--arch-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--arch-accent);
+  margin-bottom: 0.35rem;
+}
+
+.arch-field-note p {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--arch-ink);
+}
+
+.arch-saga-beats {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: var(--arch-max);
+  margin: 1.5rem 0;
+}
+
+.arch-saga-beat {
+  padding-left: 1rem;
+  border-left: 2px solid var(--arch-rule);
+}
+
+.arch-saga-beat-tag {
+  font-family: var(--arch-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--arch-warn);
+  margin: 0 0 0.25rem;
+}
+
+.arch-saga-beat h4 {
+  font-family: var(--arch-display);
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 0 0 0.35rem;
+}
+
+.arch-saga-beat p {
+  margin: 0;
+  font-size: 0.98rem;
+  color: var(--arch-muted);
+}
+
+.arch-close {
+  margin-top: 2rem;
+  padding: 2.5rem 0 1rem;
+  border-top: 1px solid var(--arch-rule);
+  max-width: var(--arch-max);
+}
+
+.arch-close p {
+  margin: 0;
+  color: var(--arch-muted);
+  font-size: 1.05rem;
+}
+
+.arch-footer {
+  margin-top: 3rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--arch-rule);
+  font-family: var(--arch-mono);
+  font-size: 0.75rem;
+  color: var(--arch-faint);
+}
+
+code {
+  font-family: var(--arch-mono);
+  font-size: 0.88em;
+  color: var(--arch-accent);
+}
+
+/* Diagram draw-in */
+.arch-diagram.is-visible svg .arch-draw {
+  animation: arch-fade-in 0.7s ease both;
+}
+
+.arch-diagram.is-visible svg .arch-draw-delay-1 {
+  animation-delay: 0.12s;
+}
+
+.arch-diagram.is-visible svg .arch-draw-delay-2 {
+  animation-delay: 0.24s;
+}
+
+.arch-diagram.is-visible svg .arch-draw-delay-3 {
+  animation-delay: 0.36s;
+}
+
+@keyframes arch-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .arch-decision {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  .arch-diagram.is-visible svg .arch-draw {
+    animation: none;
+  }
+}

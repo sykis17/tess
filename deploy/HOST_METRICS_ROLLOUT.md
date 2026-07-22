@@ -1,14 +1,31 @@
 # Host metrics rollout (Hetzner + AWS + GCP)
 
-Commit `0615303` adds self-reported `cpu_percent` / `mem_percent` to **GET**
-`/health` on every Tess stack via `app/core/host_metrics.py` (psutil). There is
-no provider-specific code path — rollout is **deploy the same image everywhere**
-and verify the health contract.
+Commit `0615303` on **`main`** adds self-reported `cpu_percent` / `mem_percent` to
+**GET** `/health` on every Tess stack via `app/core/host_metrics.py` (psutil).
+There is no provider-specific code path — rollout is **deploy that commit to each
+server** and verify the health contract.
+
+## Code vs docs (branch workflow)
+
+| What | Where | Action |
+|------|-------|--------|
+| Host metrics collector + `/health` wiring | `main` (`0615303`) | **Deploy to servers** — `git pull origin main` on each host |
+| This rollout guide | `cursor/host-metrics-hetzner-aws-rollout` (draft PR #1) | **Review/merge via PR** — docs only, not required to deploy metrics |
+
+**Deploying already-merged `main` to servers is not the same as committing new code
+to `main`.** New application changes still go: feature branch → draft PR → merge →
+then `git pull origin main` on hosts. This rollout only pulls existing merged code.
 
 ## Prerequisites
 
 - `main` includes commit `0615303` or later (`psutil` in `requirements.txt`).
 - `./deploy/deploy.sh` rebuilds the `web` image (`pip install -r requirements.txt`).
+
+## Suggested order
+
+1. **Hetzner** (control plane, always on — lowest risk)
+2. **AWS** (wake → deploy → verify → optional sleep)
+3. **GCP** (wake → deploy → verify — partial validation may already exist)
 
 ## 1. Hetzner (control plane — always on)
 
@@ -16,7 +33,19 @@ SSH to the control plane:
 
 ```bash
 ssh root@5.78.186.223
-cd /opt/tess-engine
+```
+
+Confirm the clone path before `cd` (docs assume `/opt/tess-engine`):
+
+```bash
+ls -la /opt/tess-engine/.git 2>/dev/null && echo "OK: /opt/tess-engine" || echo "Not here — find your clone:"
+find /opt /root /home -maxdepth 3 -name tess-engine -type d 2>/dev/null
+```
+
+Then deploy from the confirmed path:
+
+```bash
+cd /opt/tess-engine   # adjust if your clone lives elsewhere
 git pull origin main
 chmod +x deploy/deploy.sh
 ./deploy/deploy.sh
@@ -59,11 +88,12 @@ $env:OPS_AWS_BASE_URL = "http://18.227.172.81"
 python scripts/aws_standby.py wake
 ```
 
-SSH and deploy:
+SSH and deploy (confirm clone path first, same as Hetzner):
 
 ```bash
 ssh -i ~/path/to/tess-aws-key.pem ubuntu@18.227.172.81
-cd /opt/tess-engine   # or your clone path
+ls -la /opt/tess-engine/.git 2>/dev/null || find /opt /home/ubuntu -maxdepth 3 -name tess-engine -type d 2>/dev/null
+cd /opt/tess-engine   # adjust if your clone lives elsewhere
 git pull origin main
 chmod +x deploy/deploy.sh
 ./deploy/deploy.sh
@@ -91,9 +121,10 @@ Stop AWS when done (optional):
 python scripts/aws_standby.py sleep
 ```
 
-## 3. GCP (standby — wake first)
+## 3. GCP (standby — wake first, do last)
 
-Same pattern as AWS:
+Same pattern as AWS. Partial validation may already exist from earlier GCP work;
+still worth a full deploy + verify after Hetzner and AWS are green.
 
 ```powershell
 $env:OPS_GCP_BASE_URL = "http://34.46.222.191"

@@ -16,6 +16,30 @@ from app.providers.cloud import get_adapter
 logger = logging.getLogger(__name__)
 
 
+def _as_percent(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _extract_percent(
+    body: dict[str, Any],
+    provider_metrics: dict[str, Any],
+    *,
+    keys: tuple[str, ...],
+) -> float | None:
+    """Prefer /health body fields; fall back to adapter provider_metrics."""
+    for key in keys:
+        pct = _as_percent(body.get(key))
+        if pct is not None:
+            return pct
+    for key in keys:
+        pct = _as_percent(provider_metrics.get(key))
+        if pct is not None:
+            return pct
+    return None
+
+
 def _chaos_penalty(provider: CloudProvider) -> float:
     if not provider.chaos.enabled or provider.chaos.kind == ChaosKind.NONE:
         return 0.0
@@ -114,13 +138,16 @@ async def probe_provider(
         last_error = str(exc)
         http_ok = False
 
-    cpu = provider_metrics.get("cpu_utilization")
-    mem = provider_metrics.get("mem_percent")
-    if isinstance(cpu, (int, float)):
-        cpu_percent = float(cpu)
-    else:
-        cpu_percent = None
-    mem_percent = float(mem) if isinstance(mem, (int, float)) else None
+    cpu_percent = _extract_percent(
+        body,
+        provider_metrics,
+        keys=("cpu_percent", "cpu_utilization"),
+    )
+    mem_percent = _extract_percent(
+        body,
+        provider_metrics,
+        keys=("mem_percent",),
+    )
 
     if provider.chaos.enabled and provider.chaos.kind == ChaosKind.REDIS_PARTITION:
         redis_ok = False

@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-import time
 from abc import ABC, abstractmethod
 from typing import Any
-from urllib.parse import urlparse
-
-import httpx
 
 from app.ops.models import CloudProvider, ProviderType
 
@@ -31,72 +27,6 @@ class CloudAdapter(ABC):
             "region": provider.region,
             "message": "endpoint registered" if ok else "missing base_url",
         }
-
-
-def _probe_http_health(
-    provider: CloudProvider,
-    *,
-    source: str,
-    timeout_seconds: float = 5.0,
-) -> dict[str, Any]:
-    """
-    HTTP /health probe for remote cloud adapters (latency + redis when present).
-
-    Used by GcpAdapter today; native Monitoring APIs remain deferred. Do not call
-    this from the local control-plane provider adapter — a sync self-GET can
-    deadlock a single uvicorn worker during /ops/probe.
-    """
-    base: dict[str, Any] = {
-        "source": source,
-        "available": bool(provider.base_url),
-        "region": provider.region,
-        "credentials_ref_configured": bool(provider.credentials_ref),
-        "http_ok": False,
-        "latency_ms": None,
-        "redis_ok": None,
-        "status": None,
-    }
-    if not provider.base_url:
-        base["note"] = "missing base_url; cannot probe /health"
-        return base
-
-    url = f"{provider.base_url.rstrip('/')}/health"
-    parsed = urlparse(provider.base_url)
-    verify = True
-    if parsed.scheme == "https" and parsed.hostname:
-        try:
-            import ipaddress
-
-            ipaddress.ip_address(parsed.hostname)
-            verify = False
-        except ValueError:
-            verify = True
-
-    start = time.perf_counter()
-    try:
-        with httpx.Client(timeout=timeout_seconds, verify=verify) as client:
-            response = client.get(url)
-        latency_ms = (time.perf_counter() - start) * 1000.0
-        base["latency_ms"] = round(latency_ms, 2)
-        base["http_ok"] = response.status_code == 200
-        if response.status_code != 200:
-            base["note"] = f"health returned http_{response.status_code}"
-            return base
-        try:
-            body = response.json()
-        except Exception:
-            body = {}
-        if isinstance(body, dict):
-            base["status"] = body.get("status")
-            redis_status = body.get("redis")
-            if redis_status is not None:
-                base["redis_ok"] = redis_status == "ok"
-        base["note"] = "HTTP /health probe; native cloud monitoring deferred"
-        return base
-    except Exception as exc:
-        base["latency_ms"] = round((time.perf_counter() - start) * 1000.0, 2)
-        base["note"] = f"health probe failed: {exc}"
-        return base
 
 
 class HetznerAdapter(CloudAdapter):
@@ -142,22 +72,22 @@ class GcpAdapter(CloudAdapter):
 
     def fetch_metrics(self, provider: CloudProvider) -> dict[str, Any]:
         """
-        Live HTTP /health + latency (+ redis when present) against the remote
-        GCP Tess stack. Safe because GCP is not the control-plane process.
+        Metadata only — control-plane prober owns /health (cpu/mem self-report).
 
-        GCP Monitoring API integration is deferred; stop/start uses Compute API
+        GCP Cloud Monitoring API remains deferred; stop/start uses Compute API
         from scripts/gcp_standby.py with the ops service account / ADC.
         """
-        metrics = _probe_http_health(provider, source="gcp_http_health")
-        metrics["region"] = provider.region or "us-central1"
-        metrics["cpu_utilization"] = None
-        metrics["instance_status"] = None
-        if metrics.get("http_ok"):
-            metrics["note"] = (
-                "HTTP /health probe; GCP Monitoring API deferred. "
+        return {
+            "source": "gcp_self_report",
+            "available": bool(provider.base_url),
+            "region": provider.region or "us-central1",
+            "credentials_ref_configured": bool(provider.credentials_ref),
+            "note": (
+                "Host cpu/mem from remote /health self-report; "
+                "GCP Monitoring API deferred. "
                 "Wake/sleep via scripts/gcp_standby.py (Compute stop/start)."
-            )
-        return metrics
+            ),
+        }
 
 
 class CustomerAdapter(CloudAdapter):

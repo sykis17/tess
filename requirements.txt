@@ -14,3 +14,4 @@ beautifulsoup4
 tavily-python
 pytest
 boto3
+psutil

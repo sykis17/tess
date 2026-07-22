@@ -23,6 +23,24 @@ Control plane ──probe──► Hetzner / AWS / GCP /customer /health
               ──failover──► update active_provider_id
 ```
 
+## `/health` contract
+
+Each Tess stack self-reports host load on **GET** `/health` (psutil). The
+control-plane prober uses these fields in the 0–100 health score alongside
+HTTP latency and Redis status.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `status` | string | `"ok"` when Redis is reachable |
+| `redis` | string | `"ok"` or absent on failure (503) |
+| `cpu_percent` | float | 0–100; optional if psutil unavailable |
+| `mem_percent` | float | 0–100; optional if psutil unavailable |
+| `network` | object | Optional `{bytes_sent, bytes_recv}` (display only; not scored) |
+
+**HEAD** `/health` stays empty-body and cheap (UptimeRobot). Cloud Monitoring /
+CloudWatch / Hetzner Cloud API pulls remain deferred; adapters return metadata
+only and the prober owns the single HTTP probe.
+
 ## Provider registry
 
 On startup the API bootstraps:
@@ -569,8 +587,9 @@ $env:OPS_SMOKE_STANDBY = "prov_gcp"
 python scripts/ops_failover_live_smoke.py
 ```
 
-`GcpAdapter` probes HTTP `/health` (+ latency / redis) for metrics; full GCP
-Monitoring API is deferred.
+Host metrics (CPU / memory) are self-reported in `/health` via psutil; the
+prober scores them on the same 30s cadence. `GcpAdapter` is metadata-only
+(no duplicate HTTP probe). GCP Cloud Monitoring API remains deferred.
 
 ## Simulate failover (manual curl)
 

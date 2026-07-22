@@ -53,6 +53,40 @@ def test_probe_http_ok() -> None:
     assert snap.score > 40
 
 
+def test_probe_reads_cpu_mem_from_health_body() -> None:
+    store = OpsStore()
+    provider = CloudProvider(
+        id="p_cpu",
+        type=ProviderType.GCP,
+        name="G",
+        base_url="http://g.example",
+    )
+    store.upsert_provider(provider)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "status": "ok",
+        "redis": "ok",
+        "cpu_percent": 96.0,
+        "mem_percent": 50.0,
+    }
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("app.ops.prober.httpx.AsyncClient", return_value=mock_client):
+        snap = asyncio.run(probe_provider(provider, store=store))
+
+    assert snap.cpu_percent == 96.0
+    assert snap.mem_percent == 50.0
+    # Base ~95 with redis, minus 20 for cpu>=95 → still healthy at default threshold
+    assert snap.score < 90.0
+    assert snap.healthy is True
+
+
 def test_probe_chaos_5xx() -> None:
     store = OpsStore()
     provider = CloudProvider(

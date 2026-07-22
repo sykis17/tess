@@ -1,6 +1,6 @@
 """Provider adapter + bootstrap tests."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from app.ops.bootstrap import bootstrap_ops_control_plane
 from app.ops.models import CloudProvider, ProviderType
@@ -23,7 +23,7 @@ def test_adapters_validate() -> None:
     assert metrics["source"] == "cloudwatch"
 
 
-def test_gcp_adapter_http_health_not_stub() -> None:
+def test_gcp_adapter_metadata_only() -> None:
     gcp = CloudProvider(
         id="g",
         type=ProviderType.GCP,
@@ -35,25 +35,13 @@ def test_gcp_adapter_http_health_not_stub() -> None:
     adapter = get_adapter(ProviderType.GCP)
     assert isinstance(adapter, GcpAdapter)
 
-    with patch("app.providers.cloud.httpx.Client") as client_cls:
-        client = MagicMock()
-        client_cls.return_value.__enter__.return_value = client
-        response = MagicMock()
-        response.status_code = 200
-        response.json.return_value = {"status": "ok", "redis": "ok"}
-        client.get.return_value = response
-        metrics = adapter.fetch_metrics(gcp)
+    metrics = adapter.fetch_metrics(gcp)
 
-    assert metrics["source"] == "gcp_http_health"
-    assert metrics["http_ok"] is True
-    assert metrics["redis_ok"] is True
-    assert metrics["status"] == "ok"
+    assert metrics["source"] == "gcp_self_report"
+    assert metrics["available"] is True
     assert metrics["region"] == "us-central1"
     assert metrics["credentials_ref_configured"] is True
-    assert isinstance(metrics["latency_ms"], float)
-    assert "Monitoring" in metrics["note"] or "deferred" in metrics["note"].lower()
-    client.get.assert_called_once()
-    assert client.get.call_args[0][0] == "http://gcp.example:8000/health"
+    assert "self-report" in metrics["note"].lower() or "health" in metrics["note"].lower()
 
 
 def test_gcp_adapter_missing_base_url() -> None:
@@ -65,26 +53,7 @@ def test_gcp_adapter_missing_base_url() -> None:
     )
     metrics = get_adapter(ProviderType.GCP).fetch_metrics(gcp)
     assert metrics["available"] is False
-    assert metrics["http_ok"] is False
-    assert "missing base_url" in metrics["note"]
-
-
-def test_gcp_adapter_health_failure() -> None:
-    gcp = CloudProvider(
-        id="g",
-        type=ProviderType.GCP,
-        name="GCP",
-        base_url="http://gcp.example",
-    )
-    with patch("app.providers.cloud.httpx.Client") as client_cls:
-        client = MagicMock()
-        client_cls.return_value.__enter__.return_value = client
-        client.get.side_effect = Exception("connection refused")
-        metrics = get_adapter(ProviderType.GCP).fetch_metrics(gcp)
-
-    assert metrics["http_ok"] is False
-    assert metrics["latency_ms"] is not None
-    assert "failed" in metrics["note"]
+    assert metrics["source"] == "gcp_self_report"
 
 
 def test_bootstrap_seeds_hetzner_and_cloud_env() -> None:

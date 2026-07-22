@@ -23,6 +23,22 @@ def test_score_http_fail() -> None:
     assert score <= 10.0
 
 
+def test_score_high_cpu_penalty() -> None:
+    base = compute_health_score(http_ok=True, latency_ms=50.0, redis_ok=True)
+    high = compute_health_score(
+        http_ok=True, latency_ms=50.0, redis_ok=True, cpu_percent=96.0
+    )
+    assert high == base - 20.0
+
+
+def test_score_high_mem_penalty() -> None:
+    base = compute_health_score(http_ok=True, latency_ms=50.0, redis_ok=True)
+    mid = compute_health_score(
+        http_ok=True, latency_ms=50.0, redis_ok=True, mem_percent=72.0
+    )
+    assert mid == base - 5.0
+
+
 def test_snapshot_is_healthy() -> None:
     snap = HealthSnapshot(
         provider_id="p1",

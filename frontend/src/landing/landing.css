@@ -1,0 +1,222 @@
+:root {
+  --land-bg: #0e0f10;
+  --land-bg-elevated: #151719;
+  --land-surface: #1b1e21;
+  --land-ink: #e8eaed;
+  --land-muted: #9aa0a6;
+  --land-faint: #6b7178;
+  --land-accent: #c4a574;
+  --land-accent-soft: rgba(196, 165, 116, 0.14);
+  --land-rule: #2a2e32;
+  --land-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --land-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --land-display: 'Space Grotesk', 'IBM Plex Sans', sans-serif;
+}
+
+.land-page {
+  position: relative;
+  min-height: 100vh;
+  overflow-x: clip;
+  background: var(--land-bg);
+  color: var(--land-ink);
+  font-family: var(--land-sans);
+  font-size: 1.0625rem;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+.land-page::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 80% 50% at 12% -8%, rgba(196, 165, 116, 0.09), transparent 55%),
+    radial-gradient(ellipse 55% 40% at 95% 15%, rgba(107, 159, 122, 0.05), transparent 50%),
+    linear-gradient(180deg, #121416 0%, var(--land-bg) 32%, var(--land-bg) 100%);
+}
+
+.land-shell {
+  position: relative;
+  z-index: 1;
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 0 1.25rem 4rem;
+}
+
+@media (min-width: 720px) {
+  .land-shell {
+    padding: 0 2rem 5rem;
+  }
+}
+
+.land-hero {
+  min-height: min(100vh, 42rem);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 3.5rem 0 2.5rem;
+}
+
+.land-brand {
+  font-family: var(--land-display);
+  font-weight: 700;
+  font-size: clamp(3rem, 10vw, 4.5rem);
+  letter-spacing: -0.03em;
+  line-height: 0.95;
+  margin: 0 0 1rem;
+}
+
+.land-kicker {
+  font-family: var(--land-mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--land-accent);
+  margin: 0 0 1.25rem;
+}
+
+.land-lede {
+  margin: 0 0 2rem;
+  font-size: 1.2rem;
+  line-height: 1.55;
+  color: var(--land-muted);
+  max-width: 32rem;
+}
+
+.land-cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  align-items: center;
+}
+
+.land-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.7rem 1.25rem;
+  font-family: var(--land-display);
+  font-weight: 600;
+  font-size: 1rem;
+  text-decoration: none;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.land-cta--primary {
+  background: var(--land-accent);
+  color: #121212;
+}
+
+.land-cta--primary:hover {
+  background: #d4b88a;
+  color: #121212;
+}
+
+.land-cta--ghost {
+  background: transparent;
+  color: var(--land-ink);
+  border-color: var(--land-rule);
+}
+
+.land-cta--ghost:hover {
+  border-color: var(--land-accent);
+  color: var(--land-accent);
+}
+
+.land-section {
+  padding: 2.5rem 0 0.5rem;
+  border-top: 1px solid var(--land-rule);
+}
+
+.land-section h2 {
+  font-family: var(--land-display);
+  font-weight: 600;
+  font-size: 1.35rem;
+  letter-spacing: -0.02em;
+  margin: 0 0 0.4rem;
+}
+
+.land-section-intro {
+  margin: 0 0 1.5rem;
+  color: var(--land-muted);
+  font-size: 0.98rem;
+}
+
+.land-links {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.land-links a {
+  display: block;
+  padding: 1rem 0;
+  text-decoration: none;
+  color: inherit;
+  border-bottom: 1px solid var(--land-rule);
+  transition: color 0.2s ease;
+}
+
+.land-links a:hover {
+  color: var(--land-accent);
+}
+
+.land-links a:hover .land-link-meta {
+  color: var(--land-muted);
+}
+
+.land-link-title {
+  font-family: var(--land-display);
+  font-weight: 600;
+  font-size: 1.05rem;
+  margin: 0 0 0.25rem;
+}
+
+.land-link-meta {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--land-faint);
+  transition: color 0.2s ease;
+}
+
+.land-arch-anchors {
+  list-style: none;
+  margin: 1.25rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.land-arch-anchors a {
+  font-family: var(--land-mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+  color: var(--land-muted);
+  text-decoration: none;
+  padding: 0.35rem 0;
+  border-bottom: none;
+}
+
+.land-arch-anchors a:hover {
+  color: var(--land-accent);
+}
+
+.land-footer {
+  margin-top: 3rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--land-rule);
+  font-family: var(--land-mono);
+  font-size: 0.75rem;
+  color: var(--land-faint);
+}

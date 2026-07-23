@@ -3,7 +3,13 @@ import { FailoverDiagram } from '../diagrams/FailoverDiagram'
 import { OverviewDiagram } from '../diagrams/OverviewDiagram'
 import { SagaDiagram } from '../diagrams/SagaDiagram'
 import { SelfReportDiagram } from '../diagrams/SelfReportDiagram'
-import { ArchBlock, DecisionSection, DiagramFrame, FieldNote } from '../DecisionSection'
+import {
+  ArchBlock,
+  DecisionSection,
+  DiagramFrame,
+  FieldNote,
+  LimitationNote,
+} from '../DecisionSection'
 
 export function ContextStrip() {
   return (
@@ -185,10 +191,10 @@ export function DecisionFailover() {
 
       <ArchBlock label="Consequences">
         <p>
-          Stable demos and a production posture with standbys stopped by default for cost.
-          Known footgun: if the prober’s hardcoded score floor and the routing policy’s{' '}
-          <code>min_score_for_healthy</code> diverge, behavior gets confusing — today both
-          sit at 40.
+          Stable demos and a production posture with standbys stopped by default for cost. The
+          score floor is a single value: routing policy{' '}
+          <code>min_score_for_healthy</code> (default 40). The prober marks a snapshot healthy
+          against that same policy field — failover and probing cannot drift apart.
         </p>
         <p>
           Honesty for readers: v1 still clears sessions on switch and publishes a provider
@@ -204,6 +210,28 @@ export function DecisionFailover() {
         </p>
       </FieldNote>
     </DecisionSection>
+  )
+}
+
+export function ControlPlaneLimitation() {
+  return (
+    <LimitationNote>
+      <p>
+        Standby health snapshots, routing state (<code>active_provider_id</code>,{' '}
+        <code>consecutive_failures</code> / successes), session assignments, and the ops event
+        log live in the control-plane process memory and, when{' '}
+        <code>OPS_PERSIST_ENABLED</code> is on, as a best-effort Redis snapshot under{' '}
+        <code>ops:control_plane</code> on the <em>same</em> host that runs the control plane
+        (today: Hetzner). That Redis is the app stack’s Redis — not a multi-region store.
+      </p>
+      <p>
+        v1 has no control-plane HA. App/stack failover is not control-plane failover: if the
+        Hetzner box disappears, the probing and routing brain goes with it. Standbys may still
+        be reachable on their own URLs, but nothing automatically re-homes the control plane or
+        preserves failure counters until an operator restores that host (or bootstraps a new
+        one). External uptime monitors can only tell you the box is gone.
+      </p>
+    </LimitationNote>
   )
 }
 

@@ -40,6 +40,15 @@ export function FieldNote({ children }: { children: ReactNode }) {
   )
 }
 
+export function LimitationNote({ children }: { children: ReactNode }) {
+  return (
+    <aside className="arch-limitation-note" id="known-limitation">
+      <strong>Known limitation</strong>
+      {children}
+    </aside>
+  )
+}
+
 export function DiagramFrame({
   caption,
   children,

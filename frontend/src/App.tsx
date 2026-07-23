@@ -83,12 +83,21 @@ function App() {
     <div className="app">
       <header className="app-header">
         <div className="app-header__title">
-          <h1>TESS Engine</h1>
+          <div className="app-header__brand-row">
+            <a className="app-header__home" href="/">
+              TESS
+            </a>
+            <h1>Engine</h1>
+          </div>
           <span className="app-header__session" title={sessionId}>
             Session: {truncateSessionId(sessionId)}
           </span>
         </div>
         <div className="app-header__controls">
+          <nav className="app-header__site-nav" aria-label="Site">
+            <a href="/architecture/">Architecture</a>
+            <a href="/ops-status/">Ops</a>
+          </nav>
           <ModeSelector value={selectedMode} onChange={setSelectedMode} />
           <ChainProfileSelector
             value={selectedChainProfile}

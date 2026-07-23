@@ -168,7 +168,9 @@ async def probe_provider(
         mem_percent=mem_percent,
         chaos_penalty=_chaos_penalty(provider),
     )
-    healthy = http_ok and score >= 40.0 and redis_ok is not False
+    # Single source of truth: RoutingPolicySettings.min_score_for_healthy
+    min_score = ops.get_policy().min_score_for_healthy
+    healthy = http_ok and score >= min_score and redis_ok is not False
 
     snapshot = HealthSnapshot(
         provider_id=provider.id,

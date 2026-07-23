@@ -102,3 +102,47 @@ def test_probe_chaos_5xx() -> None:
     snap = asyncio.run(probe_provider(provider, store=store))
     assert snap.healthy is False
     assert snap.last_error == "chaos_health_5xx"
+
+
+def test_probe_healthy_uses_policy_min_score() -> None:
+    """Prober score floor comes from routing policy, not a hardcoded constant."""
+    store = OpsStore()
+    provider = CloudProvider(
+        id="p_floor",
+        type=ProviderType.HETZNER,
+        name="H",
+        base_url="http://h.example",
+    )
+    store.upsert_provider(provider)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    # High CPU pulls score below a raised floor but above the default 40.
+    mock_response.json.return_value = {
+        "status": "ok",
+        "redis": "ok",
+        "cpu_percent": 96.0,
+        "mem_percent": 50.0,
+    }
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("app.ops.prober.httpx.AsyncClient", return_value=mock_client):
+        snap_default = asyncio.run(probe_provider(provider, store=store))
+
+    assert snap_default.score < 90.0
+    assert snap_default.healthy is True
+
+    policy = store.get_policy()
+    policy.min_score_for_healthy = 99.0
+    store.set_policy(policy)
+
+    with patch("app.ops.prober.httpx.AsyncClient", return_value=mock_client):
+        snap_raised = asyncio.run(probe_provider(provider, store=store))
+
+    assert snap_raised.score == snap_default.score
+    assert snap_raised.healthy is False
+    assert snap_raised.score < policy.min_score_for_healthy

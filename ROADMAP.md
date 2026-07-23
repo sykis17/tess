@@ -81,6 +81,12 @@ Post–Session 7 decisions:
 - **AWS sizing parked** — `t3.micro` + 1GB swap OK for control-plane smoke;
   resize only if AWS must stay active under real LangGraph/LLM load.
 
+**Next — Session 8:** Dual mode (two concurrent sticky chat homes: active +
+next-best; home loss clears failed home only) XOR Performance (score chase,
+anti-flap margin 10 / N=2; optional auto-wake). Shared Redis / seamless
+deferred to Session 9. See
+[MULTI_CLOUD_HARDENING_S8_OPENER.md](MULTI_CLOUD_HARDENING_S8_OPENER.md).
+
 See [MULTI_CLOUD_HARDENING_S7_OPENER.md](MULTI_CLOUD_HARDENING_S7_OPENER.md)
 (prior: [MULTI_CLOUD_HARDENING_S6_OPENER.md](MULTI_CLOUD_HARDENING_S6_OPENER.md),
 [MULTI_CLOUD_HARDENING_S5_OPENER.md](MULTI_CLOUD_HARDENING_S5_OPENER.md),

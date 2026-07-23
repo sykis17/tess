@@ -8,7 +8,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.ops.admin_auth import require_admin
-from app.ops.balancer import assign_session, seamless_migration_status
+from app.ops.balancer import assign_session, dual_home_ids, seamless_migration_status
 from app.ops.byo import register_customer_server
 from app.ops.chaos import clear_chaos, set_chaos
 from app.ops.comparison import run_comparison
@@ -24,10 +24,17 @@ from app.ops.models import (
     OpsEvent,
     ProviderCreate,
     ProviderUpdate,
+    RoutingPolicy,
     RoutingPolicySettings,
     new_id,
 )
 from app.ops.prober import probe_all_providers, probe_provider
+from app.ops.routing_modes import (
+    disable_dual,
+    disable_performance,
+    enable_dual,
+    enable_performance,
+)
 from app.ops.store import get_store, persist_store
 from app.providers.cloud import get_adapter
 
@@ -233,6 +240,7 @@ async def get_routing(_operator_id: AdminOperator) -> dict[str, Any]:
         if routing.active_provider_id
         else None
     )
+    homes = dual_home_ids(store) if policy.policy == RoutingPolicy.DUAL else []
     return {
         "routing": routing,
         "policy": policy,
@@ -241,6 +249,8 @@ async def get_routing(_operator_id: AdminOperator) -> dict[str, Any]:
             policy=policy.policy,
             base_url=active.base_url if active else None,
             ws_base_url=active.effective_ws_base_url() if active else None,
+            dual_peer_id=routing.dual_peer_id,
+            dual_homes=homes,
         ),
     }
 
@@ -251,6 +261,22 @@ async def put_routing_policy(
     operator_id: AdminOperator,
 ) -> RoutingPolicySettings:
     store = get_store()
+    # XOR: putting DUAL/PERFORMANCE via raw policy clears the other mode's fields
+    routing = store.get_routing()
+    if body.policy == RoutingPolicy.DUAL:
+        # Prefer dedicated POST /ops/routing/dual — but allow policy put if peer set
+        if not routing.dual_peer_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Use POST /ops/routing/dual to enable Dual (sets peer home)",
+            )
+    elif body.policy != RoutingPolicy.DUAL:
+        routing.dual_peer_id = None
+    if body.policy != RoutingPolicy.PERFORMANCE:
+        routing.performance_challenger_id = None
+        routing.performance_challenger_streak = 0
+        body = body.model_copy(update={"auto_wake": False})
+    store.set_routing(routing)
     store.set_policy(body)
     details = body.model_dump(mode="json")
     details["operator_id"] = operator_id
@@ -262,6 +288,146 @@ async def put_routing_policy(
     )
     persist_store()
     return body
+
+
+@router.post("/routing/dual")
+async def post_routing_dual(
+    operator_id: AdminOperator,
+    peer_id: str | None = None,
+) -> dict[str, Any]:
+    """Enable Dual mode (two concurrent chat homes). Clears Performance."""
+    try:
+        routing = enable_dual(operator_id=operator_id, peer_id=peer_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    store = get_store()
+    return {
+        "routing": routing,
+        "policy": store.get_policy(),
+        "dual_homes": dual_home_ids(store),
+    }
+
+
+@router.delete("/routing/dual")
+async def delete_routing_dual(operator_id: AdminOperator) -> dict[str, Any]:
+    """Exit Dual → active_only on current active."""
+    routing = disable_dual(operator_id=operator_id)
+    return {"routing": routing, "policy": get_store().get_policy()}
+
+
+@router.post("/routing/performance")
+async def post_routing_performance(
+    operator_id: AdminOperator,
+    auto_wake: bool = False,
+) -> dict[str, Any]:
+    """
+    Enable Performance mode (score chase). Clears Dual.
+
+    ``auto_wake=false`` (default): online-only — never starts stopped standbys.
+    ``auto_wake=true``: may enqueue Celery wake for offline AWS/GCP whose last
+    known score would beat the incumbent (requires cloud creds on the worker).
+    """
+    routing = enable_performance(operator_id=operator_id, auto_wake=auto_wake)
+    policy = get_store().get_policy()
+    return {
+        "routing": routing,
+        "policy": policy,
+        "auto_wake": policy.auto_wake,
+    }
+
+
+@router.delete("/routing/performance")
+async def delete_routing_performance(operator_id: AdminOperator) -> dict[str, Any]:
+    """Exit Performance → active_only frozen on current active; clears auto_wake."""
+    routing = disable_performance(operator_id=operator_id)
+    return {"routing": routing, "policy": get_store().get_policy()}
+
+
+@router.post("/providers/{provider_id}/wake")
+async def wake_provider(
+    provider_id: str,
+    operator_id: AdminOperator,
+) -> dict[str, Any]:
+    """Enqueue wake for an AWS/GCP standby (Celery → scripts/*_standby.py wake)."""
+    from app.ops.standby_power import (
+        enqueue_standby_wake,
+        is_standby_provider,
+        script_for_provider,
+    )
+
+    store = get_store()
+    provider = store.get_provider(provider_id)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="provider not found")
+    if not is_standby_provider(provider) or script_for_provider(provider) is None:
+        raise HTTPException(
+            status_code=400,
+            detail="only AWS/GCP standbys support wake",
+        )
+    task_id = enqueue_standby_wake(provider_id, operator_id=operator_id)
+    store.append_event(
+        OpsEvent(
+            event_type="standby_wake_enqueued",
+            provider_id=provider_id,
+            details={"task_id": task_id, "operator_id": operator_id},
+        )
+    )
+    persist_store()
+    return {
+        "status": "enqueued",
+        "provider_id": provider_id,
+        "task_id": task_id,
+        "message": "Wake started in background; watch /ops/events for standby_wake",
+    }
+
+
+@router.post("/providers/{provider_id}/sleep")
+async def sleep_provider(
+    provider_id: str,
+    operator_id: AdminOperator,
+) -> dict[str, Any]:
+    """Enqueue sleep/stop for an AWS/GCP standby (cost control)."""
+    from app.ops.standby_power import (
+        enqueue_standby_sleep,
+        is_standby_provider,
+        script_for_provider,
+    )
+
+    store = get_store()
+    provider = store.get_provider(provider_id)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="provider not found")
+    if not is_standby_provider(provider) or script_for_provider(provider) is None:
+        raise HTTPException(
+            status_code=400,
+            detail="only AWS/GCP standbys support sleep",
+        )
+    task_id = enqueue_standby_sleep(provider_id, operator_id=operator_id)
+    store.append_event(
+        OpsEvent(
+            event_type="standby_sleep_enqueued",
+            provider_id=provider_id,
+            details={"task_id": task_id, "operator_id": operator_id},
+        )
+    )
+    persist_store()
+    return {
+        "status": "enqueued",
+        "provider_id": provider_id,
+        "task_id": task_id,
+        "message": "Sleep started in background; watch /ops/events for standby_sleep",
+    }
+
+
+@router.post("/standbys/sleep-all")
+async def sleep_all_standbys(operator_id: AdminOperator) -> dict[str, Any]:
+    """
+    Resting cost posture: exit Dual/Performance, force Hetzner active, sleep
+    all AWS/GCP standbys. Use after demos so nothing is left burning cost.
+    """
+    from app.ops.standby_power import enqueue_sleep_all_standbys
+
+    return enqueue_sleep_all_standbys(operator_id=operator_id)
 
 
 @router.post("/routing/active/{provider_id}")

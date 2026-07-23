@@ -1,10 +1,11 @@
-"""Session assignment: share and performance-balance across providers."""
+"""Session assignment: share, balance, dual homes, and performance-balance."""
 
 from __future__ import annotations
 
 import hashlib
 
 from app.ops.models import (
+    HealthSnapshot,
     OpsEvent,
     RoutingPolicy,
     SeamlessMigrationStatus,
@@ -31,6 +32,86 @@ def list_healthy_provider_ids(store: OpsStore | None = None) -> list[str]:
         if snap.healthy and snap.score >= policy.min_score_for_healthy:
             healthy.append(provider.id)
     return healthy
+
+
+def dual_home_ids(store: OpsStore | None = None) -> list[str]:
+    """Return Dual chat homes (active + peer), filtered to non-empty unique ids."""
+    ops = store or get_store()
+    routing = ops.get_routing()
+    homes: list[str] = []
+    for pid in (routing.active_provider_id, routing.dual_peer_id):
+        if pid and pid not in homes:
+            homes.append(pid)
+    return homes
+
+
+def next_best_provider_id(
+    store: OpsStore | None = None,
+    *,
+    exclude: set[str] | None = None,
+) -> str | None:
+    """
+    Highest-score healthy online provider, excluding ``exclude``.
+
+    Online-only: requires a snapshot (never invents / wakes stopped standbys).
+    """
+    ops = store or get_store()
+    policy = ops.get_policy()
+    skip = exclude or set()
+    scored: list[tuple[float, float, str]] = []
+    for provider in ops.list_providers():
+        if not provider.enabled or provider.org_id:
+            continue
+        if provider.id in skip:
+            continue
+        snap = ops.latest_snapshot(provider.id)
+        if snap is None:
+            continue
+        if not snap.healthy or snap.score < policy.min_score_for_healthy:
+            continue
+        latency = snap.latency_ms if snap.latency_ms is not None else 1e9
+        scored.append((snap.score, -latency, provider.id))
+    if not scored:
+        return None
+    scored.sort(reverse=True)
+    return scored[0][2]
+
+
+def pick_best_provider_id(
+    store: OpsStore | None = None,
+    *,
+    snaps_by_id: dict[str, HealthSnapshot] | None = None,
+) -> str | None:
+    """Best healthy online provider by score (ties: lower latency, then id)."""
+    ops = store or get_store()
+    policy = ops.get_policy()
+    scored: list[tuple[float, float, str]] = []
+    for provider in ops.list_providers():
+        if not provider.enabled or provider.org_id:
+            continue
+        snap = (snaps_by_id or {}).get(provider.id) or ops.latest_snapshot(
+            provider.id
+        )
+        if snap is None:
+            continue
+        if not snap.healthy or snap.score < policy.min_score_for_healthy:
+            continue
+        latency = snap.latency_ms if snap.latency_ms is not None else 1e9
+        scored.append((snap.score, -latency, provider.id))
+    if not scored:
+        return None
+    scored.sort(reverse=True)
+    return scored[0][2]
+
+
+def challenger_beats_incumbent(
+    challenger_score: float,
+    incumbent_score: float,
+    *,
+    margin: float,
+) -> bool:
+    """Pure anti-flap gate: challenger must lead by at least ``margin``."""
+    return challenger_score >= incumbent_score + margin
 
 
 def assign_session(
@@ -87,7 +168,10 @@ def assign_session(
             provider_id = _pick(ops, session_id, customer_ids, policy.policy)
             return _finalize(provider_id)
 
-    if policy.preferred_provider_id:
+    if policy.preferred_provider_id and policy.policy not in (
+        RoutingPolicy.DUAL,
+        RoutingPolicy.PERFORMANCE,
+    ):
         pref = ops.get_provider(policy.preferred_provider_id)
         if pref and pref.enabled:
             snap = ops.latest_snapshot(pref.id)
@@ -96,7 +180,19 @@ def assign_session(
             ):
                 return _finalize(pref.id)
 
-    if policy.policy == RoutingPolicy.ACTIVE_ONLY:
+    if policy.policy == RoutingPolicy.DUAL:
+        homes = dual_home_ids(ops)
+        if len(homes) < 2:
+            # Degraded Dual — behave like active_only
+            provider_id = routing.active_provider_id or (
+                homes[0] if homes else None
+            )
+            if not provider_id:
+                raise RuntimeError("no provider available for dual assignment")
+            return _finalize(provider_id)
+        return _finalize(_pick(ops, session_id, homes, RoutingPolicy.SHARE))
+
+    if policy.policy in (RoutingPolicy.ACTIVE_ONLY, RoutingPolicy.PERFORMANCE):
         provider_id = routing.active_provider_id
         if not provider_id:
             healthy = list_healthy_provider_ids(ops)
@@ -125,7 +221,7 @@ def _pick(
     if len(provider_ids) == 1:
         return provider_ids[0]
 
-    if policy == RoutingPolicy.SHARE:
+    if policy in (RoutingPolicy.SHARE, RoutingPolicy.DUAL):
         # Stable hash stickiness + round-robin fallback diversity
         digest = int(hashlib.sha256(session_id.encode()).hexdigest(), 16)
         return provider_ids[digest % len(provider_ids)]
@@ -143,7 +239,7 @@ def _pick(
         digest = int(hashlib.sha256(session_id.encode()).hexdigest(), 16)
         return top[digest % len(top)][1]
 
-    # ACTIVE_ONLY or unknown
+    # ACTIVE_ONLY / PERFORMANCE / unknown
     return provider_ids[0]
 
 

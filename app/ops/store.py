@@ -19,7 +19,7 @@ from app.ops.models import (
     utc_now,
 )
 
-# OpsEvent is used by ensure_default_hetzner below.
+# OpsEvent imported above for ensure_default_hetzner.
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +159,18 @@ class OpsStore:
             count = len(self.assignments)
             self.assignments.clear()
             return count
+
+    def clear_assignments_for_provider(self, provider_id: str) -> int:
+        """Drop sticky sessions assigned to a single provider (Dual home loss)."""
+        with self._lock:
+            to_drop = [
+                sid
+                for sid, a in self.assignments.items()
+                if a.provider_id == provider_id
+            ]
+            for sid in to_drop:
+                del self.assignments[sid]
+            return len(to_drop)
 
     def get_assignment(self, session_id: str) -> SessionAssignment | None:
         with self._lock:

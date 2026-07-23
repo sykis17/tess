@@ -8,7 +8,9 @@ from app.ops.models import (
     HealthSnapshot,
     OpsEvent,
     ProviderChangedMessage,
+    RoutingPolicy,
     RoutingState,
+    utc_now,
 )
 from app.ops.notify import publish_provider_changed
 from app.ops.store import OpsStore, get_store, persist_store
@@ -26,6 +28,8 @@ def evaluate_failover(
 
     Failover v1 intentionally drops in-flight sessions — returns a
     ProviderChangedMessage when a switch occurs (caller notifies clients).
+
+    Dual / Performance modes are handled after counters update.
     """
     ops = store or get_store()
     policy = ops.get_policy()
@@ -65,6 +69,25 @@ def evaluate_failover(
         routing.consecutive_failures[pid] = failures
         routing.consecutive_successes[pid] = successes
 
+    ops.set_routing(routing)
+
+    # Dual: home-loss recompute (partial session drop)
+    if policy.policy == RoutingPolicy.DUAL:
+        from app.ops.routing_modes import evaluate_dual_homes
+
+        dual_msg = evaluate_dual_homes(snapshots, store=ops)
+        if dual_msg is not None:
+            return dual_msg
+        persist_store()
+        return None
+
+    # Performance: score chase with anti-flap (also covers unhealthy incumbent)
+    if policy.policy == RoutingPolicy.PERFORMANCE:
+        from app.ops.routing_modes import evaluate_performance_chase
+
+        return evaluate_performance_chase(snapshots, store=ops)
+
+    routing = ops.get_routing()
     active_id = routing.active_provider_id
     active_failures = (
         routing.consecutive_failures.get(active_id, 0) if active_id else 999
@@ -72,7 +95,7 @@ def evaluate_failover(
     needs_failover = active_id is None or active_failures >= policy.failure_threshold
 
     if not needs_failover:
-        # Failback: if preferred or previous standby is healthy enough, optional
+        # Failback: if preferred is healthy enough (ACTIVE_ONLY / SHARE / BALANCE)
         preferred = policy.preferred_provider_id
         if preferred and preferred != active_id:
             pref_ok = routing.consecutive_successes.get(preferred, 0)
@@ -125,6 +148,7 @@ def _switch(
     to_id: str,
     *,
     operator_id: str | None = None,
+    event_type: str = "failover",
 ) -> ProviderChangedMessage:
     dropped = ops.clear_assignments()
 
@@ -132,9 +156,12 @@ def _switch(
     routing.last_failover_to = to_id
     routing.active_provider_id = to_id
     routing.sessions_dropped_last = dropped
-    from app.ops.models import utc_now
-
     routing.last_failover_at = utc_now()
+    # Leaving Dual peer stale on full switch is wrong — clear unless Dual recompute
+    if ops.get_policy().policy != RoutingPolicy.DUAL:
+        routing.dual_peer_id = None
+    routing.performance_challenger_id = None
+    routing.performance_challenger_streak = 0
     ops.set_routing(routing)
 
     target = ops.get_provider(to_id)
@@ -154,7 +181,7 @@ def _switch(
         details["operator_id"] = operator_id
     ops.append_event(
         OpsEvent(
-            event_type="failover",
+            event_type=event_type,
             provider_id=to_id,
             details=details,
         )
@@ -179,10 +206,32 @@ def force_active_provider(
     if provider is None:
         raise ValueError(f"unknown provider: {provider_id}")
     routing = ops.get_routing()
-    return _switch(
+    policy = ops.get_policy()
+    # Force-active while Dual: keep Dual but re-pick peer relative to new active
+    msg = _switch(
         ops,
         routing,
         routing.active_provider_id,
         provider_id,
         operator_id=operator_id,
     )
+    if policy.policy == RoutingPolicy.DUAL:
+        from app.ops.balancer import next_best_provider_id
+
+        routing = ops.get_routing()
+        peer = next_best_provider_id(ops, exclude={provider_id})
+        routing.dual_peer_id = peer
+        ops.set_routing(routing)
+        if peer is None:
+            ops.set_policy(
+                policy.model_copy(update={"policy": RoutingPolicy.ACTIVE_ONLY})
+            )
+            ops.append_event(
+                OpsEvent(
+                    event_type="dual_degraded",
+                    provider_id=provider_id,
+                    details={"reason": "force_active_no_peer"},
+                )
+            )
+        persist_store()
+    return msg

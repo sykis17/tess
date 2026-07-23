@@ -328,14 +328,29 @@ def restore_store() -> bool:
         return False
 
 
-def ensure_default_hetzner(base_url: str, region: str | None = None) -> CloudProvider:
-    """Register the local/Hetzner stack as the first provider when missing."""
+def ensure_default_hetzner(
+    base_url: str,
+    region: str | None = None,
+    *,
+    ws_base_url: str | None = None,
+) -> CloudProvider:
+    """Register or refresh the local/Hetzner stack as the primary provider."""
     store = get_store()
     existing = [
         p for p in store.list_providers() if p.type == ProviderType.HETZNER
     ]
     if existing:
-        return existing[0]
+        provider = existing[0]
+        updates: dict[str, Any] = {}
+        if base_url and provider.base_url != base_url.rstrip("/"):
+            updates["base_url"] = base_url.rstrip("/")
+        if ws_base_url is not None:
+            updates["ws_base_url"] = ws_base_url.rstrip("/") if ws_base_url else None
+        if region and provider.region != region:
+            updates["region"] = region
+        if updates:
+            provider = store.upsert_provider(provider.model_copy(update=updates))
+        return provider
 
     provider = CloudProvider(
         id="prov_hetzner_local",
@@ -343,6 +358,7 @@ def ensure_default_hetzner(base_url: str, region: str | None = None) -> CloudPro
         name="Hetzner (primary)",
         base_url=base_url,
         region=region or "fsn1",
+        ws_base_url=ws_base_url.rstrip("/") if ws_base_url else None,
         tags=["primary", "local"],
     )
     store.upsert_provider(provider)

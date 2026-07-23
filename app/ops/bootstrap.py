@@ -24,6 +24,7 @@ def bootstrap_ops_control_plane() -> None:
     ensure_default_hetzner(
         settings.ops_local_base_url,
         region=settings.ops_hetzner_region,
+        ws_base_url=settings.ops_public_ws_base_url,
     )
 
     _ensure_cloud_from_env(

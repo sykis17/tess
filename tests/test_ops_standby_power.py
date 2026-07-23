@@ -2,12 +2,15 @@
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
+import subprocess
 
 import pytest
 
 from app.ops.models import (
     CloudProvider,
     HealthSnapshot,
+    PowerFailureClass,
+    PowerPhase,
     ProviderType,
     RoutingPolicy,
     RoutingPolicySettings,
@@ -15,13 +18,17 @@ from app.ops.models import (
 from app.ops.routing_modes import enable_performance
 from app.ops.standby_power import (
     AUTO_WAKE_INFLIGHT_TTL_S,
+    POWER_ACTION_SOFT_TIMEOUT_S,
+    classify_power_failure,
     clear_stale_auto_wake_inflight,
     enqueue_sleep_all_standbys,
+    expire_stale_power_actions,
+    mark_power_queued,
     maybe_enqueue_auto_wake,
     pick_auto_wake_candidate,
     power_action_for_provider,
 )
-from app.ops.store import OpsStore
+from app.ops.store import OpsStore, get_store
 
 
 @pytest.fixture(autouse=True)
@@ -261,6 +268,100 @@ def test_intentional_sleep_event_distinct_from_failure() -> None:
     assert "standby_sleep_intentional" in types
     assert "standby_sleep_failed" not in types
     assert "Intentional sleep" in (store.get_routing().auto_wake_last_decision or "")
+    assert store.get_routing().power_by_provider["aws"].phase == PowerPhase.IDLE
+
+
+def test_classify_power_failure_creds_and_timeout() -> None:
+    assert (
+        classify_power_failure(stderr="Unable to locate credentials")
+        == PowerFailureClass.CREDS
+    )
+    assert (
+        classify_power_failure(exc=subprocess.TimeoutExpired(cmd="x", timeout=1))
+        == PowerFailureClass.TIMEOUT
+    )
+    assert (
+        classify_power_failure(exc=FileNotFoundError("standby script not found: x"))
+        == PowerFailureClass.SCRIPT
+    )
+
+
+def test_power_action_always_emits_terminal_on_exception() -> None:
+    store = _fleet()
+    with patch(
+        "app.ops.standby_power.run_standby_script",
+        side_effect=FileNotFoundError("standby script not found: aws_standby.py"),
+    ), patch("app.ops.standby_power.get_store", return_value=store):
+        result = power_action_for_provider("aws", "wake", store=store)
+
+    assert result["ok"] is False
+    assert result["failure_class"] == "script"
+    assert any(e.event_type == "standby_wake_failed" for e in store.list_events())
+    power = store.get_routing().power_by_provider["aws"]
+    assert power.phase == PowerPhase.FAILED
+    assert power.failure_class == PowerFailureClass.SCRIPT
+
+
+def test_wake_success_probes_and_marks_healthy() -> None:
+    store = _fleet()
+    healthy = _snap("aws", healthy=True, score=88)
+
+    async def _fake_probe(provider, *, store=None, timeout_seconds=5.0):
+        store = store or get_store()
+        store.append_snapshot(healthy)
+        return healthy
+
+    with patch(
+        "app.ops.standby_power.run_standby_script",
+        return_value={
+            "ok": True,
+            "returncode": 0,
+            "stdout": "running",
+            "stderr": "",
+            "action": "wake",
+            "script": "aws_standby.py",
+        },
+    ), patch(
+        "app.ops.prober.probe_provider",
+        side_effect=_fake_probe,
+    ), patch("app.ops.standby_power.get_store", return_value=store):
+        result = power_action_for_provider("aws", "wake", store=store)
+
+    assert result["ok"] is True
+    assert result["post_wake_probe"]["healthy"] is True
+    assert any(e.event_type == "standby_wake" for e in store.list_events())
+    assert store.get_routing().power_by_provider["aws"].phase == PowerPhase.HEALTHY
+
+
+def test_expire_stale_power_actions_emits_terminal() -> None:
+    store = _fleet()
+    mark_power_queued("aws", "wake", task_id="t-1", store=store)
+    routing = store.get_routing()
+    status = routing.power_by_provider["aws"]
+    status.updated_at = datetime.now(timezone.utc) - timedelta(
+        seconds=POWER_ACTION_SOFT_TIMEOUT_S + 30
+    )
+    routing.power_by_provider["aws"] = status
+    store.set_routing(routing)
+
+    expired = expire_stale_power_actions(store)
+    assert expired == ["aws"]
+    power = store.get_routing().power_by_provider["aws"]
+    assert power.phase == PowerPhase.FAILED
+    assert power.failure_class == PowerFailureClass.TIMEOUT
+    assert any(
+        e.event_type == "standby_wake_failed"
+        and e.details.get("reason") == "power_action_soft_timeout"
+        for e in store.list_events()
+    )
+
+
+def test_mark_power_queued_sets_phase() -> None:
+    store = _fleet()
+    st = mark_power_queued("gcp", "wake", task_id="abc", store=store)
+    assert st.phase == PowerPhase.QUEUED
+    assert st.task_id == "abc"
+    assert store.get_routing().power_by_provider["gcp"].phase == PowerPhase.QUEUED
 
 
 def test_enable_performance_auto_wake_param() -> None:

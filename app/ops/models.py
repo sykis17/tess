@@ -35,6 +35,38 @@ class RoutingPolicy(str, Enum):
     PERFORMANCE = "performance"  # single active; score-chase with anti-flap
 
 
+class PowerPhase(str, Enum):
+    """Per-provider standby power lifecycle (ops-ui badges)."""
+
+    IDLE = "idle"
+    QUEUED = "queued"
+    WAKING = "waking"
+    SLEEPING = "sleeping"
+    HEALTHY = "healthy"
+    FAILED = "failed"
+
+
+class PowerFailureClass(str, Enum):
+    """Coarse wake/sleep failure class for trail + UI."""
+
+    CREDS = "creds"
+    SCRIPT = "script"
+    TIMEOUT = "timeout"
+    HEALTH = "health"
+    UNKNOWN = "unknown"
+
+
+class ProviderPowerStatus(BaseModel):
+    """Persisted power state for one AWS/GCP standby."""
+
+    phase: PowerPhase = PowerPhase.IDLE
+    action: str | None = None  # wake | sleep
+    task_id: str | None = None
+    last_error: str | None = None
+    failure_class: PowerFailureClass | None = None
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
 class ChaosKind(str, Enum):
     NONE = "none"
     HIGH_LATENCY = "high_latency"
@@ -176,6 +208,8 @@ class RoutingState(BaseModel):
     # Last decision trail line for ops-ui (also mirrored in /ops/events)
     auto_wake_last_decision: str | None = None
     auto_wake_last_decision_at: datetime | None = None
+    # provider_id -> wake/sleep lifecycle (queued → waking → healthy | failed)
+    power_by_provider: dict[str, ProviderPowerStatus] = Field(default_factory=dict)
 
 
 class SessionAssignment(BaseModel):

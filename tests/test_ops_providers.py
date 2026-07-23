@@ -62,6 +62,7 @@ def test_bootstrap_seeds_hetzner_and_cloud_env() -> None:
         with patch("app.ops.bootstrap.persist_store"):
             with patch("app.ops.bootstrap.settings") as mock_settings:
                 mock_settings.ops_local_base_url = "http://127.0.0.1:8000"
+                mock_settings.ops_public_ws_base_url = "ws://5.78.186.223"
                 mock_settings.ops_hetzner_region = "fsn1"
                 mock_settings.ops_aws_base_url = "http://aws.example:8000"
                 mock_settings.ops_aws_region = "us-east-1"
@@ -82,3 +83,5 @@ def test_bootstrap_seeds_hetzner_and_cloud_env() -> None:
     assert ProviderType.HETZNER in types
     assert ProviderType.AWS in types
     assert ProviderType.GCP in types
+    hetzner = next(p for p in store.list_providers() if p.type == ProviderType.HETZNER)
+    assert hetzner.ws_base_url == "ws://5.78.186.223"

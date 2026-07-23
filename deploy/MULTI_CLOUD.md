@@ -80,9 +80,46 @@ Control plane ──probe──► Hetzner / AWS / GCP /customer /health
 ### Celery worker credentials (easy to forget)
 
 Ops UI Wake / Performance auto-wake run as **Celery tasks on the worker host**,
-not inside FastAPI `web`. AWS/GCP credentials and `AWS_STANDBY_*` /
-`GCP_STANDBY_*` must live where the **Celery worker** runs. Moving workers
-without copying those secrets breaks wake/sleep while `/ops` still looks fine.
+not inside FastAPI `web`. **Enqueue ≠ EC2 started.** If the worker never runs
+the task, the trail can sit on `standby_wake_enqueued` until the soft timeout
+emits **Wake FAILED (timeout)**.
+
+#### Worker-creds checklist (Hetzner CP)
+
+On the **Celery worker** container/host (same place `ops_standby_wake` runs):
+
+| Check | Notes |
+|-------|--------|
+| AWS credentials | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` or instance role / profile |
+| `AWS_STANDBY_INSTANCE_ID` | Target EC2 standby |
+| `AWS_STANDBY_REGION` | e.g. `us-east-2` |
+| Optional AWS | `OPS_AWS_BASE_URL`, `OPS_ADMIN_TOKEN` (script health wait / patch) |
+| GCP ADC | `GOOGLE_APPLICATION_CREDENTIALS` or JSON-in-env |
+| `GCP_STANDBY_*` | `PROJECT_ID`, `ZONE`, `INSTANCE_NAME` (and siblings in `.env.example`) |
+| Script present | `scripts/aws_standby.py` / `scripts/gcp_standby.py` in worker image cwd |
+
+Laptop-only secrets that never reach the worker → `/ops` looks fine, Wake fails
+with `failure_class=creds` (or soft-timeout if the task never starts).
+
+Failure classes on trail / power badge: `creds` | `script` | `timeout` |
+`health` | `unknown`.
+
+### Demo script (Dual path)
+
+1. **Sleep all standbys** → intentional sleep in trail; Dual disabled/explained.
+2. **Wake AWS** → trail: Waking… → Wake OK (or Wake FAILED with class); row
+   badge `healthy` (or `failed`).
+3. **Enable Dual** when ≥2 healthy → Home A / Home B; open two chats.
+4. Optional: Performance + auto-wake within 1h of a healthy score.
+5. **Sleep all** → resting cost; clear chaos.
+
+### Standby power lifecycle (Session 9)
+
+Per-provider power state on routing: `idle → queued → waking|sleeping →
+healthy|failed|idle`. Ops UI shows row badges and polls after Wake until a
+terminal status. Soft timeout (~15 min) forces **Wake FAILED** if the worker
+never reports. Successful wake immediately probes `/health` so Dual’s ≥2
+healthy gate can pass without waiting for the next probe interval alone.
 
 ### Standby power (cost control)
 
@@ -807,6 +844,13 @@ Cloud credentials therefore belong on the Celery worker environment — not only
 on a laptop that talks to `/ops`, and not only on the FastAPI `web` container.
 
 ## Changelog notes
+
+**2026-07-23 (Session 9 wake truth + Dual demo UX)** — Per-provider power
+lifecycle (`queued` / `waking` / `healthy` / `failed`) with `failure_class`;
+always-terminal wake/sleep events + soft-timeout if Celery never finishes;
+post-wake probe for Dual gate; ops-ui badges + poll-until-terminal; Dual button
+disabled until ≥2 healthy online; `OPS_PUBLIC_WS_BASE_URL` to avoid advertising
+loopback WS. Shared Redis / seamless remains Track C → S10.
 
 **2026-07-23 (Session 8 Dual XOR Performance)** — `RoutingPolicy.DUAL` /
 `PERFORMANCE`; `POST/DELETE /ops/routing/dual` and `/ops/routing/performance`

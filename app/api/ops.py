@@ -8,7 +8,12 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.ops.admin_auth import require_admin
-from app.ops.balancer import assign_session, dual_home_ids, seamless_migration_status
+from app.ops.balancer import (
+    assign_session,
+    dual_home_ids,
+    list_online_healthy_provider_ids,
+    seamless_migration_status,
+)
 from app.ops.byo import register_customer_server
 from app.ops.chaos import clear_chaos, set_chaos
 from app.ops.comparison import run_comparison
@@ -232,7 +237,15 @@ async def get_routing_notice() -> dict[str, Any]:
 
 @router.get("/routing")
 async def get_routing(_operator_id: AdminOperator) -> dict[str, Any]:
+    from app.ops.standby_power import (
+        clear_stale_auto_wake_inflight,
+        expire_stale_power_actions,
+    )
+
     store = get_store()
+    # Soft-timeout stuck wakes so UI never sits forever on enqueue-only
+    clear_stale_auto_wake_inflight(store)
+    expire_stale_power_actions(store)
     routing = store.get_routing()
     policy = store.get_policy()
     active = (
@@ -241,6 +254,7 @@ async def get_routing(_operator_id: AdminOperator) -> dict[str, Any]:
         else None
     )
     homes = dual_home_ids(store) if policy.policy == RoutingPolicy.DUAL else []
+    healthy_online = list_online_healthy_provider_ids(store)
     return {
         "routing": routing,
         "policy": policy,
@@ -252,6 +266,12 @@ async def get_routing(_operator_id: AdminOperator) -> dict[str, Any]:
             dual_peer_id=routing.dual_peer_id,
             dual_homes=homes,
         ),
+        "healthy_online_ids": healthy_online,
+        "dual_ready": len(healthy_online) >= 2,
+        "power_by_provider": {
+            pid: status.model_dump(mode="json")
+            for pid, status in routing.power_by_provider.items()
+        },
     }
 
 
@@ -299,7 +319,13 @@ async def post_routing_dual(
     try:
         routing = enable_dual(operator_id=operator_id, peer_id=peer_id)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        detail = str(exc)
+        if "≥2 healthy" in detail or "not healthy" in detail:
+            detail = (
+                "Wake AWS or GCP first (need 2 healthy homes). "
+                + detail
+            )
+        raise HTTPException(status_code=400, detail=detail) from exc
     store = get_store()
     return {
         "routing": routing,
@@ -364,20 +390,30 @@ async def wake_provider(
             status_code=400,
             detail="only AWS/GCP standbys support wake",
         )
-    task_id = enqueue_standby_wake(provider_id, operator_id=operator_id)
-    store.append_event(
-        OpsEvent(
-            event_type="standby_wake_enqueued",
-            provider_id=provider_id,
-            details={"task_id": task_id, "operator_id": operator_id},
-        )
+    task_id = enqueue_standby_wake(
+        provider_id, operator_id=operator_id, store=store
     )
-    persist_store()
+    if task_id is not None:
+        store.append_event(
+            OpsEvent(
+                event_type="standby_wake_enqueued",
+                provider_id=provider_id,
+                details={"task_id": task_id, "operator_id": operator_id},
+            )
+        )
+        persist_store()
+    power = store.get_routing().power_by_provider.get(provider_id)
     return {
-        "status": "enqueued",
+        "status": "enqueued" if task_id else "completed_inline",
         "provider_id": provider_id,
         "task_id": task_id,
-        "message": "Wake started in background; watch /ops/events for standby_wake",
+        "power": power.model_dump(mode="json") if power else None,
+        "message": (
+            "Wake started in background; watch power badge / trail for "
+            "standby_wake or Wake FAILED (enqueue alone is not done)"
+            if task_id
+            else "Wake finished inline (no Celery); see trail for terminal status"
+        ),
     }
 
 
@@ -402,20 +438,30 @@ async def sleep_provider(
             status_code=400,
             detail="only AWS/GCP standbys support sleep",
         )
-    task_id = enqueue_standby_sleep(provider_id, operator_id=operator_id)
-    store.append_event(
-        OpsEvent(
-            event_type="standby_sleep_enqueued",
-            provider_id=provider_id,
-            details={"task_id": task_id, "operator_id": operator_id},
-        )
+    task_id = enqueue_standby_sleep(
+        provider_id, operator_id=operator_id, store=store
     )
-    persist_store()
+    if task_id is not None:
+        store.append_event(
+            OpsEvent(
+                event_type="standby_sleep_enqueued",
+                provider_id=provider_id,
+                details={"task_id": task_id, "operator_id": operator_id},
+            )
+        )
+        persist_store()
+    power = store.get_routing().power_by_provider.get(provider_id)
     return {
-        "status": "enqueued",
+        "status": "enqueued" if task_id else "completed_inline",
         "provider_id": provider_id,
         "task_id": task_id,
-        "message": "Sleep started in background; watch /ops/events for standby_sleep",
+        "power": power.model_dump(mode="json") if power else None,
+        "message": (
+            "Sleep started in background; watch trail for intentional sleep "
+            "or Sleep FAILED"
+            if task_id
+            else "Sleep finished inline (no Celery); see trail for terminal status"
+        ),
     }
 
 

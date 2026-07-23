@@ -99,6 +99,21 @@ class OpsStore:
                     return snap
             return None
 
+    def latest_healthy_snapshot(
+        self,
+        provider_id: str,
+        *,
+        min_score: float = 0.0,
+    ) -> HealthSnapshot | None:
+        """Most recent snapshot that was healthy and at/above ``min_score``."""
+        with self._lock:
+            for snap in reversed(self.snapshots):
+                if snap.provider_id != provider_id:
+                    continue
+                if snap.healthy and snap.score >= min_score:
+                    return snap
+            return None
+
     def list_snapshots(
         self,
         provider_id: str | None = None,

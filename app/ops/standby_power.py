@@ -255,16 +255,19 @@ def pick_auto_wake_candidate(
     margin: float,
 ) -> tuple[str | None, dict[str, Any]]:
     """
-    Choose an offline standby whose *fresh enough* last score beats incumbent + margin.
+    Choose an offline standby whose *last healthy* score (fresh enough) beats
+    incumbent + margin.
 
-    Returns (provider_id | None, decision_details).
-    Never wakes on missing/stale scores. Never picks Hetzner / customer / healthy.
-    One candidate only — caller holds inflight lock to prevent stampede.
+    After Sleep all, probes keep appending unhealthy low-score snaps. Auto-wake
+    therefore uses the most recent **healthy** snapshot within
+    ``auto_wake_max_score_age_s``, not the latest failed probe. Missing/stale
+    healthy history → refuse (no blind wake). One candidate only.
     """
     ops = store or get_store()
     policy = ops.get_policy()
     routing = ops.get_routing()
     max_age = policy.auto_wake_max_score_age_s
+    floor = policy.min_score_for_healthy
     now = utc_now()
     scored: list[tuple[float, str, dict[str, Any]]] = []
     skipped: list[dict[str, Any]] = []
@@ -279,30 +282,43 @@ def pick_auto_wake_candidate(
                 }
             )
             continue
-        snap = ops.latest_snapshot(provider.id)
-        if snap is not None and snap.healthy and snap.score >= policy.min_score_for_healthy:
+
+        latest = ops.latest_snapshot(provider.id)
+        if (
+            latest is not None
+            and latest.healthy
+            and latest.score >= floor
+        ):
             skipped.append({"provider_id": provider.id, "reason": "already_healthy"})
             continue
+
+        # Competitive history: last time this standby was actually healthy
+        snap = ops.latest_healthy_snapshot(provider.id, min_score=floor)
         if snap is None:
             skipped.append(
                 {
                     "provider_id": provider.id,
-                    "reason": "no_snapshot_refuse_blind_wake",
+                    "reason": "no_healthy_history_refuse_blind_wake",
+                    "latest_score": latest.score if latest else None,
+                    "latest_healthy": latest.healthy if latest else None,
                 }
             )
             continue
+
         age_s = (now - snap.checked_at).total_seconds()
         if age_s > max_age:
             skipped.append(
                 {
                     "provider_id": provider.id,
-                    "reason": "stale_score",
+                    "reason": "stale_healthy_score",
                     "age_s": round(age_s, 1),
                     "max_age_s": max_age,
-                    "last_score": snap.score,
+                    "last_healthy_score": snap.score,
+                    "hint": "Wake manually once to refresh score, then Sleep, then retry auto-wake within the age window",
                 }
             )
             continue
+
         eff_margin = _effective_margin(provider, margin)
         need = incumbent_score + eff_margin
         if snap.score < need:
@@ -310,13 +326,14 @@ def pick_auto_wake_candidate(
                 {
                     "provider_id": provider.id,
                     "reason": "margin_not_met",
-                    "last_score": snap.score,
+                    "last_healthy_score": snap.score,
                     "incumbent_score": incumbent_score,
                     "margin": eff_margin,
                     "need": need,
                 }
             )
             continue
+
         scored.append(
             (
                 snap.score,
@@ -328,16 +345,24 @@ def pick_auto_wake_candidate(
                     "delta": snap.score - incumbent_score,
                     "age_s": round(age_s, 1),
                     "checked_at": snap.checked_at.isoformat(),
+                    "score_source": "last_healthy_snapshot",
                 },
             )
         )
 
     if not scored:
+        # Human-readable trail line: why each standby was skipped
+        parts = [
+            f"{s['provider_id']}:{s['reason']}"
+            for s in skipped
+            if s.get("provider_id")
+        ]
+        detail = "; ".join(parts) if parts else "no standbys"
         return None, {
             "picked": None,
             "incumbent_score": incumbent_score,
             "skipped": skipped,
-            "reason": "no_fresh_candidate",
+            "reason": f"no_fresh_candidate ({detail})",
         }
 
     scored.sort(key=lambda x: x[0], reverse=True)
@@ -350,9 +375,10 @@ def pick_auto_wake_candidate(
         "delta": meta["delta"],
         "score_age_s": meta["age_s"],
         "checked_at": meta["checked_at"],
+        "score_source": meta["score_source"],
         "skipped": skipped,
         "reason": (
-            f"{best_id} last_score={best_score:.1f} beat active "
+            f"{best_id} last_healthy={best_score:.1f} beat active "
             f"{incumbent_score:.1f} by {meta['delta']:.1f} "
             f"(margin {meta['margin']:.1f}, age {meta['age_s']:.0f}s)"
         ),

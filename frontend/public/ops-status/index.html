@@ -176,7 +176,9 @@
           </div>
           <p>Active: <strong id="active-id">(none)</strong></p>
           <p class="ops-muted" id="policy-line"></p>
+          <p class="ops-muted" id="dual-homes-line"></p>
           <p class="ops-muted" id="active-ws"></p>
+          <p class="ops-muted" id="power-decision-line"></p>
           <p class="ops-muted" id="failover-line"></p>
         </section>
 
@@ -248,6 +250,8 @@
         dataSections: document.getElementById("data-sections"),
         activeId: document.getElementById("active-id"),
         policyLine: document.getElementById("policy-line"),
+        dualHomesLine: document.getElementById("dual-homes-line"),
+        powerDecisionLine: document.getElementById("power-decision-line"),
         activeWs: document.getElementById("active-ws"),
         failoverLine: document.getElementById("failover-line"),
         providerList: document.getElementById("provider-list"),
@@ -333,8 +337,9 @@
         }
       }
 
-      function renderProviders(providers, activeId) {
+      function renderProviders(providers, activeId, dualHomes) {
         els.providerList.innerHTML = "";
+        const homes = Array.isArray(dualHomes) ? dualHomes : [];
         if (!providers.length) {
           els.providerList.innerHTML =
             '<li class="ops-muted">No providers registered.</li>';
@@ -347,6 +352,8 @@
             p.simulate_unhealthy ||
             (p.chaos && p.chaos.enabled && p.chaos.kind === "mark_unhealthy");
           const chaosOn = p.chaos && p.chaos.enabled && p.chaos.kind !== "none";
+          const isHomeA = homes[0] === p.id;
+          const isHomeB = homes[1] === p.id;
           const left = document.createElement("div");
           left.innerHTML =
             "<strong>" +
@@ -355,6 +362,8 @@
             escapeHtml(p.id) +
             ")</span>" +
             (p.id === activeId ? '<span class="ops-badge">active</span>' : "") +
+            (isHomeA ? '<span class="ops-badge">Home A</span>' : "") +
+            (isHomeB ? '<span class="ops-badge">Home B</span>' : "") +
             (!p.enabled
               ? '<span class="ops-badge ops-badge-warn">disabled</span>'
               : "") +
@@ -458,11 +467,48 @@
         const policy = (routingPayload && routingPayload.policy) || {};
         const active = (routingPayload && routingPayload.active) || {};
         const activeId = routing.active_provider_id || active.active_provider_id;
+        const policyName = policy.policy || active.policy || "—";
+        const dualHomes =
+          active.dual_homes ||
+          (routing.dual_peer_id && activeId
+            ? [activeId, routing.dual_peer_id]
+            : []);
         els.activeId.textContent = activeId || "(none)";
         els.policyLine.textContent =
           "Policy: " +
-          (policy.policy || active.policy || "—") +
+          policyName +
           (policy.auto_failover === false ? " (auto-failover off)" : "");
+        if (policyName === "dual" && dualHomes.length) {
+          els.dualHomesLine.textContent =
+            "Dual homes: " + dualHomes.join(" · ");
+        } else if (policyName === "performance") {
+          const aw = policy.auto_wake ? " · auto-wake on" : " · online-only";
+          const inflight = routing.auto_wake_inflight_provider_id;
+          els.dualHomesLine.textContent =
+            "Performance: on — active=" +
+            (activeId || "(none)") +
+            aw +
+            (inflight ? " · waking " + inflight : "");
+        } else {
+          els.dualHomesLine.textContent = "";
+        }
+        const decision = routing.auto_wake_last_decision;
+        if (decision) {
+          const lower = String(decision).toLowerCase();
+          const isFail = lower.indexOf("failed") >= 0;
+          const isSleep =
+            lower.indexOf("intentional sleep") >= 0 ||
+            lower.indexOf("resting cost") >= 0;
+          els.powerDecisionLine.innerHTML =
+            (isFail
+              ? '<span class="ops-badge ops-badge-bad">Wake FAILED</span> '
+              : isSleep
+                ? '<span class="ops-badge ops-badge-ok">Intentional sleep</span> '
+                : '<span class="ops-badge">Power</span> ') +
+            escapeHtml(decision);
+        } else {
+          els.powerDecisionLine.textContent = "";
+        }
         els.activeWs.textContent = active.ws_base_url
           ? "WS: " + active.ws_base_url
           : "";
@@ -488,7 +534,7 @@
           );
         }
         els.failoverLine.textContent = parts.join(" · ");
-        return activeId;
+        return { activeId, dualHomes };
       }
 
       async function loadStatus() {
@@ -498,13 +544,14 @@
           opsFetch("/ops/health-logs?limit=100"),
           opsFetch("/ops/events?limit=50"),
         ]);
-        const activeId = renderRouting(routing);
-        renderProviders(providers, activeId);
+        const { activeId, dualHomes } = renderRouting(routing);
+        renderProviders(providers, activeId, dualHomes);
         renderHealth(providers, latestHealthByProvider(logs));
         renderEvents(events);
         els.dataSections.style.display = "block";
         return {
           active_provider_id: activeId,
+          dual_homes: dualHomes,
           providers: providers.length,
           events: Array.isArray(events) ? events.length : 0,
         };

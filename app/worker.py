@@ -50,6 +50,40 @@ def ops_probe_providers() -> dict[str, object]:
     }
 
 
+@celery_app.task(
+    name="ops_standby_wake",
+    soft_time_limit=700,
+    time_limit=720,
+)
+def ops_standby_wake(
+    provider_id: str,
+    operator_id: str | None = None,
+) -> dict[str, object]:
+    """Wake an AWS/GCP standby via scripts/*_standby.py (long-running)."""
+    from app.ops.standby_power import power_action_for_provider
+
+    return power_action_for_provider(
+        provider_id, "wake", operator_id=operator_id
+    )
+
+
+@celery_app.task(
+    name="ops_standby_sleep",
+    soft_time_limit=400,
+    time_limit=420,
+)
+def ops_standby_sleep(
+    provider_id: str,
+    operator_id: str | None = None,
+) -> dict[str, object]:
+    """Stop an AWS/GCP standby via scripts/*_standby.py."""
+    from app.ops.standby_power import power_action_for_provider
+
+    return power_action_for_provider(
+        provider_id, "sleep", operator_id=operator_id
+    )
+
+
 _REDUCER_KEYS = frozenset({
     "collected_data",
     "mayor_data",

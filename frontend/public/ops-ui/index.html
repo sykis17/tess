@@ -164,6 +164,7 @@
         <p class="ops-muted" id="policy-line"></p>
         <p class="ops-muted" id="dual-homes-line"></p>
         <p class="ops-muted" id="active-ws"></p>
+        <p class="ops-hint" id="dual-blocked-banner" hidden></p>
         <p id="last-decision" class="ops-decision is-neutral" hidden></p>
         <div class="ops-row">
           <button type="button" id="btn-offline">Take offline (active)</button>
@@ -186,12 +187,12 @@
           </button>
         </div>
         <p class="ops-hint">
-          Dual and Performance are mutually exclusive. Dual = two sticky chat homes
-          (active + next-best). Performance = chase best score among online providers.
+          Dual needs <strong>≥2 healthy online</strong> homes (Wake a standby first after
+          Sleep all). Dual and Performance are mutually exclusive.
           With <strong>auto-wake</strong> on, offline AWS/GCP may be started if their last
-          known score would beat the active (Celery + cloud creds required).
+          healthy score would beat the active (Celery worker + cloud creds required).
           Always use <strong>Sleep all standbys</strong> after demos to stop cost burn.
-          Session continuity still reconnects until shared Redis (S9).
+          Session continuity still reconnects until shared Redis (Track C / S10).
         </p>
       </section>
 
@@ -226,9 +227,14 @@
 
     <script>
       const TOKEN_KEY = "tess_ops_admin_token";
+      const POWER_POLL_MS = 2500;
+      const POWER_POLL_MAX_MS = 12 * 60 * 1000;
       let busy = false;
       let activeId = null;
       let dualHomes = [];
+      let dualReady = false;
+      let healthyOnlineIds = [];
+      let powerByProvider = {};
       let currentPolicy = "active_only";
       let providers = [];
 
@@ -240,6 +246,7 @@
         activeWs: document.getElementById("active-ws"),
         policyLine: document.getElementById("policy-line"),
         dualHomesLine: document.getElementById("dual-homes-line"),
+        dualBlocked: document.getElementById("dual-blocked-banner"),
         lastDecision: document.getElementById("last-decision"),
         autoWake: document.getElementById("chk-auto-wake"),
         providerList: document.getElementById("provider-list"),
@@ -250,10 +257,17 @@
         errorText: document.getElementById("error-text"),
         resultSection: document.getElementById("result-section"),
         resultText: document.getElementById("result-text"),
+        btnDual: document.getElementById("btn-dual"),
       };
 
       function getToken() {
         return (localStorage.getItem(TOKEN_KEY) || "").trim() || null;
+      }
+
+      function syncDualButton() {
+        if (!els.btnDual) return;
+        if (busy) return;
+        els.btnDual.disabled = currentPolicy !== "dual" && !dualReady;
       }
 
       function setBusy(next) {
@@ -262,6 +276,7 @@
           if (b.id === "btn-save-token" || b.id === "btn-clear-token") return;
           b.disabled = next;
         });
+        if (!next) syncDualButton();
       }
 
       function showError(msg) {
@@ -275,17 +290,87 @@
         els.resultSection.hidden = false;
       }
 
-      async function opsFetch(path, init) {
+      function powerBadgeHtml(pid) {
+        const st = powerByProvider[pid];
+        if (!st || !st.phase || st.phase === "idle") return "";
+        const phase = st.phase;
+        let cls = "ops-badge";
+        let label = phase;
+        if (phase === "queued" || phase === "waking") {
+          cls += " ops-badge-warn";
+          label = phase === "queued" ? "queued" : "waking";
+        } else if (phase === "sleeping") {
+          cls += " ops-badge-warn";
+          label = "sleeping";
+        } else if (phase === "healthy") {
+          cls += " ops-badge-ok";
+          label = "healthy";
+        } else if (phase === "failed") {
+          cls += " ops-badge-bad";
+          label =
+            "failed" +
+            (st.failure_class ? " (" + st.failure_class + ")" : "");
+        }
+        const title = st.last_error
+          ? String(st.last_error).replace(/"/g, "&quot;")
+          : "";
+        return (
+          '<span class="' +
+          cls +
+          '"' +
+          (title ? ' title="' + title + '"' : "") +
+          ">" +
+          label +
+          "</span>"
+        );
+      }
+
+      function isLoopbackWs(url) {
+        if (!url) return false;
+        return (
+          url.indexOf("127.0.0.1") >= 0 ||
+          url.indexOf("localhost") >= 0 ||
+          url.indexOf("[::1]") >= 0
+        );
+      }
+
+      function sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+      }
+
+      function isInFlightPower(phase) {
+        return phase === "queued" || phase === "waking" || phase === "sleeping";
+      }
+
+      async function pollPowerUntilTerminal(providerId) {
+        const started = Date.now();
+        while (Date.now() - started < POWER_POLL_MAX_MS) {
+          await sleep(POWER_POLL_MS);
+          await loadStatus();
+          const st = powerByProvider[providerId];
+          const phase = st && st.phase;
+          if (!isInFlightPower(phase)) {
+            return st;
+          }
+        }
+        return powerByProvider[providerId] || null;
+      }
+
+      async function opsFetch(path, options) {
         const token = getToken();
-        if (!token) throw new Error("No admin token set");
-        const response = await fetch(path, {
-          ...init,
-          headers: {
-            Authorization: "Bearer " + token,
-            Accept: "application/json",
-            ...(init && init.headers ? init.headers : {}),
-          },
+        if (!token) {
+          const err = new Error("Save an admin Bearer token first");
+          err.status = 401;
+          throw err;
+        }
+        const opts = options || {};
+        const headers = Object.assign({}, opts.headers || {}, {
+          Authorization: "Bearer " + token,
         });
+        if (opts.body && !headers["Content-Type"]) {
+          headers["Content-Type"] = "application/json";
+        }
+        const response = await fetch(path, Object.assign({}, opts, { headers }));
         if (!response.ok) {
           let detail = response.statusText || "Request failed";
           try {
@@ -297,6 +382,7 @@
           err.status = response.status;
           throw err;
         }
+        if (response.status === 204) return null;
         return response.json();
       }
 
@@ -311,6 +397,7 @@
           const isHomeA = dualHomes[0] === p.id;
           const isHomeB = dualHomes[1] === p.id;
           const isStandby = p.type === "aws" || p.type === "gcp";
+          const onlineHealthy = healthyOnlineIds.indexOf(p.id) >= 0;
           const left = document.createElement("div");
           left.innerHTML =
             "<strong>" +
@@ -321,6 +408,10 @@
             (p.id === activeId ? '<span class="ops-badge">active</span>' : "") +
             (isHomeA ? '<span class="ops-badge">Home A</span>' : "") +
             (isHomeB ? '<span class="ops-badge">Home B</span>' : "") +
+            (onlineHealthy
+              ? '<span class="ops-badge ops-badge-ok">online</span>'
+              : "") +
+            powerBadgeHtml(p.id) +
             (offline
               ? '<span class="ops-badge ops-badge-warn">simulated off</span>'
               : "");
@@ -334,7 +425,7 @@
             wakeBtn.textContent = "Wake";
             wakeBtn.disabled = busy;
             wakeBtn.addEventListener("click", () =>
-              runAction("Wake " + p.id, () =>
+              runPowerAction("Wake " + p.id, p.id, () =>
                 opsFetch("/ops/providers/" + encodeURIComponent(p.id) + "/wake", {
                   method: "POST",
                 }),
@@ -346,7 +437,7 @@
             sleepBtn.textContent = "Sleep";
             sleepBtn.disabled = busy;
             sleepBtn.addEventListener("click", () =>
-              runAction("Sleep " + p.id, () =>
+              runPowerAction("Sleep " + p.id, p.id, () =>
                 opsFetch("/ops/providers/" + encodeURIComponent(p.id) + "/sleep", {
                   method: "POST",
                 }),
@@ -379,11 +470,19 @@
           t.indexOf("wake_failed") >= 0 ||
           t === "auto_wake_failed_cooldown" ||
           t === "standby_wake_failed" ||
+          t === "standby_wake_health_failed" ||
           t === "standby_sleep_failed"
         ) {
+          const fc =
+            ev.details && ev.details.failure_class
+              ? " (" + ev.details.failure_class + ")"
+              : "";
           return {
             kind: "fail",
-            label: t === "standby_sleep_failed" ? "Sleep FAILED" : "Wake FAILED",
+            label:
+              t === "standby_sleep_failed"
+                ? "Sleep FAILED" + fc
+                : "Wake FAILED" + fc,
           };
         }
         if (
@@ -393,8 +492,17 @@
         ) {
           return { kind: "ok", label: "Intentional sleep" };
         }
+        if (t === "standby_wake_enqueued" || t === "standby_sleep_enqueued") {
+          return {
+            kind: "neutral",
+            label: t === "standby_wake_enqueued" ? "Waking…" : "Sleeping…",
+          };
+        }
         if (t === "standby_wake" || t === "auto_wake_requested") {
-          return { kind: "neutral", label: t === "standby_wake" ? "Wake OK" : "Auto-wake requested" };
+          return {
+            kind: t === "standby_wake" ? "ok" : "neutral",
+            label: t === "standby_wake" ? "Wake OK" : "Auto-wake requested",
+          };
         }
         if (t === "auto_wake_skipped" || t === "auto_wake_inflight_expired") {
           return { kind: "neutral", label: t.replace(/_/g, " ") };
@@ -463,7 +571,10 @@
                 ? "ops-badge ops-badge-ok"
                 : "ops-badge";
           const why =
-            (ev.details && (ev.details.reason || ev.details.note)) ||
+            (ev.details &&
+              (ev.details.reason ||
+                ev.details.note ||
+                ev.details.failure_class)) ||
             (ev.details && ev.details.delta != null
               ? "delta=" + ev.details.delta
               : "");
@@ -498,6 +609,14 @@
           (routing.routing && routing.routing.dual_peer_id
             ? [activeId, routing.routing.dual_peer_id].filter(Boolean)
             : []);
+        healthyOnlineIds = Array.isArray(routing.healthy_online_ids)
+          ? routing.healthy_online_ids
+          : [];
+        dualReady = !!routing.dual_ready || healthyOnlineIds.length >= 2;
+        powerByProvider =
+          routing.power_by_provider ||
+          (routing.routing && routing.routing.power_by_provider) ||
+          {};
         providers = list;
         els.activeId.textContent = activeId || "(none)";
         const autoWakeOn = !!(routing.policy && routing.policy.auto_wake);
@@ -505,7 +624,9 @@
         els.policyLine.textContent =
           "Policy: " +
           currentPolicy +
-          (autoWakeOn ? " · auto-wake on" : "");
+          (autoWakeOn ? " · auto-wake on" : "") +
+          " · healthy online: " +
+          healthyOnlineIds.length;
         if (currentPolicy === "dual" && dualHomes.length) {
           els.dualHomesLine.textContent =
             "Dual homes: " + dualHomes.join(" · ");
@@ -519,10 +640,30 @@
         } else {
           els.dualHomesLine.textContent = "";
         }
-        els.activeWs.textContent =
+        if (!dualReady && currentPolicy !== "dual") {
+          els.dualBlocked.hidden = false;
+          els.dualBlocked.textContent =
+            "Wake AWS or GCP first (need 2 healthy homes). Currently healthy: " +
+            (healthyOnlineIds.length
+              ? healthyOnlineIds.join(", ")
+              : "(none)");
+        } else {
+          els.dualBlocked.hidden = true;
+          els.dualBlocked.textContent = "";
+        }
+        syncDualButton();
+        const wsUrl =
           routing.active && routing.active.ws_base_url
-            ? "WS: " + routing.active.ws_base_url
+            ? routing.active.ws_base_url
             : "";
+        if (wsUrl && isLoopbackWs(wsUrl)) {
+          els.activeWs.textContent =
+            "WS: " +
+            wsUrl +
+            " — loopback (set OPS_PUBLIC_WS_BASE_URL / OPS_LOCAL_BASE_URL on CP)";
+        } else {
+          els.activeWs.textContent = wsUrl ? "WS: " + wsUrl : "";
+        }
         renderLastDecision(routing.routing || {});
         renderTrail(events);
         els.routing.style.display = "block";
@@ -533,6 +674,9 @@
           active_provider_id: activeId,
           policy: currentPolicy,
           dual_homes: dualHomes,
+          dual_ready: dualReady,
+          healthy_online_ids: healthyOnlineIds,
+          power_by_provider: powerByProvider,
           auto_wake: autoWakeOn,
           providers: providers.length,
         };
@@ -545,6 +689,31 @@
           const result = await action();
           showResult(label, result);
           await loadStatus();
+        } catch (err) {
+          showError(err && err.message ? err.message : String(err));
+          els.resultSection.hidden = true;
+          if (err && (err.status === 401 || err.status === 403)) {
+            localStorage.removeItem(TOKEN_KEY);
+            els.tokenInput.value = "";
+            els.routing.style.display = "none";
+            els.providers.style.display = "none";
+            els.trailSection.style.display = "none";
+          }
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function runPowerAction(label, providerId, action) {
+        setBusy(true);
+        showError("");
+        try {
+          const result = await action();
+          showResult(label, result);
+          await loadStatus();
+          if (result && result.status === "enqueued") {
+            await pollPowerUntilTerminal(providerId);
+          }
         } catch (err) {
           showError(err && err.message ? err.message : String(err));
           els.resultSection.hidden = true;

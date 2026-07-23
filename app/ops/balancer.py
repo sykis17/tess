@@ -34,6 +34,27 @@ def list_healthy_provider_ids(store: OpsStore | None = None) -> list[str]:
     return healthy
 
 
+def list_online_healthy_provider_ids(store: OpsStore | None = None) -> list[str]:
+    """
+    Providers with a healthy online snapshot (Dual enable gate).
+
+    Unlike ``list_healthy_provider_ids``, unprobed providers do **not** count —
+    matches ``next_best_provider_id`` / ``enable_dual`` requirements.
+    """
+    ops = store or get_store()
+    policy = ops.get_policy()
+    healthy: list[str] = []
+    for provider in ops.list_providers():
+        if not provider.enabled or provider.org_id:
+            continue
+        snap = ops.latest_snapshot(provider.id)
+        if snap is None:
+            continue
+        if snap.healthy and snap.score >= policy.min_score_for_healthy:
+            healthy.append(provider.id)
+    return healthy
+
+
 def dual_home_ids(store: OpsStore | None = None) -> list[str]:
     """Return Dual chat homes (active + peer), filtered to non-empty unique ids."""
     ops = store or get_store()

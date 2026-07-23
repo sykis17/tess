@@ -7,6 +7,7 @@ Celery (or admin API enqueue) — never block the FastAPI request thread on wake
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import subprocess
 import sys
@@ -14,7 +15,15 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from app.ops.models import CloudProvider, OpsEvent, ProviderType, utc_now
+from app.ops.models import (
+    CloudProvider,
+    OpsEvent,
+    PowerFailureClass,
+    PowerPhase,
+    ProviderPowerStatus,
+    ProviderType,
+    utc_now,
+)
 from app.ops.store import OpsStore, get_store, persist_store
 
 logger = logging.getLogger(__name__)
@@ -26,6 +35,25 @@ _GCP_SCRIPT = _REPO_ROOT / "scripts" / "gcp_standby.py"
 # Soft clear of inflight wake lock if the Celery task never reports back.
 # This is NOT an auto-sleep timer — running standbys stay up until Sleep / sleep-all.
 AUTO_WAKE_INFLIGHT_TTL_S = 15 * 60
+
+# Soft timeout for power lifecycle stuck in queued/waking/sleeping without a
+# terminal event (worker never picked up the task, or crashed before append).
+POWER_ACTION_SOFT_TIMEOUT_S = 15 * 60
+
+_CREDS_MARKERS = (
+    "unable to locate credentials",
+    "nocredentialserror",
+    "accessdenied",
+    "unauthorized",
+    "authentication failed",
+    "invalidclienttokenid",
+    "expiredtoken",
+    "could not load credentials",
+    "google.auth.exceptions",
+    "default credentials were not found",
+    "aws_access_key",
+    "credentials",
+)
 
 
 def script_for_provider(provider: CloudProvider) -> Path | None:
@@ -43,6 +71,83 @@ def is_standby_provider(provider: CloudProvider) -> bool:
 def list_standby_providers(store: OpsStore | None = None) -> list[CloudProvider]:
     ops = store or get_store()
     return [p for p in ops.list_providers() if is_standby_provider(p) and p.enabled]
+
+
+def classify_power_failure(
+    *,
+    stderr: str = "",
+    stdout: str = "",
+    returncode: int | None = None,
+    exc: BaseException | None = None,
+) -> PowerFailureClass:
+    """Map script/exception output to a coarse failure class for ops-ui."""
+    if isinstance(exc, FileNotFoundError):
+        return PowerFailureClass.SCRIPT
+    if isinstance(exc, subprocess.TimeoutExpired):
+        return PowerFailureClass.TIMEOUT
+    blob = f"{stderr}\n{stdout}\n{exc or ''}".lower()
+    if "timeout" in blob or returncode == -9:
+        return PowerFailureClass.TIMEOUT
+    if "not found" in blob and "script" in blob:
+        return PowerFailureClass.SCRIPT
+    if any(marker in blob for marker in _CREDS_MARKERS):
+        return PowerFailureClass.CREDS
+    return PowerFailureClass.UNKNOWN
+
+
+def set_provider_power_status(
+    provider_id: str,
+    *,
+    phase: PowerPhase,
+    action: str | None = None,
+    task_id: str | None = None,
+    last_error: str | None = None,
+    failure_class: PowerFailureClass | None = None,
+    store: OpsStore | None = None,
+    clear_error: bool = False,
+) -> ProviderPowerStatus:
+    """Persist per-provider power lifecycle for ops-ui badges."""
+    ops = store or get_store()
+    routing = ops.get_routing()
+    prev = routing.power_by_provider.get(provider_id)
+    if clear_error:
+        err = last_error
+        fclass = failure_class
+    else:
+        err = last_error if last_error is not None else (prev.last_error if prev else None)
+        fclass = (
+            failure_class
+            if failure_class is not None
+            else (prev.failure_class if prev else None)
+        )
+    status = ProviderPowerStatus(
+        phase=phase,
+        action=action if action is not None else (prev.action if prev else None),
+        task_id=task_id if task_id is not None else (prev.task_id if prev else None),
+        last_error=err,
+        failure_class=fclass,
+        updated_at=utc_now(),
+    )
+    routing.power_by_provider[provider_id] = status
+    ops.set_routing(routing)
+    return status
+
+
+def mark_power_queued(
+    provider_id: str,
+    action: str,
+    *,
+    task_id: str | None,
+    store: OpsStore | None = None,
+) -> ProviderPowerStatus:
+    return set_provider_power_status(
+        provider_id,
+        phase=PowerPhase.QUEUED,
+        action=action,
+        task_id=task_id,
+        store=store,
+        clear_error=True,
+    )
 
 
 def run_standby_script(
@@ -81,6 +186,30 @@ def run_standby_script(
     }
 
 
+def _force_probe_after_wake(
+    provider_id: str,
+    *,
+    store: OpsStore,
+) -> dict[str, Any]:
+    """Run an immediate /health probe so Dual's healthy gate can pass."""
+    from app.ops.prober import probe_provider
+
+    provider = store.get_provider(provider_id)
+    if provider is None:
+        return {"ok": False, "error": "provider_missing"}
+    try:
+        snap = asyncio.run(probe_provider(provider, store=store))
+    except Exception as exc:
+        logger.exception("post-wake probe failed for %s", provider_id)
+        return {"ok": False, "error": str(exc)}
+    return {
+        "ok": bool(snap.healthy),
+        "healthy": snap.healthy,
+        "score": snap.score,
+        "last_error": snap.last_error,
+    }
+
+
 def power_action_for_provider(
     provider_id: str,
     action: str,
@@ -89,7 +218,12 @@ def power_action_for_provider(
     operator_id: str | None = None,
     timeout_s: int = 600,
 ) -> dict[str, Any]:
-    """Synchronous wake/sleep for one provider (Celery worker entry)."""
+    """Synchronous wake/sleep for one provider (Celery worker entry).
+
+    Always emits a terminal ``standby_*`` / ``standby_*_failed`` event — even on
+    missing script, timeout, or unexpected exceptions — so the trail never stops
+    at ``*_enqueued`` alone.
+    """
     ops = store or get_store()
     provider = ops.get_provider(provider_id)
     if provider is None:
@@ -100,7 +234,52 @@ def power_action_for_provider(
             f"provider {provider_id} type={provider.type.value} is not a wakeable standby"
         )
 
-    result = run_standby_script(script, action, timeout_s=timeout_s)
+    running_phase = PowerPhase.WAKING if action == "wake" else PowerPhase.SLEEPING
+    set_provider_power_status(
+        provider_id,
+        phase=running_phase,
+        action=action,
+        store=ops,
+        clear_error=True,
+    )
+    persist_store()
+
+    failure_class: PowerFailureClass | None = None
+    caught_exc: BaseException | None = None
+    try:
+        result = run_standby_script(script, action, timeout_s=timeout_s)
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError, ValueError) as exc:
+        caught_exc = exc
+        failure_class = classify_power_failure(exc=exc)
+        result = {
+            "ok": False,
+            "returncode": -1,
+            "stdout": "",
+            "stderr": str(exc),
+            "action": action,
+            "script": script.name if script else "",
+        }
+    except Exception as exc:  # noqa: BLE001 — must always reach terminal event
+        caught_exc = exc
+        failure_class = PowerFailureClass.UNKNOWN
+        logger.exception("standby power action crashed: %s %s", action, provider_id)
+        result = {
+            "ok": False,
+            "returncode": -1,
+            "stdout": "",
+            "stderr": f"{type(exc).__name__}: {exc}",
+            "action": action,
+            "script": script.name if script else "",
+        }
+
+    if not result["ok"] and failure_class is None:
+        failure_class = classify_power_failure(
+            stderr=str(result.get("stderr") or ""),
+            stdout=str(result.get("stdout") or ""),
+            returncode=result.get("returncode"),
+            exc=caught_exc,
+        )
+
     details: dict[str, Any] = {
         "action": action,
         "ok": result["ok"],
@@ -108,6 +287,8 @@ def power_action_for_provider(
         "stdout_tail": result["stdout"][-500:] if result["stdout"] else "",
         "stderr_tail": result["stderr"][-500:] if result["stderr"] else "",
     }
+    if failure_class is not None:
+        details["failure_class"] = failure_class.value
     if operator_id:
         details["operator_id"] = operator_id
 
@@ -126,18 +307,77 @@ def power_action_for_provider(
         )
     )
 
+    probe_meta: dict[str, Any] | None = None
+    if action == "wake" and result["ok"]:
+        probe_meta = _force_probe_after_wake(provider_id, store=ops)
+        details["post_wake_probe"] = probe_meta
+        if not probe_meta.get("ok"):
+            failure_class = PowerFailureClass.HEALTH
+            err = probe_meta.get("error") or probe_meta.get("last_error") or "not healthy"
+            set_provider_power_status(
+                provider_id,
+                phase=PowerPhase.FAILED,
+                action=action,
+                last_error=f"wake script ok but /health not green: {err}",
+                failure_class=failure_class,
+                store=ops,
+                clear_error=True,
+            )
+            ops.append_event(
+                OpsEvent(
+                    event_type="standby_wake_health_failed",
+                    provider_id=provider_id,
+                    details={
+                        "failure_class": failure_class.value,
+                        "probe": probe_meta,
+                        "note": "EC2/GCP started but Dual gate still blocked until healthy",
+                    },
+                )
+            )
+        else:
+            set_provider_power_status(
+                provider_id,
+                phase=PowerPhase.HEALTHY,
+                action=action,
+                store=ops,
+                clear_error=True,
+            )
+    elif result["ok"] and action == "sleep":
+        set_provider_power_status(
+            provider_id,
+            phase=PowerPhase.IDLE,
+            action=action,
+            store=ops,
+            clear_error=True,
+        )
+    else:
+        err_tail = (result.get("stderr") or result.get("stdout") or "failed")[-300:]
+        set_provider_power_status(
+            provider_id,
+            phase=PowerPhase.FAILED,
+            action=action,
+            last_error=err_tail,
+            failure_class=failure_class or PowerFailureClass.UNKNOWN,
+            store=ops,
+            clear_error=True,
+        )
+
     routing = ops.get_routing()
     if action == "wake" and routing.auto_wake_inflight_provider_id == provider_id:
         # Always clear inflight on completion — success or failure (no stuck "waking")
         routing.auto_wake_inflight_provider_id = None
         routing.auto_wake_inflight_at = None
         routing.auto_wake_inflight_task_id = None
-        if not result["ok"]:
+        if not result["ok"] or (
+            probe_meta is not None and not probe_meta.get("ok")
+        ):
             policy = ops.get_policy()
             until = utc_now() + timedelta(seconds=policy.auto_wake_failure_cooldown_s)
             routing.auto_wake_cooldown_until[provider_id] = until
+            fc = (failure_class or PowerFailureClass.UNKNOWN).value
             decision = (
-                f"Wake FAILED for {provider_id} (rc={result['returncode']}); "
+                f"Wake FAILED for {provider_id} "
+                f"(class={fc}, rc={result['returncode']}); "
                 f"cooldown until {until.isoformat()}; "
                 "use Sleep all standbys to reset posture / clear stuck state"
             )
@@ -150,6 +390,7 @@ def power_action_for_provider(
                     details={
                         "cooldown_until": until.isoformat(),
                         "returncode": result["returncode"],
+                        "failure_class": fc,
                         "recovery": "POST /ops/standbys/sleep-all",
                         "severity": "wake_failed",
                     },
@@ -162,7 +403,9 @@ def power_action_for_provider(
             )
             routing.auto_wake_last_decision_at = utc_now()
         ops.set_routing(routing)
-    elif action == "wake" and not result["ok"]:
+    elif action == "wake" and (
+        not result["ok"] or (probe_meta is not None and not probe_meta.get("ok"))
+    ):
         # Manual wake failure (not necessarily inflight auto-wake)
         policy = ops.get_policy()
         until = utc_now() + timedelta(seconds=policy.auto_wake_failure_cooldown_s)
@@ -171,9 +414,10 @@ def power_action_for_provider(
             routing.auto_wake_inflight_provider_id = None
             routing.auto_wake_inflight_at = None
             routing.auto_wake_inflight_task_id = None
+        fc = (failure_class or PowerFailureClass.UNKNOWN).value
         routing.auto_wake_last_decision = (
-            f"Wake FAILED for {provider_id} (rc={result['returncode']}) — "
-            "not an intentional sleep"
+            f"Wake FAILED for {provider_id} (class={fc}, "
+            f"rc={result['returncode']}) — not an intentional sleep"
         )
         routing.auto_wake_last_decision_at = utc_now()
         ops.set_routing(routing)
@@ -189,15 +433,22 @@ def power_action_for_provider(
             )
             routing.auto_wake_last_decision_at = utc_now()
         else:
+            fc = (failure_class or PowerFailureClass.UNKNOWN).value
             routing.auto_wake_last_decision = (
-                f"Sleep FAILED for {provider_id} (rc={result['returncode']}) — "
+                f"Sleep FAILED for {provider_id} (class={fc}, "
+                f"rc={result['returncode']}) — "
                 "box may still be running; retry Sleep or Sleep all"
             )
             routing.auto_wake_last_decision_at = utc_now()
         ops.set_routing(routing)
 
     persist_store()
-    return {"provider_id": provider_id, **result}
+    out: dict[str, Any] = {"provider_id": provider_id, **result}
+    if failure_class is not None:
+        out["failure_class"] = failure_class.value
+    if probe_meta is not None:
+        out["post_wake_probe"] = probe_meta
+    return out
 
 
 def clear_stale_auto_wake_inflight(store: OpsStore | None = None) -> bool:
@@ -231,8 +482,88 @@ def clear_stale_auto_wake_inflight(store: OpsStore | None = None) -> bool:
     )
     routing.auto_wake_last_decision_at = utc_now()
     ops.set_routing(routing)
+    # Also mark power lifecycle failed so UI leaves "queued/waking"
+    set_provider_power_status(
+        pid,
+        phase=PowerPhase.FAILED,
+        last_error=f"inflight wake lock expired after {int(age)}s (worker never finished)",
+        failure_class=PowerFailureClass.TIMEOUT,
+        store=ops,
+        clear_error=True,
+    )
     persist_store()
     return True
+
+
+def expire_stale_power_actions(store: OpsStore | None = None) -> list[str]:
+    """
+    Terminal-fail power rows stuck in queued/waking/sleeping past soft timeout.
+
+    Covers the case where Celery never consumes the task (trail would otherwise
+    sit forever on ``standby_wake_enqueued``).
+    """
+    ops = store or get_store()
+    routing = ops.get_routing()
+    now = utc_now()
+    expired: list[str] = []
+    for pid, status in list(routing.power_by_provider.items()):
+        if status.phase not in (
+            PowerPhase.QUEUED,
+            PowerPhase.WAKING,
+            PowerPhase.SLEEPING,
+        ):
+            continue
+        age = (now - status.updated_at).total_seconds()
+        if age < POWER_ACTION_SOFT_TIMEOUT_S:
+            continue
+        action = status.action or "wake"
+        set_provider_power_status(
+            pid,
+            phase=PowerPhase.FAILED,
+            action=action,
+            last_error=(
+                f"{action} soft-timeout after {int(age)}s — "
+                "worker never reported terminal status (check Celery + worker creds)"
+            ),
+            failure_class=PowerFailureClass.TIMEOUT,
+            store=ops,
+            clear_error=True,
+        )
+        event_type = (
+            f"standby_{action}_failed"
+            if action in ("wake", "sleep")
+            else "standby_wake_failed"
+        )
+        ops.append_event(
+            OpsEvent(
+                event_type=event_type,
+                provider_id=pid,
+                details={
+                    "failure_class": PowerFailureClass.TIMEOUT.value,
+                    "age_s": age,
+                    "ttl_s": POWER_ACTION_SOFT_TIMEOUT_S,
+                    "reason": "power_action_soft_timeout",
+                    "note": "Enqueue alone is not completion — worker must finish",
+                    "recovery": "Verify Celery worker + AWS/GCP creds; Sleep all to reset",
+                },
+            )
+        )
+        if action == "wake":
+            routing = ops.get_routing()
+            routing.auto_wake_last_decision = (
+                f"Wake FAILED for {pid} (class=timeout) — soft-timeout, "
+                "worker never finished"
+            )
+            routing.auto_wake_last_decision_at = utc_now()
+            if routing.auto_wake_inflight_provider_id == pid:
+                routing.auto_wake_inflight_provider_id = None
+                routing.auto_wake_inflight_at = None
+                routing.auto_wake_inflight_task_id = None
+            ops.set_routing(routing)
+        expired.append(pid)
+    if expired:
+        persist_store()
+    return expired
 
 
 def _effective_margin(provider: CloudProvider, global_margin: float) -> float:
@@ -448,17 +779,22 @@ def enqueue_standby_wake(
     provider_id: str,
     *,
     operator_id: str | None = None,
+    store: OpsStore | None = None,
 ) -> str | None:
     """Fire Celery task; return task id (or None if sync fallback used)."""
+    ops = store or get_store()
     try:
         from app.worker import ops_standby_wake
 
         async_result = ops_standby_wake.delay(provider_id, operator_id=operator_id)
-        return str(async_result.id)
+        task_id = str(async_result.id)
+        mark_power_queued(provider_id, "wake", task_id=task_id, store=ops)
+        persist_store()
+        return task_id
     except Exception:
         logger.exception("enqueue wake failed; running inline (tests/dev)")
         power_action_for_provider(
-            provider_id, "wake", operator_id=operator_id
+            provider_id, "wake", operator_id=operator_id, store=ops
         )
         return None
 
@@ -467,16 +803,21 @@ def enqueue_standby_sleep(
     provider_id: str,
     *,
     operator_id: str | None = None,
+    store: OpsStore | None = None,
 ) -> str | None:
+    ops = store or get_store()
     try:
         from app.worker import ops_standby_sleep
 
         async_result = ops_standby_sleep.delay(provider_id, operator_id=operator_id)
-        return str(async_result.id)
+        task_id = str(async_result.id)
+        mark_power_queued(provider_id, "sleep", task_id=task_id, store=ops)
+        persist_store()
+        return task_id
     except Exception:
         logger.exception("enqueue sleep failed; running inline (tests/dev)")
         power_action_for_provider(
-            provider_id, "sleep", operator_id=operator_id
+            provider_id, "sleep", operator_id=operator_id, store=ops
         )
         return None
 

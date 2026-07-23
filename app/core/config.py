@@ -34,6 +34,10 @@ class Settings(BaseSettings):
 
     # Multi-cloud ops control plane
     ops_local_base_url: str = "http://127.0.0.1:8000"
+    # Public WS for chat clients (ops-ui). When unset, derived from ops_local_base_url.
+    # Set on Hetzner CP to the public host (e.g. wss://tess.example or ws://5.78.x.x)
+    # so ops-ui does not advertise loopback mid-demo.
+    ops_public_ws_base_url: str | None = None
     ops_hetzner_region: str = "fsn1"
     ops_aws_base_url: str | None = None
     ops_aws_region: str = "us-east-1"

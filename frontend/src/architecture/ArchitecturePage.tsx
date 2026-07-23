@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   ContextStrip,
+  ControlPlaneLimitation,
   DecisionAdapters,
   DecisionFailover,
   DecisionOnboarding,
@@ -93,6 +94,12 @@ export function ArchitecturePage() {
         </aside>
 
         <main className="arch-main">
+          <nav className="arch-topnav" aria-label="Site">
+            <a href="/">Home</a>
+            <a href="/chat">Chat</a>
+            <a href="/ops-status/">Ops status</a>
+          </nav>
+
           <header className="arch-hero">
             <p className="arch-brand">TESS</p>
             <p className="arch-hero-kicker">Architecture notes</p>
@@ -115,6 +122,7 @@ export function ArchitecturePage() {
           <DecisionAdapters />
           <DecisionFailover />
           <DecisionOnboarding />
+          <ControlPlaneLimitation />
 
           <section className="arch-close" aria-label="Closing">
             <p>
@@ -125,7 +133,9 @@ export function ArchitecturePage() {
           </section>
 
           <footer className="arch-footer">
-            TESS Engine · architecture explainer · public
+            <a href="/">TESS Engine</a>
+            {' · '}
+            architecture explainer · public
           </footer>
         </main>
       </div>

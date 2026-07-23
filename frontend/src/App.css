@@ -246,9 +246,44 @@
   border-bottom: 1px solid #333;
 }
 
+.app-header__brand-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.app-header__home {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #c4a574;
+  text-decoration: none;
+  letter-spacing: -0.02em;
+}
+
+.app-header__home:hover {
+  color: #d4b88a;
+}
+
 .app-header__title h1 {
   margin: 0;
   font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.app-header__site-nav {
+  display: flex;
+  gap: 0.85rem;
+  margin-right: 0.35rem;
+}
+
+.app-header__site-nav a {
+  font-size: 0.85rem;
+  color: #9aa0a6;
+  text-decoration: none;
+}
+
+.app-header__site-nav a:hover {
+  color: #c4a574;
 }
 
 .app-header__session {

@@ -203,10 +203,11 @@
       <section class="ops-card" id="trail-section">
         <h2>Auto-wake / power trail</h2>
         <p class="ops-hint">
-          Mid-demo glance: <span class="ops-badge ops-badge-bad">Wake FAILED</span>
+          <span class="ops-badge ops-badge-bad">Wake FAILED</span>
           is not the same as
           <span class="ops-badge ops-badge-ok">intentional sleep</span>
-          (resting cost).
+          (resting cost). Auto-wake uses each standby’s <em>last healthy</em>
+          score within 1h — not the latest failed probe after Sleep.
         </p>
         <ul class="ops-trail-list" id="trail-list"></ul>
         <p class="ops-muted" id="trail-empty" hidden>No recent wake/sleep events.</p>

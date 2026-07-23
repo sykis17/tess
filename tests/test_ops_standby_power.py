@@ -71,8 +71,12 @@ def _fleet() -> OpsStore:
     store.upsert_provider(_prov("aws", ProviderType.AWS))
     store.upsert_provider(_prov("gcp", ProviderType.GCP))
     store.append_snapshot(_snap("hetz", healthy=True, score=70))
-    store.append_snapshot(_snap("aws", healthy=False, score=95))
-    store.append_snapshot(_snap("gcp", healthy=False, score=50))
+    # Last competitive healthy scores (what auto-wake should use)
+    store.append_snapshot(_snap("aws", healthy=True, score=95))
+    store.append_snapshot(_snap("gcp", healthy=True, score=50))
+    # Later failed probes after sleep must not erase competitive history
+    store.append_snapshot(_snap("aws", healthy=False, score=0))
+    store.append_snapshot(_snap("gcp", healthy=False, score=0))
     store.routing.active_provider_id = "hetz"
     return store
 
@@ -81,6 +85,16 @@ def test_pick_auto_wake_candidate_prefers_higher_last_score() -> None:
     store = _fleet()
     pid, details = pick_auto_wake_candidate(store, incumbent_score=70, margin=10)
     assert pid == "aws"
+    assert details["score_source"] == "last_healthy_snapshot"
+
+
+def test_pick_uses_last_healthy_not_latest_failed_probe() -> None:
+    """Sleep all → failed probes; auto-wake still sees last healthy score."""
+    store = _fleet()
+    # Latest aws is unhealthy 0; last healthy 95 should still win
+    pid, details = pick_auto_wake_candidate(store, incumbent_score=70, margin=10)
+    assert pid == "aws"
+    assert details["challenger_score"] == 95.0
     assert details["picked"] == "aws"
     assert details["delta"] == pytest.approx(25.0)
 
@@ -90,7 +104,8 @@ def test_pick_auto_wake_skips_when_margin_not_met() -> None:
     store.append_snapshot(_snap("hetz", healthy=True, score=90))
     pid, details = pick_auto_wake_candidate(store, incumbent_score=90, margin=10)
     assert pid is None
-    assert details["reason"] == "no_fresh_candidate"
+    assert details["reason"].startswith("no_fresh_candidate")
+    assert any(s.get("reason") == "margin_not_met" for s in details["skipped"])
 
 
 def test_pick_skips_already_healthy_standby() -> None:
@@ -101,26 +116,34 @@ def test_pick_skips_already_healthy_standby() -> None:
 
 
 def test_pick_refuses_stale_score() -> None:
-    store = _fleet()
+    store = OpsStore()
+    store.upsert_provider(_prov("hetz", ProviderType.HETZNER))
+    store.upsert_provider(_prov("aws", ProviderType.AWS))
+    store.append_snapshot(_snap("hetz", healthy=True, score=70))
     stale = datetime.now(timezone.utc) - timedelta(hours=5)
-    store.append_snapshot(_snap("aws", healthy=False, score=99, checked_at=stale))
+    store.append_snapshot(
+        _snap("aws", healthy=True, score=99, checked_at=stale)
+    )
+    store.append_snapshot(_snap("aws", healthy=False, score=0))  # recent fail
+    store.routing.active_provider_id = "hetz"
     policy = store.get_policy()
     policy.auto_wake_max_score_age_s = 3600.0
     store.set_policy(policy)
     pid, details = pick_auto_wake_candidate(store, incumbent_score=70, margin=10)
     assert pid is None
-    assert any(s.get("reason") == "stale_score" for s in details["skipped"])
+    assert any(s.get("reason") == "stale_healthy_score" for s in details["skipped"])
 
 
 def test_pick_respects_per_provider_margin() -> None:
     store = OpsStore()
     store.upsert_provider(_prov("hetz", ProviderType.HETZNER))
-    # AWS needs +20 to wake; score only +15 over incumbent
+    # AWS needs +20 to wake; last healthy only +15 over incumbent
     store.upsert_provider(
         _prov("aws", ProviderType.AWS, auto_wake_score_margin=20.0)
     )
     store.append_snapshot(_snap("hetz", healthy=True, score=70))
-    store.append_snapshot(_snap("aws", healthy=False, score=85))
+    store.append_snapshot(_snap("aws", healthy=True, score=85))
+    store.append_snapshot(_snap("aws", healthy=False, score=0))
     store.routing.active_provider_id = "hetz"
     pid, details = pick_auto_wake_candidate(store, incumbent_score=70, margin=10)
     assert pid is None

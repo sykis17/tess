@@ -65,12 +65,14 @@ Control plane ──probe──► Hetzner / AWS / GCP /customer /health
   `performance_streak_required` (**N = default 2**) consecutive probes, or if
   the incumbent is unhealthy past `failure_threshold`. These defaults are the
   unit-test targets; operators may tune via `PUT /ops/routing/policy`.
-- Auto-wake (optional): offline AWS/GCP with a **fresh** last score (age ≤
-  `auto_wake_max_score_age_s`, default **3600s**) that beats incumbent by the
-  effective margin (`CloudProvider.auto_wake_score_margin` or global) → enqueue
-  **one** Celery wake. Single inflight lock prevents stampede. **15 min TTL =
-  lock only** (not auto-sleep). Wake failure clears inflight + per-provider
-  cooldown (`auto_wake_failure_cooldown_s`, default 600s).
+- Auto-wake (optional): offline AWS/GCP with a **fresh last-healthy** score
+  (age ≤ `auto_wake_max_score_age_s`, default **3600s**) that beats incumbent by
+  the effective margin (`CloudProvider.auto_wake_score_margin` or global) →
+  enqueue **one** Celery wake. Uses the last **healthy** snapshot (failed probes
+  after Sleep do not erase competitive history). Single inflight lock prevents
+  stampede. **15 min TTL = lock only** (not auto-sleep). Wake failure clears
+  inflight + per-provider cooldown (`auto_wake_failure_cooldown_s`, default
+  600s). Trail shows skip reasons (e.g. `stale_healthy_score`, `margin_not_met`).
 - Exit: `DELETE /ops/routing/performance` → freeze current active as
   `active_only` and clear `auto_wake`. Explicitly does **not** snap back to
   `preferred_provider_id` (not a bug).

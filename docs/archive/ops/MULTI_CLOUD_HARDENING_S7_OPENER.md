@@ -13,7 +13,7 @@ Control plane on Hetzner (`5.78.186.223`). Standbys stopped-by-default:
 
 **Prior (2026-07-22):** Host metrics self-report (`cpu_percent` / `mem_percent`) on
 all three stacks via [`app/core/host_metrics.py`](../../../app/core/host_metrics.py);
-rollout guide [`deploy/HOST_METRICS_ROLLOUT.md`](../../../deploy/HOST_METRICS_ROLLOUT.md).
+rollout guide [`deploy/HOST_METRICS_ROLLOUT.md`](HOST_METRICS_ROLLOUT.md).
 
 Prior openers: [MULTI_CLOUD_HARDENING_S6_OPENER.md](MULTI_CLOUD_HARDENING_S6_OPENER.md)
 … [MULTI_CLOUD_HARDENING_OPENER.md](MULTI_CLOUD_HARDENING_OPENER.md).  

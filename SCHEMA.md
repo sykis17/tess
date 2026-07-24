@@ -1,6 +1,6 @@
 # TESS Engine — Data Schemas
 
-Strictly typed data via Pydantic models in Python. This document covers **live** schemas through Phase 20 (`is_streaming` token deltas, mid-chain steer).
+Strictly typed data via Pydantic models in Python. This document covers **live** schemas through Phase 21 (`is_streaming` token deltas, mid-chain steer, interactive follow-up fields).
 
 ---
 

@@ -30,11 +30,11 @@ Prior openers: [MULTI_CLOUD_HARDENING_S4_OPENER.md](MULTI_CLOUD_HARDENING_S4_OPE
 [MULTI_CLOUD_HARDENING_S3_OPENER.md](MULTI_CLOUD_HARDENING_S3_OPENER.md),
 [MULTI_CLOUD_HARDENING_S2_OPENER.md](MULTI_CLOUD_HARDENING_S2_OPENER.md),
 [MULTI_CLOUD_HARDENING_OPENER.md](MULTI_CLOUD_HARDENING_OPENER.md).  
-Reference: [deploy/MULTI_CLOUD.md](deploy/MULTI_CLOUD.md),
-[app/ops/failover.py](app/ops/failover.py),
-[frontend/src/hooks/useWebSocket.ts](frontend/src/hooks/useWebSocket.ts).
+Reference: [deploy/MULTI_CLOUD.md](../../../deploy/MULTI_CLOUD.md),
+[app/ops/failover.py](../../../app/ops/failover.py),
+[frontend/src/hooks/useWebSocket.ts](../../../frontend/src/hooks/useWebSocket.ts).
 
-Architecture / product chain: [AI_MAP.md](AI_MAP.md), [ROADMAP.md](ROADMAP.md).
+Architecture / product chain: [AI_MAP.md](../../../AI_MAP.md), [ROADMAP.md](../../../ROADMAP.md).
 This session is **ops hardening / demo UX**, not LangGraph/POV work.
 
 ---
@@ -44,11 +44,11 @@ This session is **ops hardening / demo UX**, not LangGraph/POV work.
 ### A. Mid-session `provider_changed` never reaches the browser (confirmed S2)
 
 Failover clears assignments and switches `active_provider_id`, but
-[`app/main.py`](app/main.py) `_ops_probe_loop` only **logs** — it does **not**
+[`app/main.py`](../../../app/main.py) `_ops_probe_loop` only **logs** — it does **not**
 push `type: "provider_changed"` onto open WebSockets. Frontend already handles
-the message ([`useWebSocket.ts`](frontend/src/hooks/useWebSocket.ts) + banner in
-[`App.tsx`](frontend/src/App.tsx)). Schema exists:
-[`ProviderChangedMessage`](app/ops/models.py).
+the message ([`useWebSocket.ts`](../../../frontend/src/hooks/useWebSocket.ts) + banner in
+[`App.tsx`](../../../frontend/src/App.tsx)). Schema exists:
+[`ProviderChangedMessage`](../../../app/ops/models.py).
 
 **This session — primary goal.**
 
@@ -80,7 +80,7 @@ When `_switch` / `force_active_provider` / probe-loop failover succeeds:
 
 - Publish the message on a Redis channel (e.g. `ops:provider_changed`) from
   failover / force-active / simulate path after switch.
-- In [`app/api/ws.py`](app/api/ws.py), each accepted connection also subscribes
+- In [`app/api/ws.py`](../../../app/api/ws.py), each accepted connection also subscribes
   to that channel (alongside the session Pub/Sub) and `send_json`s the payload.
 
 Avoid a process-local connection set unless Redis fan-out is awkward on CPX11 —
@@ -157,12 +157,12 @@ and last action result. No charts, no event history dump (Session 6).
 
 | Concern                 | Location |
 | ----------------------- | -------- |
-| Failover / force-active | [`app/ops/failover.py`](app/ops/failover.py) |
-| Probe loop              | [`app/main.py`](app/main.py) `_ops_probe_loop` |
-| WebSocket endpoint      | [`app/api/ws.py`](app/api/ws.py) |
-| Message schema          | [`app/ops/models.py`](app/ops/models.py) `ProviderChangedMessage` |
-| Frontend handler        | [`frontend/src/hooks/useWebSocket.ts`](frontend/src/hooks/useWebSocket.ts) |
-| Simulate / chaos APIs   | [`app/api/ops.py`](app/api/ops.py) |
-| Admin auth              | [`app/ops/admin_auth.py`](app/ops/admin_auth.py) |
+| Failover / force-active | [`app/ops/failover.py`](../../../app/ops/failover.py) |
+| Probe loop              | [`app/main.py`](../../../app/main.py) `_ops_probe_loop` |
+| WebSocket endpoint      | [`app/api/ws.py`](../../../app/api/ws.py) |
+| Message schema          | [`app/ops/models.py`](../../../app/ops/models.py) `ProviderChangedMessage` |
+| Frontend handler        | [`frontend/src/hooks/useWebSocket.ts`](../../../frontend/src/hooks/useWebSocket.ts) |
+| Simulate / chaos APIs   | [`app/api/ops.py`](../../../app/api/ops.py) |
+| Admin auth              | [`app/ops/admin_auth.py`](../../../app/ops/admin_auth.py) |
 | Control plane           | `http://5.78.186.223` |
 | UptimeRobot             | monitor `803559917` (Up) |

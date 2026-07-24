@@ -19,7 +19,7 @@ score for auto-wake). Deployed on Hetzner control plane `5.78.186.223`.
 | WS line `ws://127.0.0.1:8000` on ops-ui | Hetzner provider `ws_base_url` / bootstrap still points at loopback for chat clients — confusing mid-demo (separate from Dual gate). |
 
 Prior: [MULTI_CLOUD_HARDENING_S8_OPENER.md](MULTI_CLOUD_HARDENING_S8_OPENER.md).  
-Reference: [deploy/MULTI_CLOUD.md](deploy/MULTI_CLOUD.md).
+Reference: [deploy/MULTI_CLOUD.md](../../../deploy/MULTI_CLOUD.md).
 
 This session is **ops reliability + demo UX first**; shared Redis / seamless is
 Track C (may slip to S10 if wake/Dual path is still broken).
@@ -137,13 +137,13 @@ If Track C slips: Dual/wake ship with copy still saying reconnect until shared R
 
 | Concern | Location |
 |---------|----------|
-| Dual enable gate | [`app/ops/routing_modes.py`](app/ops/routing_modes.py) `enable_dual` |
-| Wake/sleep scripts | [`app/ops/standby_power.py`](app/ops/standby_power.py), [`scripts/aws_standby.py`](scripts/aws_standby.py) |
-| Celery tasks | [`app/worker.py`](app/worker.py) `ops_standby_wake` / `ops_standby_sleep` |
-| Ops UI trail | [`frontend/public/ops-ui/index.html`](frontend/public/ops-ui/index.html) |
+| Dual enable gate | [`app/ops/routing_modes.py`](../../../app/ops/routing_modes.py) `enable_dual` |
+| Wake/sleep scripts | [`app/ops/standby_power.py`](../../../app/ops/standby_power.py), [`scripts/aws_standby.py`](../../../scripts/aws_standby.py) |
+| Celery tasks | [`app/worker.py`](../../../app/worker.py) `ops_standby_wake` / `ops_standby_sleep` |
+| Ops UI trail | [`frontend/public/ops-ui/index.html`](../../../frontend/public/ops-ui/index.html) |
 | Provider WS URL | bootstrap / `CloudProvider.ws_base_url` for `prov_hetzner_local` |
-| Seamless stub | [`app/ops/balancer.py`](app/ops/balancer.py) `seamless_migration_status` |
-| Conversation Redis | [`app/core/conversation.py`](app/core/conversation.py) |
+| Seamless stub | [`app/ops/balancer.py`](../../../app/ops/balancer.py) `seamless_migration_status` |
+| Conversation Redis | [`app/core/conversation.py`](../../../app/core/conversation.py) |
 
 ---
 

@@ -10,3 +10,7 @@ deploy/Caddyfile.active
 # Frontend
 frontend/node_modules/
 frontend/dist/
+
+# Test / harness output
+*_pytest_*.txt
+harness_run_all.txt

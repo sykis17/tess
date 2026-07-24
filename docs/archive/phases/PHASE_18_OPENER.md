@@ -4,7 +4,7 @@
 
 Phases 1–17 are complete. The live graph runs **POV agents**, **curator/editor combiners**, **defense**, **presenter**, **product modes** (Research / Planner / Coding / Builder), and **chain profiles** (L0–L4 depth gates). Multi-POV pipelines complete within a **12-minute** Celery budget on CPX11 with `llama3.2:1b`.
 
-Architecture docs: [AI_MAP.md](AI_MAP.md), [ROADMAP.md](ROADMAP.md), [SCHEMA.md](SCHEMA.md).
+Architecture docs: [AI_MAP.md](../../../AI_MAP.md), [ROADMAP.md](../../../ROADMAP.md), [SCHEMA.md](../../../SCHEMA.md).
 
 **Phase 18 goal:** Add a **pipeline status wall** (persistent progress UI from WR through Presenter) and a **results wall** driven by **virtual folder-tree navigation** — plus structured **POV segments** on completed Panels so users see which lens contributed what.
 
@@ -23,15 +23,15 @@ Architecture docs: [AI_MAP.md](AI_MAP.md), [ROADMAP.md](ROADMAP.md), [SCHEMA.md]
 
 | Area | Status |
 |------|--------|
-| Chain profiles | `L0`–`L4` (+ `L1+`) — registry in [`app/core/chain_profiles.py`](app/core/chain_profiles.py); gates in [`app/graph/chain_gates.py`](app/graph/chain_gates.py) |
-| L0 path | [`app/graph/nodes/direct_responder.py`](app/graph/nodes/direct_responder.py) → presenter (skips WR) |
-| WS transport | Plain text → `auto` + `L4`; JSON `{ text, product_mode?, chain_profile? }` via [`app/core/ws_payload.py`](app/core/ws_payload.py) |
+| Chain profiles | `L0`–`L4` (+ `L1+`) — registry in [`app/core/chain_profiles.py`](../../../app/core/chain_profiles.py); gates in [`app/graph/chain_gates.py`](../../../app/graph/chain_gates.py) |
+| L0 path | [`app/graph/nodes/direct_responder.py`](../../../app/graph/nodes/direct_responder.py) → presenter (skips WR) |
+| WS transport | Plain text → `auto` + `L4`; JSON `{ text, product_mode?, chain_profile? }` via [`app/core/ws_payload.py`](../../../app/core/ws_payload.py) |
 | GraphState | `product_mode`, `chain_profile` on state + `build_initial_state()` |
 | Panels | `product_mode`, `output_level`, `pov_sources`, `agents_involved`, `agent_traces`, `data_tier` |
-| Frontend selectors | [`ModeSelector.tsx`](frontend/src/components/ModeSelector.tsx), [`ChainProfileSelector.tsx`](frontend/src/components/ChainProfileSelector.tsx) in header |
-| Compare UI | [`CompareLevelsToggle.tsx`](frontend/src/components/CompareLevelsToggle.tsx), [`CompareSummary.tsx`](frontend/src/components/CompareSummary.tsx); multi-send with pending count in [`useWebSocket.ts`](frontend/src/hooks/useWebSocket.ts) |
-| Panel rendering | [`PanelCard.tsx`](frontend/src/components/PanelCard.tsx) — folder label, level/mode chips, POV badges, agent pipeline, collapsible traces |
-| Mid-stream progress | Combiner nodes call [`publish_panel`](app/graph/panel_stream.py) for long LLM stages; worker streams all node Panels via `astream` |
+| Frontend selectors | [`ModeSelector.tsx`](../../../frontend/src/components/ModeSelector.tsx), [`ChainProfileSelector.tsx`](../../../frontend/src/components/ChainProfileSelector.tsx) in header |
+| Compare UI | [`CompareLevelsToggle.tsx`](../../../frontend/src/components/CompareLevelsToggle.tsx), [`CompareSummary.tsx`](../../../frontend/src/components/CompareSummary.tsx); multi-send with pending count in [`useWebSocket.ts`](../../../frontend/src/hooks/useWebSocket.ts) |
+| Panel rendering | [`PanelCard.tsx`](../../../frontend/src/components/PanelCard.tsx) — folder label, level/mode chips, POV badges, agent pipeline, collapsible traces |
+| Mid-stream progress | Combiner nodes call [`publish_panel`](../../../app/graph/panel_stream.py) for long LLM stages; worker streams all node Panels via `astream` |
 | Tests | **61 total** — `test_pov_routing` (13), `test_combiner_utils` (7), `test_product_modes` (17), `test_chain_profiles` (24) |
 | Canonical multi-POV | *"Design a science app UI covering aesthetics and usability"* at `L4` → `art` + `ui_design` → combiners → defense |
 
@@ -71,7 +71,7 @@ Give users **continuous visibility** into what TESS is doing and **navigable acc
 
 ### Virtual folder tree (first deploy)
 
-Built from [`AGENT_REGISTRY`](app/agents/registry.py) `folder_path` values — no new backend folder DB:
+Built from [`AGENT_REGISTRY`](../../../app/agents/registry.py) `folder_path` values — no new backend folder DB:
 
 | Branch | Leaf folders |
 |--------|--------------|
@@ -84,7 +84,7 @@ Built from [`AGENT_REGISTRY`](app/agents/registry.py) `folder_path` values — n
 | `Assistant/` | `General` |
 | `Media/` | `Photo`, `Video`, `Audio` |
 
-**Panel → folder mapping (unchanged):** each Panel's `folder_path` is set by the primary routed agent (e.g. `art` → `Arts/Visual`). Multi-agent runs use the **first** routed agent's folder for the processing Panel; completed Panel follows the same rule today in [`presenter.py`](app/graph/nodes/presenter.py) `_resolve_folder_path`.
+**Panel → folder mapping (unchanged):** each Panel's `folder_path` is set by the primary routed agent (e.g. `art` → `Arts/Visual`). Multi-agent runs use the **first** routed agent's folder for the processing Panel; completed Panel follows the same rule today in [`presenter.py`](../../../app/graph/nodes/presenter.py) `_resolve_folder_path`.
 
 **Results wall behavior:**
 
@@ -131,7 +131,7 @@ L0 direct path: `routing` skipped → first stage `presenting` (or a dedicated `
 
 - **Status wall** reads from the **latest processing** Panel for the active run (`status === "processing"` or `review_passed`), keyed by `panel_id`. When compare mode fires multiple tasks, show a compact multi-track bar or the most recently updated in-flight Panel (document choice in implementation).
 - **Folder tree** is a **static tree** derived from agent configs (frontend build from a shared manifest **or** lightweight `GET /api/folders` — prefer shared TS constant generated from same paths as Python registry to avoid drift in v1).
-- **Results wall** is a filtered `panel-list`; reuse [`PanelCard`](frontend/src/components/PanelCard.tsx) with new segment renderer.
+- **Results wall** is a filtered `panel-list`; reuse [`PanelCard`](../../../frontend/src/components/PanelCard.tsx) with new segment renderer.
 - **POV segments** ship as structured JSON on completed Panels — do **not** rely on markdown parsing in the frontend.
 
 ### `PanelSegment` schema (new)
@@ -156,7 +156,7 @@ Keep `content` as the full markdown body for backward compatibility; `pov_segmen
 
 ### Status wall data source
 
-**Backend (recommended):** add `pipeline_stage: str` to [`Panel`](app/graph/schemas.py). Set on every Panel emitted by WR, combiners, defense, presenter, and `direct_responder`. Frontend status wall subscribes to WebSocket Panel updates — no new WS message type in v1.
+**Backend (recommended):** add `pipeline_stage: str` to [`Panel`](../../../app/graph/schemas.py). Set on every Panel emitted by WR, combiners, defense, presenter, and `direct_responder`. Frontend status wall subscribes to WebSocket Panel updates — no new WS message type in v1.
 
 **Frontend:** new hook `usePipelineStatus(panels)` derives:
 
@@ -326,7 +326,7 @@ class Panel(BaseModel):
 
 | # | Area | Work |
 |---|------|------|
-| 1 | **Schema** | `PanelSegment`, `pipeline_stage`, `pov_segments` on `Panel` in [`app/graph/schemas.py`](app/graph/schemas.py) |
+| 1 | **Schema** | `PanelSegment`, `pipeline_stage`, `pov_segments` on `Panel` in [`app/graph/schemas.py`](../../../app/graph/schemas.py) |
 | 2 | **Stage helper** | `app/graph/pipeline_stages.py` — constants, `stage_for_node(node_name)`, gate-aware predicted stages |
 | 3 | **WR / specialists** | Set `pipeline_stage` on processing Panels; specialist progress panels → `agents` |
 | 4 | **Combiners / defense** | `combining` / `defense` on intermediate and `review_passed` Panels |
@@ -337,8 +337,8 @@ class Panel(BaseModel):
 | 9 | **FolderTree** | `frontend/src/components/FolderTree.tsx` — select folder, badge counts |
 | 10 | **ResultsWall** | `frontend/src/components/ResultsWall.tsx` — filtered panel list |
 | 11 | **PanelSegments** | `frontend/src/components/PanelSegments.tsx` — render structured segments |
-| 12 | **App layout** | Refactor [`App.tsx`](frontend/src/App.tsx) — sidebar + status bar + wall |
-| 13 | **Types** | Extend [`frontend/src/types/panel.ts`](frontend/src/types/panel.ts) |
+| 12 | **App layout** | Refactor [`App.tsx`](../../../frontend/src/App.tsx) — sidebar + status bar + wall |
+| 13 | **Types** | Extend [`frontend/src/types/panel.ts`](../../../frontend/src/types/panel.ts) |
 | 14 | **Tests** | `tests/test_pipeline_stages.py`, `tests/test_pov_segments.py` (presenter segment building) |
 | 15 | **Docs** | Update `AI_MAP.md`, `SCHEMA.md`, `ROADMAP.md`; mark Phase 18 complete |
 
@@ -346,20 +346,20 @@ class Panel(BaseModel):
 
 ## Implementation order
 
-1. [`app/graph/schemas.py`](app/graph/schemas.py) — `PanelSegment`, `pipeline_stage`, `pov_segments`
-2. [`app/graph/pipeline_stages.py`](app/graph/pipeline_stages.py) — stage constants + node→stage mapping
-3. [`app/graph/nodes/wide_receiver.py`](app/graph/nodes/wide_receiver.py) — `pipeline_stage="routing"`
-4. [`app/graph/nodes/direct_responder.py`](app/graph/nodes/direct_responder.py) — L0 stage
+1. [`app/graph/schemas.py`](../../../app/graph/schemas.py) — `PanelSegment`, `pipeline_stage`, `pov_segments`
+2. [`app/graph/pipeline_stages.py`](../../../app/graph/pipeline_stages.py) — stage constants + node→stage mapping
+3. [`app/graph/nodes/wide_receiver.py`](../../../app/graph/nodes/wide_receiver.py) — `pipeline_stage="routing"`
+4. [`app/graph/nodes/direct_responder.py`](../../../app/graph/nodes/direct_responder.py) — L0 stage
 5. Combiner + defense nodes — `combining` / `defense` on streamed Panels
-6. [`app/graph/nodes/presenter.py`](app/graph/nodes/presenter.py) — `pov_segments` builder + `done`
-7. [`app/core/folder_tree.py`](app/core/folder_tree.py) — virtual tree from `AGENT_REGISTRY`
+6. [`app/graph/nodes/presenter.py`](../../../app/graph/nodes/presenter.py) — `pov_segments` builder + `done`
+7. [`app/core/folder_tree.py`](../../../app/core/folder_tree.py) — virtual tree from `AGENT_REGISTRY`
 8. Frontend types + `useWebSocket` merge logic
 9. `usePipelineStatus` hook
 10. `StatusWall` component
 11. `folderTree.ts` + `FolderTree` component
 12. `ResultsWall` + `PanelSegments`
-13. [`App.tsx`](frontend/src/App.tsx) layout refactor + CSS
-14. [`tests/test_pipeline_stages.py`](tests/test_pipeline_stages.py), [`tests/test_pov_segments.py`](tests/test_pov_segments.py)
+13. [`App.tsx`](../../../frontend/src/App.tsx) layout refactor + CSS
+14. [`tests/test_pipeline_stages.py`](../../../tests/test_pipeline_stages.py), [`tests/test_pov_segments.py`](../../../tests/test_pov_segments.py)
 15. Docs + deploy
 
 ---
@@ -393,7 +393,7 @@ _NODE_STAGE: dict[str, str] = {
 
 ### Predicted pipeline for status wall (gate-aware)
 
-Reuse [`build_panel_agents_involved`](app/graph/defense_utils.py) logic from WR's first processing Panel. Map display names to stage groups:
+Reuse [`build_panel_agents_involved`](../../../app/graph/defense_utils.py) logic from WR's first processing Panel. Map display names to stage groups:
 
 | Display group | Stage |
 |---------------|-------|
@@ -403,7 +403,7 @@ Reuse [`build_panel_agents_involved`](app/graph/defense_utils.py) logic from WR'
 | Defense Delegator / Review | `defense` |
 | Presenter | `presenting` |
 
-When `chain_profile` is L0, predicted steps = Direct Responder → Presenter. When L1+, omit defense/combiners per [`chain_gates.py`](app/graph/chain_gates.py).
+When `chain_profile` is L0, predicted steps = Direct Responder → Presenter. When L1+, omit defense/combiners per [`chain_gates.py`](../../../app/graph/chain_gates.py).
 
 ### POV segment builder (presenter sketch)
 
@@ -459,7 +459,7 @@ export const FOLDER_TREE = [
 
 When compare sends L0 + L4:
 
-- `pendingCountRef` already tracks multiple in-flight tasks in [`useWebSocket.ts`](frontend/src/hooks/useWebSocket.ts).
+- `pendingCountRef` already tracks multiple in-flight tasks in [`useWebSocket.ts`](../../../frontend/src/hooks/useWebSocket.ts).
 - Status wall v1: show **two compact tracks** (level badge + stage) or cycle focus to the most recently updated processing Panel.
 - Do **not** block Phase 18 ship on perfect multi-track UX — single-track for one message, simplified multi for compare.
 
@@ -515,14 +515,14 @@ pytest tests/test_pipeline_stages.py tests/test_pov_segments.py
 
 | Area | Path |
 |------|------|
-| Graph | [`app/graph/builder.py`](app/graph/builder.py) |
-| Chain | [`app/core/chain_profiles.py`](app/core/chain_profiles.py), [`app/graph/chain_gates.py`](app/graph/chain_gates.py) |
-| WR / Presenter | [`app/graph/nodes/wide_receiver.py`](app/graph/nodes/wide_receiver.py), [`app/graph/nodes/presenter.py`](app/graph/nodes/presenter.py) |
-| Panel stream | [`app/graph/panel_stream.py`](app/graph/panel_stream.py) |
-| Agent registry | [`app/agents/registry.py`](app/agents/registry.py) |
-| Schemas | [`app/graph/schemas.py`](app/graph/schemas.py), [`SCHEMA.md`](SCHEMA.md) |
-| Worker / WS | [`app/worker.py`](app/worker.py), [`app/api/ws.py`](app/api/ws.py) |
-| Frontend | [`frontend/src/App.tsx`](frontend/src/App.tsx), [`PanelCard.tsx`](frontend/src/components/PanelCard.tsx), [`useWebSocket.ts`](frontend/src/hooks/useWebSocket.ts) |
+| Graph | [`app/graph/builder.py`](../../../app/graph/builder.py) |
+| Chain | [`app/core/chain_profiles.py`](../../../app/core/chain_profiles.py), [`app/graph/chain_gates.py`](../../../app/graph/chain_gates.py) |
+| WR / Presenter | [`app/graph/nodes/wide_receiver.py`](../../../app/graph/nodes/wide_receiver.py), [`app/graph/nodes/presenter.py`](../../../app/graph/nodes/presenter.py) |
+| Panel stream | [`app/graph/panel_stream.py`](../../../app/graph/panel_stream.py) |
+| Agent registry | [`app/agents/registry.py`](../../../app/agents/registry.py) |
+| Schemas | [`app/graph/schemas.py`](../../../app/graph/schemas.py), [`SCHEMA.md`](../../../SCHEMA.md) |
+| Worker / WS | [`app/worker.py`](../../../app/worker.py), [`app/api/ws.py`](../../../app/api/ws.py) |
+| Frontend | [`frontend/src/App.tsx`](../../../frontend/src/App.tsx), [`PanelCard.tsx`](../../../frontend/src/components/PanelCard.tsx), [`useWebSocket.ts`](../../../frontend/src/hooks/useWebSocket.ts) |
 
 **New files (expected):**
 
@@ -572,16 +572,16 @@ cd frontend && npm run dev
 
 | Doc | Change |
 |-----|--------|
-| [AI_MAP.md](AI_MAP.md) | Document status wall + results wall as **live**; add layout diagram |
-| [SCHEMA.md](SCHEMA.md) | `pipeline_stage`, `pov_segments` / `PanelSegment` Planned → Live |
-| [ROADMAP.md](ROADMAP.md) | Check off Phase 18; move Phase 19 to "Next" |
-| [README.md](README.md) | Update current graph line to Phase 18; note folder tree + status wall |
+| [AI_MAP.md](../../../AI_MAP.md) | Document status wall + results wall as **live**; add layout diagram |
+| [SCHEMA.md](../../../SCHEMA.md) | `pipeline_stage`, `pov_segments` / `PanelSegment` Planned → Live |
+| [ROADMAP.md](../../../ROADMAP.md) | Check off Phase 18; move Phase 19 to "Next" |
+| [README.md](../../../README.md) | Update current graph line to Phase 18; note folder tree + status wall |
 
 ---
 
 ## Request
 
-Please review [AI_MAP.md](AI_MAP.md) (target chain), [SCHEMA.md](SCHEMA.md) (`pipeline_stage`), and [ROADMAP.md](ROADMAP.md) (Phase 18 scope) before starting.
+Please review [AI_MAP.md](../../../AI_MAP.md) (target chain), [SCHEMA.md](../../../SCHEMA.md) (`pipeline_stage`), and [ROADMAP.md](../../../ROADMAP.md) (Phase 18 scope) before starting.
 
 **Goal:** Implement Phase 18 — `pipeline_stage` on streamed Panels, persistent status wall, virtual folder tree + results wall, structured `pov_segments` on completed Panels, tests, docs, commit + deploy.
 

@@ -23,11 +23,11 @@ Prior openers: [MULTI_CLOUD_HARDENING_S5_OPENER.md](MULTI_CLOUD_HARDENING_S5_OPE
 [MULTI_CLOUD_HARDENING_S3_OPENER.md](MULTI_CLOUD_HARDENING_S3_OPENER.md),
 [MULTI_CLOUD_HARDENING_S2_OPENER.md](MULTI_CLOUD_HARDENING_S2_OPENER.md),
 [MULTI_CLOUD_HARDENING_OPENER.md](MULTI_CLOUD_HARDENING_OPENER.md).  
-Reference: [deploy/MULTI_CLOUD.md](deploy/MULTI_CLOUD.md),
-[app/api/ops.py](app/api/ops.py),
-[frontend/public/ops-ui/index.html](frontend/public/ops-ui/index.html).
+Reference: [deploy/MULTI_CLOUD.md](../../../deploy/MULTI_CLOUD.md),
+[app/api/ops.py](../../../app/api/ops.py),
+[frontend/public/ops-ui/index.html](../../../frontend/public/ops-ui/index.html).
 
-Architecture / product chain: [AI_MAP.md](AI_MAP.md), [ROADMAP.md](ROADMAP.md).
+Architecture / product chain: [AI_MAP.md](../../../AI_MAP.md), [ROADMAP.md](../../../ROADMAP.md).
 This session is **ops hardening / operator visibility**, not LangGraph/POV work.
 
 ---
@@ -102,7 +102,7 @@ to each other (“Actions” ↔ “Status”).
 - `deploy.sh` already force-recreates Caddy; add a build check that
   `dist/ops-status/index.html` exists (same as ops-ui).
 
-**Docs:** note `/ops-status/` in [deploy/MULTI_CLOUD.md](deploy/MULTI_CLOUD.md);
+**Docs:** note `/ops-status/` in [deploy/MULTI_CLOUD.md](../../../deploy/MULTI_CLOUD.md);
 UptimeRobot link in the page footer/header.
 
 **Verify:** open `/ops-status/` with token → see providers + scores + recent
@@ -156,12 +156,12 @@ API tests.
 
 | Concern              | Location |
 | -------------------- | -------- |
-| Providers / routing  | [`app/api/ops.py`](app/api/ops.py) `GET /ops/providers`, `GET /ops/routing` |
-| Scores / probes      | `GET /ops/health-logs` + [`HealthSnapshot`](app/ops/models.py) |
-| Events               | `GET /ops/events` + [`OpsEvent`](app/ops/models.py) |
-| Take-offline UI      | [`frontend/public/ops-ui/index.html`](frontend/public/ops-ui/index.html) |
-| Admin auth           | [`app/ops/admin_auth.py`](app/ops/admin_auth.py) |
-| Caddy static + SPA   | [`deploy/Caddyfile.ip`](deploy/Caddyfile.ip) (`/ops-ui*` pattern) |
-| UptimeRobot          | monitor `803559917` — see [deploy/MULTI_CLOUD.md](deploy/MULTI_CLOUD.md) External uptime |
+| Providers / routing  | [`app/api/ops.py`](../../../app/api/ops.py) `GET /ops/providers`, `GET /ops/routing` |
+| Scores / probes      | `GET /ops/health-logs` + [`HealthSnapshot`](../../../app/ops/models.py) |
+| Events               | `GET /ops/events` + [`OpsEvent`](../../../app/ops/models.py) |
+| Take-offline UI      | [`frontend/public/ops-ui/index.html`](../../../frontend/public/ops-ui/index.html) |
+| Admin auth           | [`app/ops/admin_auth.py`](../../../app/ops/admin_auth.py) |
+| Caddy static + SPA   | [`deploy/Caddyfile.ip`](../../../deploy/Caddyfile.ip) (`/ops-ui*` pattern) |
+| UptimeRobot          | monitor `803559917` — see [deploy/MULTI_CLOUD.md](../../../deploy/MULTI_CLOUD.md) External uptime |
 | Control plane        | `http://5.78.186.223` |
 | Deploy gotcha        | Dirty server files block `git pull`; `chmod +x deploy/deploy.sh`; force-recreate Caddy |

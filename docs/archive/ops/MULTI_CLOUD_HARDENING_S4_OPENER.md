@@ -20,10 +20,10 @@ EIP `18.227.172.81`, `us-east-2`) is stopped-by-default.
 Prior openers: [MULTI_CLOUD_HARDENING_S3_OPENER.md](MULTI_CLOUD_HARDENING_S3_OPENER.md),
 [MULTI_CLOUD_HARDENING_S2_OPENER.md](MULTI_CLOUD_HARDENING_S2_OPENER.md),
 [MULTI_CLOUD_HARDENING_OPENER.md](MULTI_CLOUD_HARDENING_OPENER.md).  
-Reference: [deploy/MULTI_CLOUD.md](deploy/MULTI_CLOUD.md),
-[app/api/ops.py](app/api/ops.py).
+Reference: [deploy/MULTI_CLOUD.md](../../../deploy/MULTI_CLOUD.md),
+[app/api/ops.py](../../../app/api/ops.py).
 
-Architecture / product chain: [AI_MAP.md](AI_MAP.md), [ROADMAP.md](ROADMAP.md).
+Architecture / product chain: [AI_MAP.md](../../../AI_MAP.md), [ROADMAP.md](../../../ROADMAP.md).
 This session is **ops hardening**, not LangGraph/POV work.
 
 ---
@@ -100,7 +100,7 @@ sensitive reads (not only mutations).
 
 | Concern              | Location                                                       |
 | -------------------- | -------------------------------------------------------------- |
-| Ops routes           | [`app/api/ops.py`](app/api/ops.py)                             |
-| Admin auth           | [`app/ops/admin_auth.py`](app/ops/admin_auth.py)               |
-| Frontend notice      | [`frontend/src/hooks/useWebSocket.ts`](frontend/src/hooks/useWebSocket.ts) |
+| Ops routes           | [`app/api/ops.py`](../../../app/api/ops.py)                             |
+| Admin auth           | [`app/ops/admin_auth.py`](../../../app/ops/admin_auth.py)               |
+| Frontend notice      | [`frontend/src/hooks/useWebSocket.ts`](../../../frontend/src/hooks/useWebSocket.ts) |
 | Control plane        | `http://5.78.186.223` (`/health`, `/ops`)                      |

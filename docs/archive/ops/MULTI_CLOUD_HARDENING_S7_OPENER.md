@@ -12,12 +12,12 @@ Control plane on Hetzner (`5.78.186.223`). Standbys stopped-by-default:
 **Session 6 shipped:** `/ops-status/` read-only fleet view.
 
 **Prior (2026-07-22):** Host metrics self-report (`cpu_percent` / `mem_percent`) on
-all three stacks via [`app/core/host_metrics.py`](app/core/host_metrics.py);
-rollout guide [`deploy/HOST_METRICS_ROLLOUT.md`](deploy/HOST_METRICS_ROLLOUT.md).
+all three stacks via [`app/core/host_metrics.py`](../../../app/core/host_metrics.py);
+rollout guide [`deploy/HOST_METRICS_ROLLOUT.md`](../../../deploy/HOST_METRICS_ROLLOUT.md).
 
 Prior openers: [MULTI_CLOUD_HARDENING_S6_OPENER.md](MULTI_CLOUD_HARDENING_S6_OPENER.md)
 … [MULTI_CLOUD_HARDENING_OPENER.md](MULTI_CLOUD_HARDENING_OPENER.md).  
-Reference: [deploy/MULTI_CLOUD.md](deploy/MULTI_CLOUD.md).
+Reference: [deploy/MULTI_CLOUD.md](../../../deploy/MULTI_CLOUD.md).
 
 This session is **ops validation / runbook**, not LangGraph/POV work.
 
@@ -36,7 +36,7 @@ Prove `consecutive_failures` → automatic failover using chaos / take-offline
 
 Policy defaults: `failure_threshold=3`, `min_score_for_healthy=40`,
 `latency_p95_threshold_ms=5000`
-([`app/ops/failover.py`](app/ops/failover.py)).
+([`app/ops/failover.py`](../../../app/ops/failover.py)).
 
 ### Preflight
 
@@ -64,7 +64,7 @@ Policy defaults: `failure_threshold=3`, `min_score_for_healthy=40`,
 | `high_latency` (default 2500ms) | **No** (score-only) |
 
 Smoke path: `OPS_SMOKE_STANDBY=prov_aws` +
-[`scripts/ops_failover_live_smoke.py`](scripts/ops_failover_live_smoke.py)
+[`scripts/ops_failover_live_smoke.py`](../../../scripts/ops_failover_live_smoke.py)
 (or `aws_standby.py cycle`).
 
 ### Run B — Hetzner → GCP
@@ -87,7 +87,7 @@ matrix is green.
 - [x] Standby awake + healthy (score ≥ 40) to be selected
 - [x] `/ops/events` / smoke output shows failover
 - [x] Resting state restored: Hetzner active, AWS stopped, GCP stopped
-- [x] Results table appended to [deploy/MULTI_CLOUD.md](deploy/MULTI_CLOUD.md)
+- [x] Results table appended to [deploy/MULTI_CLOUD.md](../../../deploy/MULTI_CLOUD.md)
 
 ### t3.micro under failover load (record here)
 
@@ -127,7 +127,7 @@ Resting state restored: Hetzner active, AWS stopped, GCP stopped.
 3. Take Hetzner offline → streak 1→2→3 → active flips
 4. Clear + recover + sleep standby
 
-See runbook in [`deploy/MULTI_CLOUD.md`](deploy/MULTI_CLOUD.md#stakeholder-three-way-chaos-demo-step-5)
+See runbook in [`deploy/MULTI_CLOUD.md`](../../../deploy/MULTI_CLOUD.md#stakeholder-three-way-chaos-demo-step-5)
 and `python scripts/ops_three_way_demo.py {aws|gcp} [--guided]`.
 
 Optional later: multi-standby selection in `ops_failover_live_smoke.py`.
@@ -158,11 +158,11 @@ Optional later: multi-standby selection in `ops_failover_live_smoke.py`.
 
 | Concern | Location |
 |---------|----------|
-| Failover counters | [`app/ops/failover.py`](app/ops/failover.py) |
-| Chaos kinds | [`app/ops/chaos.py`](app/ops/chaos.py), [`app/ops/prober.py`](app/ops/prober.py) |
-| Live smoke | [`scripts/ops_failover_live_smoke.py`](scripts/ops_failover_live_smoke.py) |
-| Stakeholder demo | [`scripts/ops_three_way_demo.py`](scripts/ops_three_way_demo.py) |
-| AWS wake/sleep | [`scripts/aws_standby.py`](scripts/aws_standby.py) |
-| GCP wake/sleep | [`scripts/gcp_standby.py`](scripts/gcp_standby.py) |
+| Failover counters | [`app/ops/failover.py`](../../../app/ops/failover.py) |
+| Chaos kinds | [`app/ops/chaos.py`](../../../app/ops/chaos.py), [`app/ops/prober.py`](../../../app/ops/prober.py) |
+| Live smoke | [`scripts/ops_failover_live_smoke.py`](../../../scripts/ops_failover_live_smoke.py) |
+| Stakeholder demo | [`scripts/ops_three_way_demo.py`](../../../scripts/ops_three_way_demo.py) |
+| AWS wake/sleep | [`scripts/aws_standby.py`](../../../scripts/aws_standby.py) |
+| GCP wake/sleep | [`scripts/gcp_standby.py`](../../../scripts/gcp_standby.py) |
 | Control plane | `http://5.78.186.223` |
 | Actions / Status | `/ops-ui/` · `/ops-status/` |

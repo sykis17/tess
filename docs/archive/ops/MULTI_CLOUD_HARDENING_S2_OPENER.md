@@ -10,17 +10,17 @@ EIP `18.227.172.81`, `us-east-2`) is stopped-by-default.
 
 | #   | Item                       | Outcome                                                                                                                                                                         |
 | --- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | SSH lockout docs           | [If you're locked out](deploy/MULTI_CLOUD.md#if-youre-locked-out) — path B My IP; path A Instance Connect + `com.amazonaws.us-east-2.ec2-instance-connect` (does not bypass SG) |
-| 2   | EIP / public IPv4 cost     | [Cost note](deploy/MULTI_CLOUD.md#elastic-ip--public-ipv4-cost) — no hardcoded $/hr; **keep EIP**; CE IAM gaps noted (`ce:GetCostAndUsage`, `DescribeAddresses`)                |
+| 1   | SSH lockout docs           | [If you're locked out](../../../deploy/MULTI_CLOUD.md#if-youre-locked-out) — path B My IP; path A Instance Connect + `com.amazonaws.us-east-2.ec2-instance-connect` (does not bypass SG) |
+| 2   | EIP / public IPv4 cost     | [Cost note](../../../deploy/MULTI_CLOUD.md#elastic-ip--public-ipv4-cost) — no hardcoded $/hr; **keep EIP**; CE IAM gaps noted (`ce:GetCostAndUsage`, `DescribeAddresses`)                |
 | 3   | Remaining chaos kinds live | `health_5xx`, `worker_down`, `redis_partition`, `cpu_burn` → failover in 2–3 probes. `high_latency` **did not trip** (gap — see below)                                          |
 
 
 Prior opener: [MULTI_CLOUD_HARDENING_OPENER.md](MULTI_CLOUD_HARDENING_OPENER.md).  
-Reference: [deploy/MULTI_CLOUD.md](deploy/MULTI_CLOUD.md) (Last verified),
-[scripts/aws_standby.py](scripts/aws_standby.py),
-[scripts/ops_failover_live_smoke.py](scripts/ops_failover_live_smoke.py).
+Reference: [deploy/MULTI_CLOUD.md](../../../deploy/MULTI_CLOUD.md) (Last verified),
+[scripts/aws_standby.py](../../../scripts/aws_standby.py),
+[scripts/ops_failover_live_smoke.py](../../../scripts/ops_failover_live_smoke.py).
 
-Architecture / product chain: [AI_MAP.md](AI_MAP.md), [ROADMAP.md](ROADMAP.md).
+Architecture / product chain: [AI_MAP.md](../../../AI_MAP.md), [ROADMAP.md](../../../ROADMAP.md).
 This session is **ops hardening**, not LangGraph/POV work.
 
 ---
@@ -35,7 +35,7 @@ This session is **ops hardening**, not LangGraph/POV work.
 
 Live run: default `latency_ms=2500` → measured ~2512 ms; score 45; `healthy=True`;
 `OPS_LATENCY_THRESHOLD_MS=5000`; failures stayed 0 across 12 probes. Prober also
-caps injected sleep at **3 s** (`[app/ops/prober.py](app/ops/prober.py)`), so
+caps injected sleep at **3 s** (`[app/ops/prober.py](../../../app/ops/prober.py)`), so
 default chaos cannot cross the 5 s latency threshold.
 
 **Do not silently tweak thresholds to make the test pass.** Decide first:
@@ -53,10 +53,10 @@ Recommend **option 2** if the product claim is “every chaos kind can trip fail
 ### B. Mid-session `provider_changed` may not reach the browser
 
 Failover clears assignments and switches `active_provider_id`, but the background
-probe loop (`[app/main.py](app/main.py)`) **logs** failover and does **not** push
+probe loop (`[app/main.py](../../../app/main.py)`) **logs** failover and does **not** push
 `type: "provider_changed"` onto open WebSockets. Frontend already handles that
-message and a WS-close fallback (`[frontend/src/hooks/useWebSocket.ts](frontend/src/hooks/useWebSocket.ts)`
-→ dismissible banner in `[App.tsx](frontend/src/App.tsx)`).
+message and a WS-close fallback (`[frontend/src/hooks/useWebSocket.ts](../../../frontend/src/hooks/useWebSocket.ts)`
+→ dismissible banner in `[App.tsx](../../../frontend/src/App.tsx)`).
 
 With `simulate-unhealthy`, Hetzner’s real stack stays up — the browser WS often
 stays connected and the in-flight Celery job can finish on Hetzner even after
@@ -115,7 +115,7 @@ Something **outside Hetzner** watching Hetzner so a total box death is visible.
 `http://5.78.186.223/health` on a short interval (e.g. 5 minutes).
 - Alert to email/Telegram already used by the operator.
 - Document URL, interval, and expected JSON (`{"status":"ok",...}`) under a short
-**External uptime** subsection in [deploy/MULTI_CLOUD.md](deploy/MULTI_CLOUD.md).
+**External uptime** subsection in [deploy/MULTI_CLOUD.md](../../../deploy/MULTI_CLOUD.md).
 
 Do **not** build a custom watcher service this session. Optional later: GitHub
 Actions cron or AWS Lambda from the standby account — only if the free ping
@@ -171,12 +171,12 @@ product is unacceptable.
 
 | Concern                       | Location                                                                                                                   |
 | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Standby + Last verified       | [deploy/MULTI_CLOUD.md](deploy/MULTI_CLOUD.md)                                                                             |
-| Wake / sleep / cycle          | [scripts/aws_standby.py](scripts/aws_standby.py)                                                                           |
-| Live smoke (`mark_unhealthy`) | [scripts/ops_failover_live_smoke.py](scripts/ops_failover_live_smoke.py)                                                   |
-| Chaos / probe                 | `[app/ops/chaos.py](app/ops/chaos.py)`, `[app/ops/prober.py](app/ops/prober.py)`                                           |
-| Failover                      | `[app/ops/failover.py](app/ops/failover.py)`                                                                               |
-| Provider notice UX            | `[frontend/src/hooks/useWebSocket.ts](frontend/src/hooks/useWebSocket.ts)`, `[frontend/src/App.tsx](frontend/src/App.tsx)` |
+| Standby + Last verified       | [deploy/MULTI_CLOUD.md](../../../deploy/MULTI_CLOUD.md)                                                                             |
+| Wake / sleep / cycle          | [scripts/aws_standby.py](../../../scripts/aws_standby.py)                                                                           |
+| Live smoke (`mark_unhealthy`) | [scripts/ops_failover_live_smoke.py](../../../scripts/ops_failover_live_smoke.py)                                                   |
+| Chaos / probe                 | `[app/ops/chaos.py](../../../app/ops/chaos.py)`, `[app/ops/prober.py](../../../app/ops/prober.py)`                                           |
+| Failover                      | `[app/ops/failover.py](../../../app/ops/failover.py)`                                                                               |
+| Provider notice UX            | `[frontend/src/hooks/useWebSocket.ts](../../../frontend/src/hooks/useWebSocket.ts)`, `[frontend/src/App.tsx](../../../frontend/src/App.tsx)` |
 | AWS instance                  | `i-0360ab28632a3c4a0` / EIP `18.227.172.81` / SG `launch-wizard-1`                                                         |
 | Control plane                 | `http://5.78.186.223` (HTTP for `/ops` and `/health`)                                                                      |
 

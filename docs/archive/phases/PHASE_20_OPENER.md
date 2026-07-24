@@ -14,7 +14,7 @@ Phases 1–19 are complete. The live graph runs POV agents, combiners, defense, 
 | `interruption_flag` in GraphState (unused) | Redis interrupt flag + Celery task revoke |
 | Progress text only during combiners | Combiners/defense/WR unchanged (JSON nodes, no token stream) |
 
-Architecture docs: [AI_MAP.md](AI_MAP.md), [ROADMAP.md](ROADMAP.md), [SCHEMA.md](SCHEMA.md).
+Architecture docs: [AI_MAP.md](../../../AI_MAP.md), [ROADMAP.md](../../../ROADMAP.md), [SCHEMA.md](../../../SCHEMA.md).
 
 ---
 
@@ -98,7 +98,7 @@ pytest tests/
 
 ## Verify on production
 
-See [deploy/SERVER_CHECKLIST.md](deploy/SERVER_CHECKLIST.md). After deploy:
+See [deploy/SERVER_CHECKLIST.md](../../../deploy/SERVER_CHECKLIST.md). After deploy:
 
 1. L0 streaming smoke test
 2. L4 multi-POV specialist streaming during `agents` stage

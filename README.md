@@ -10,17 +10,16 @@ Event-driven AI orchestration engine with multi-agent LangGraph pipelines, WebSo
 | Doc | Contents |
 |-----|----------|
 | [AI_MAP.md](AI_MAP.md) | Full target AI chain, POV agent vision, current implementation |
-| [ROADMAP.md](ROADMAP.md) | Completed phases 1–19 and planned phases 20+ |
 | [SCHEMA.md](SCHEMA.md) | Panel, AgentTrace, MayorData, pipeline types, and follow-up fields |
-| [PHASE_15B_OPENER.md](PHASE_15B_OPENER.md) | Session brief for Phase 15B POV agent matrix |
-| [PHASE_16_OPENER.md](PHASE_16_OPENER.md) | Session brief for Phase 16 product modes |
-| [PHASE_17_OPENER.md](PHASE_17_OPENER.md) | Session brief for Phase 17 chain profiles (L0–L4) |
-| [PHASE_18_OPENER.md](PHASE_18_OPENER.md) | Session brief for Phase 18 status wall + results wall |
-| [PHASE_19_OPENER.md](PHASE_19_OPENER.md) | Session brief for Phase 19 interactive learning UX |
+| [ROADMAP.md](ROADMAP.md) | Completed phases 1–21 and the multi-cloud ops hardening log |
+| [CLAUDE.md](CLAUDE.md) | Working guide: build/test, architecture, conventions, file pointers |
 | [LOCAL_DEV.md](LOCAL_DEV.md) | Windows + Docker Compose + Ollama local setup |
 | [deploy/DEPLOY.md](deploy/DEPLOY.md) | Hetzner production deployment |
+| [deploy/MULTI_CLOUD.md](deploy/MULTI_CLOUD.md) | Multi-cloud ops control plane, failover & HA (authoritative) |
+| [docs/archive/phases/](docs/archive/phases/) | Historical per-phase opening briefs (15B–21) |
+| [docs/archive/ops/](docs/archive/ops/) | Historical multi-cloud / CP-HA session briefs |
 
-## Current graph (Phase 19 — interactive follow-ups + L0–L4 chain profiles)
+## Current graph (through Phase 21 — two-phase presenter, interactive follow-ups, L0–L4 chain profiles)
 
 Mode and **depth** selectors in the frontend header. Product modes steer intent; chain profiles gate graph depth. The UI includes a **status wall** (live pipeline stage from `pipeline_stage` on Panels), a **virtual folder tree** sidebar, and a **results wall** filtered by `folder_path`. Multi-POV completed Panels expose structured `pov_segments` with **clickable segment titles** for drill-down. Completed Panels show **LLM-generated follow-up chips** (`follow_up_options` + `follow_up_kinds`). List-intent prompts (e.g. "top 10 beaches") render as **ranked numbered lists** when applicable.
 

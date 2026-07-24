@@ -13,11 +13,11 @@ Multi-cloud ops control plane is live on Hetzner (`5.78.186.223`). AWS standby
 - Live failover smoke: Hetzner simulate-unhealthy → switch to AWS after 3 probes → recover
 - AWS stopped again in `finally`
 
-Reference: [deploy/MULTI_CLOUD.md](deploy/MULTI_CLOUD.md) (Last verified block),
-[scripts/aws_standby.py](scripts/aws_standby.py),
-[scripts/ops_failover_live_smoke.py](scripts/ops_failover_live_smoke.py).
+Reference: [deploy/MULTI_CLOUD.md](../../../deploy/MULTI_CLOUD.md) (Last verified block),
+[scripts/aws_standby.py](../../../scripts/aws_standby.py),
+[scripts/ops_failover_live_smoke.py](../../../scripts/ops_failover_live_smoke.py).
 
-Architecture / product chain docs: [AI_MAP.md](AI_MAP.md), [ROADMAP.md](ROADMAP.md).
+Architecture / product chain docs: [AI_MAP.md](../../../AI_MAP.md), [ROADMAP.md](../../../ROADMAP.md).
 This session is **ops hardening**, not LangGraph/POV work.
 
 ---
@@ -29,7 +29,7 @@ Documentation / verification only — **no failover logic changes**.
 ### 1. SSH access resilience (do first)
 
 Add a short **"If you're locked out"** subsection under AWS standby in
-[deploy/MULTI_CLOUD.md](deploy/MULTI_CLOUD.md).
+[deploy/MULTI_CLOUD.md](../../../deploy/MULTI_CLOUD.md).
 
 **Facts to document:**
 
@@ -177,9 +177,9 @@ Tackle in this order across subsequent sessions:
 
 | Concern | Location |
 |---------|----------|
-| Standby docs | [deploy/MULTI_CLOUD.md](deploy/MULTI_CLOUD.md) |
-| Wake/sleep/cycle | [scripts/aws_standby.py](scripts/aws_standby.py) |
-| Live smoke | [scripts/ops_failover_live_smoke.py](scripts/ops_failover_live_smoke.py) |
+| Standby docs | [deploy/MULTI_CLOUD.md](../../../deploy/MULTI_CLOUD.md) |
+| Wake/sleep/cycle | [scripts/aws_standby.py](../../../scripts/aws_standby.py) |
+| Live smoke | [scripts/ops_failover_live_smoke.py](../../../scripts/ops_failover_live_smoke.py) |
 | Chaos API | `POST /ops/chaos/{id}?kind=...` |
 | AWS instance | `i-0360ab28632a3c4a0` / EIP `18.227.172.81` / SG `launch-wizard-1` |
 | Control plane | `http://5.78.186.223` (IP-only; use HTTP not HTTPS for `/ops`) |

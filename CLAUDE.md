@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 TESS Engine is an event-driven AI orchestration engine. Users connect over a WebSocket; a Celery worker runs a LangGraph pipeline that streams "Panels" (status + content) back through Redis Pub/Sub. The graph fans out to **POV (point-of-view) agents** — one disciplinary lens per agent (chemistry, biology, economics, art, ui_design) — and optionally search. Combiners deduplicate and weave multi-POV output; Defense Review runs a QA pass before the Presenter packages a final Panel.
 
-Detailed reference: `AI_MAP.md` (architecture), `SCHEMA.md` (data types), `ROADMAP.md` (phase history), `PHASE_*_OPENER.md` (per-phase briefs).
+Detailed reference: `AI_MAP.md` (architecture), `SCHEMA.md` (data types), `ROADMAP.md` (phase history), `deploy/MULTI_CLOUD.md` (ops control-plane / HA). Historical per-phase and ops-hardening session briefs are archived under `docs/archive/phases/PHASE_*_OPENER.md` and `docs/archive/ops/`.
 
 ## Build, Lint, Test
 

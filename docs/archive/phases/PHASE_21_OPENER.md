@@ -6,7 +6,7 @@ Phases 1–20 are complete and deployed to **http://5.78.186.223** (CPX11, `llam
 
 **Phase 20 shipped:** token streaming for L0 + POV specialists; progress heartbeats for WR / combiners / defense; mid-chain steer; status wall stage workers.
 
-Architecture docs: [AI_MAP.md](AI_MAP.md), [ROADMAP.md](ROADMAP.md), [SCHEMA.md](SCHEMA.md), [PHASE_20_OPENER.md](PHASE_20_OPENER.md).
+Architecture docs: [AI_MAP.md](../../../AI_MAP.md), [ROADMAP.md](../../../ROADMAP.md), [SCHEMA.md](../../../SCHEMA.md), [PHASE_20_OPENER.md](PHASE_20_OPENER.md).
 
 ---
 
@@ -30,27 +30,27 @@ Status wall showed **Defense Delegator / Defense Review** badges while subtitle 
 
 ### 1. `review_passed` is a visibility dead-end
 
-Defense Review emits a Panel with `status: review_passed` and content from [`format_review_passed_content`](app/graph/defense_utils.py):
+Defense Review emits a Panel with `status: review_passed` and content from [`format_review_passed_content`](../../../app/graph/defense_utils.py):
 
 ```python
 return f"Quality checks passed ({passed}/{total}) — formatting final answer…"
 ```
 
-The graph then routes to **presenter** ([`builder.py`](app/graph/builder.py): `defense_review` → `route_after_defense` → `presenter`).
+The graph then routes to **presenter** ([`builder.py`](../../../app/graph/builder.py): `defense_review` → `route_after_defense` → `presenter`).
 
-Until presenter finishes, the frontend keeps the **last** in-flight Panel — the `review_passed` one ([`usePipelineStatus.ts`](frontend/src/hooks/usePipelineStatus.ts): `isInFlight` includes `review_passed`).
+Until presenter finishes, the frontend keeps the **last** in-flight Panel — the `review_passed` one ([`usePipelineStatus.ts`](../../../frontend/src/hooks/usePipelineStatus.ts): `isInFlight` includes `review_passed`).
 
 That Panel sets `pipeline_stage=defense`, so the status wall **never advances to Presenting** even though work moved on.
 
 ### 2. Presenter is silent during its heaviest step
 
-[`presenter_node`](app/graph/nodes/presenter.py) does:
+[`presenter_node`](../../../app/graph/nodes/presenter.py) does:
 
 1. Deterministic formatting (`apply_list_format`, `build_pov_segments`) — fast
 2. **`await generate_follow_up_options(...)`** — **blocking LLM call**, no `publish_panel`, no heartbeat
 3. Returns single `status: completed` Panel
 
-Phase 20 added heartbeats to combiners and defense **inside** their LLM calls. Presenter was **not** updated. The follow-up generator ([`follow_up_utils.py`](app/graph/follow_up_utils.py)) still uses `llm.generate()` with up to **3000 chars** of completed answer in the prompt.
+Phase 20 added heartbeats to combiners and defense **inside** their LLM calls. Presenter was **not** updated. The follow-up generator ([`follow_up_utils.py`](../../../app/graph/follow_up_utils.py)) still uses `llm.generate()` with up to **3000 chars** of completed answer in the prompt.
 
 On CPX11 this can be **another 2–5+ minute** Ollama call — completely invisible after the defense pass message.
 
@@ -73,7 +73,7 @@ The **8th** sequential inference happens **after** the UI claims formatting is u
 ### 4. Timeout math
 
 - Worker soft limit: **900s** (15 min) — configurable via `PIPELINE_SOFT_TIME_LIMIT_SECONDS`
-- Frontend client timeout: **900s** — [`useWebSocket.ts`](frontend/src/hooks/useWebSocket.ts)
+- Frontend client timeout: **900s** — [`useWebSocket.ts`](../../../frontend/src/hooks/useWebSocket.ts)
 - Per-call Ollama timeout: **300s** — `OLLAMA_REQUEST_TIMEOUT_SECONDS`
 
 8+ LLM calls × ~2–4 min each can still exceed 15 minutes on heavy prompts. The **presenter follow-up** is the last straw when combiners already consumed most of the budget.
@@ -97,7 +97,7 @@ The **8th** sequential inference happens **after** the UI claims formatting is u
 
 ### Deliverable 1 — Two-phase presenter (preferred)
 
-Split [`presenter_node`](app/graph/nodes/presenter.py):
+Split [`presenter_node`](../../../app/graph/nodes/presenter.py):
 
 1. **Phase A (immediate):** Publish `status: completed` Panel with final `content`, `pov_segments`, `content_format`, `pipeline_stage: done`, and **`DEFAULT_FOLLOW_UP_OPTIONS`** (static chips).
 2. **Phase B (best-effort):** Run `generate_follow_up_options`; publish **Panel update** (same `panel_id`) with LLM chips + `follow_up_kinds`, or skip if interrupt/timeout.
@@ -111,11 +111,11 @@ Split [`presenter_node`](app/graph/nodes/presenter.py):
 If not splitting presenter:
 
 - Publish `status: processing` Panel at `pipeline_stage=presenting` before follow-up LLM
-- Wrap `generate_follow_up_options` with [`generate_with_progress_heartbeat`](app/graph/progress_utils.py) and label `**Presenter** — generating follow-up suggestions`
+- Wrap `generate_follow_up_options` with [`generate_with_progress_heartbeat`](../../../app/graph/progress_utils.py) and label `**Presenter** — generating follow-up suggestions`
 
 ### Deliverable 3 — Status wall fix for `review_passed`
 
-Frontend ([`usePipelineStatus.ts`](frontend/src/hooks/usePipelineStatus.ts)):
+Frontend ([`usePipelineStatus.ts`](../../../frontend/src/hooks/usePipelineStatus.ts)):
 
 - When `status === "review_passed"`, treat `currentStage` as **`presenting`** (not `defense`)
 - Show **Presenter** in `activeAgents`
@@ -125,9 +125,9 @@ Optional backend: defense `review_passed` Panel sets `pipeline_stage=presenting`
 
 ### Deliverable 4 — CPX11 fast path (env flag)
 
-Add `SKIP_LLM_FOLLOW_UPS=true` (or auto when `OLLAMA_MODEL` contains `:1b`) to use [`build_fallback_follow_ups`](app/graph/follow_up_utils.py) only — no extra inference on small hardware.
+Add `SKIP_LLM_FOLLOW_UPS=true` (or auto when `OLLAMA_MODEL` contains `:1b`) to use [`build_fallback_follow_ups`](../../../app/graph/follow_up_utils.py) only — no extra inference on small hardware.
 
-Document in [`.env.prod.example`](.env.prod.example) and [deploy/SERVER_CHECKLIST.md](deploy/SERVER_CHECKLIST.md).
+Document in [`.env.prod.example`](../../../.env.prod.example) and [deploy/SERVER_CHECKLIST.md](../../../deploy/SERVER_CHECKLIST.md).
 
 ### Deliverable 5 — Timeout / observability
 
@@ -171,15 +171,15 @@ pytest tests/test_presenter_delivery.py tests/test_follow_up_options.py -v
 
 | Area | Path |
 |------|------|
-| Presenter (main change) | [`app/graph/nodes/presenter.py`](app/graph/nodes/presenter.py) |
-| Follow-up LLM | [`app/graph/follow_up_utils.py`](app/graph/follow_up_utils.py) |
-| Defense pass message | [`app/graph/defense_utils.py`](app/graph/defense_utils.py) (`format_review_passed_content`) |
-| Progress heartbeat | [`app/graph/progress_utils.py`](app/graph/progress_utils.py) |
-| Panel stream | [`app/graph/panel_stream.py`](app/graph/panel_stream.py) |
-| Status wall | [`frontend/src/hooks/usePipelineStatus.ts`](frontend/src/hooks/usePipelineStatus.ts) |
-| In-flight / merge | [`frontend/src/hooks/useWebSocket.ts`](frontend/src/hooks/useWebSocket.ts) |
-| Worker / timeout | [`app/worker.py`](app/worker.py), [`app/core/config.py`](app/core/config.py) |
-| Graph routing | [`app/graph/builder.py`](app/graph/builder.py), [`app/graph/routing.py`](app/graph/routing.py) |
+| Presenter (main change) | [`app/graph/nodes/presenter.py`](../../../app/graph/nodes/presenter.py) |
+| Follow-up LLM | [`app/graph/follow_up_utils.py`](../../../app/graph/follow_up_utils.py) |
+| Defense pass message | [`app/graph/defense_utils.py`](../../../app/graph/defense_utils.py) (`format_review_passed_content`) |
+| Progress heartbeat | [`app/graph/progress_utils.py`](../../../app/graph/progress_utils.py) |
+| Panel stream | [`app/graph/panel_stream.py`](../../../app/graph/panel_stream.py) |
+| Status wall | [`frontend/src/hooks/usePipelineStatus.ts`](../../../frontend/src/hooks/usePipelineStatus.ts) |
+| In-flight / merge | [`frontend/src/hooks/useWebSocket.ts`](../../../frontend/src/hooks/useWebSocket.ts) |
+| Worker / timeout | [`app/worker.py`](../../../app/worker.py), [`app/core/config.py`](../../../app/core/config.py) |
+| Graph routing | [`app/graph/builder.py`](../../../app/graph/builder.py), [`app/graph/routing.py`](../../../app/graph/routing.py) |
 
 **New files (expected):**
 

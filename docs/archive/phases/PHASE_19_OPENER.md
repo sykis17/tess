@@ -4,7 +4,7 @@
 
 Phases 1–18 are complete. The live graph runs **POV agents**, **curator/editor combiners**, **defense**, **presenter**, **product modes** (Research / Planner / Coding / Builder), **chain profiles** (L0–L4 depth gates), and a **status wall + results wall** with structured **POV segments** on multi-lens completed Panels.
 
-Architecture docs: [AI_MAP.md](AI_MAP.md), [ROADMAP.md](ROADMAP.md), [SCHEMA.md](SCHEMA.md).
+Architecture docs: [AI_MAP.md](../../../AI_MAP.md), [ROADMAP.md](../../../ROADMAP.md), [SCHEMA.md](../../../SCHEMA.md).
 
 **Phase 19 goal:** Make results **interactive** — drill-down on segment titles, LLM-generated follow-up suggestions (context-related and adjacent), structured list formats, and **choice themes** (four steer options) — replacing static mock follow-up buttons.
 
@@ -23,15 +23,15 @@ Architecture docs: [AI_MAP.md](AI_MAP.md), [ROADMAP.md](ROADMAP.md), [SCHEMA.md]
 
 | Area | Status |
 |------|--------|
-| Status wall | [`StatusWall.tsx`](frontend/src/components/StatusWall.tsx) + [`usePipelineStatus.ts`](frontend/src/hooks/usePipelineStatus.ts) — reads `pipeline_stage` from in-flight Panels |
-| Folder tree | [`FolderTree.tsx`](frontend/src/components/FolderTree.tsx) — virtual tree from [`app/core/folder_tree.py`](app/core/folder_tree.py) |
-| Results wall | [`ResultsWall.tsx`](frontend/src/components/ResultsWall.tsx) — filters Panels by `folder_path` |
-| POV segments | [`PanelSegments.tsx`](frontend/src/components/PanelSegments.tsx) — structured blocks when `pov_segments.length > 0` |
-| Segment builder | [`app/graph/pov_segments.py`](app/graph/pov_segments.py) — `build_pov_segments()` with mayor_data fallback |
-| Pipeline stages | [`app/graph/pipeline_stages.py`](app/graph/pipeline_stages.py) — `routing` → `agents` → `combining` → `defense` → `presenting` → `done` |
-| Panel schema | `pipeline_stage`, `pov_segments` / `PanelSegment` on [`Panel`](app/graph/schemas.py) |
-| Follow-up buttons | [`PanelCard`](frontend/src/components/PanelCard.tsx) footer — static [`DEFAULT_FOLLOW_UP_OPTIONS`](app/graph/schemas.py) from presenter |
-| Conversation memory | Redis history via [`app/core/conversation.py`](app/core/conversation.py); WR prompt already mentions "tell me more about …" |
+| Status wall | [`StatusWall.tsx`](../../../frontend/src/components/StatusWall.tsx) + [`usePipelineStatus.ts`](../../../frontend/src/hooks/usePipelineStatus.ts) — reads `pipeline_stage` from in-flight Panels |
+| Folder tree | [`FolderTree.tsx`](../../../frontend/src/components/FolderTree.tsx) — virtual tree from [`app/core/folder_tree.py`](../../../app/core/folder_tree.py) |
+| Results wall | [`ResultsWall.tsx`](../../../frontend/src/components/ResultsWall.tsx) — filters Panels by `folder_path` |
+| POV segments | [`PanelSegments.tsx`](../../../frontend/src/components/PanelSegments.tsx) — structured blocks when `pov_segments.length > 0` |
+| Segment builder | [`app/graph/pov_segments.py`](../../../app/graph/pov_segments.py) — `build_pov_segments()` with mayor_data fallback |
+| Pipeline stages | [`app/graph/pipeline_stages.py`](../../../app/graph/pipeline_stages.py) — `routing` → `agents` → `combining` → `defense` → `presenting` → `done` |
+| Panel schema | `pipeline_stage`, `pov_segments` / `PanelSegment` on [`Panel`](../../../app/graph/schemas.py) |
+| Follow-up buttons | [`PanelCard`](../../../frontend/src/components/PanelCard.tsx) footer — static [`DEFAULT_FOLLOW_UP_OPTIONS`](../../../app/graph/schemas.py) from presenter |
+| Conversation memory | Redis history via [`app/core/conversation.py`](../../../app/core/conversation.py); WR prompt already mentions "tell me more about …" |
 | Tests | **76 total** — `test_pov_routing` (13), `test_combiner_utils` (7), `test_product_modes` (17), `test_chain_profiles` (24), `test_pipeline_stages` (6), `test_pov_segments` (9) |
 | Canonical multi-POV | *"Design a science app UI covering aesthetics and usability"* at `L4` → `art` + `ui_design` → combiners → defense → `pov_segments` for Art + UI Design |
 
@@ -41,7 +41,7 @@ These shipped during Phase 18 polish; treat as regression guards for Phase 19 wo
 
 | Fix | Behavior | Key code |
 |-----|----------|----------|
-| **Mayor_data fallback** | When L4 combiner merges multi-POV into one thematic `usable_answer`, or thematic segments don't cover ≥2 routed POVs, builder falls back to per-specialist `mayor_data` segments | `_segments_cover_multiple_povs`, `_segments_from_mayor_data` in [`pov_segments.py`](app/graph/pov_segments.py) |
+| **Mayor_data fallback** | When L4 combiner merges multi-POV into one thematic `usable_answer`, or thematic segments don't cover ≥2 routed POVs, builder falls back to per-specialist `mayor_data` segments | `_segments_cover_multiple_povs`, `_segments_from_mayor_data` in [`pov_segments.py`](../../../app/graph/pov_segments.py) |
 | **Single-lens regression** | Researcher with multiple thematic `usable_answers` (e.g. 5 cybersecurity themes) must **not** render duplicate POV blocks — flat `content` only | `_is_single_lens_run`, `_segments_share_single_lens` |
 | **Search + researcher L4** | `researcher` + `resource_reader` runs combiners; multiple `usable_answers` are correct as flat markdown — **no** `pov_segments` (single specialist lens) | `_count_specialists` excludes `resource_reader`; `_is_single_lens_run` returns `[]` |
 
@@ -122,7 +122,7 @@ User clicks segment title in PanelSegments
   → new Panel streams with pipeline_stage progression
 ```
 
-**Frontend:** Add `onSegmentClick(title: string, segment?: PanelSegment)` to [`PanelSegments`](frontend/src/components/PanelSegments.tsx); thread through [`PanelCard`](frontend/src/components/PanelCard.tsx) → [`ResultsWall`](frontend/src/components/ResultsWall.tsx) → [`App.tsx`](frontend/src/App.tsx) `handleSend`. Style titles as buttons/links (`cursor: pointer`, focus ring).
+**Frontend:** Add `onSegmentClick(title: string, segment?: PanelSegment)` to [`PanelSegments`](../../../frontend/src/components/PanelSegments.tsx); thread through [`PanelCard`](../../../frontend/src/components/PanelCard.tsx) → [`ResultsWall`](../../../frontend/src/components/ResultsWall.tsx) → [`App.tsx`](../../../frontend/src/App.tsx) `handleSend`. Style titles as buttons/links (`cursor: pointer`, focus ring).
 
 **Optional enrichment:** Include segment `content` excerpt or `source_agents` in a hidden context block for WR — v1 can rely on Redis conversation history if presenter appends the completed answer (already happens via `append_conversation_turn` in worker).
 
@@ -147,7 +147,7 @@ Map to existing `follow_up_options: list[str]` for backward compatibility (chip 
 
 **Detection:** WR or presenter recognizes list intent (regex + LLM): *"top N"*, *"best X"*, *"list of"*, *"ranked"*.
 
-**Output:** Presenter formats `content` with numbered markdown list or a new optional `content_format: "ranked_list" | "markdown"` field. Frontend [`PanelContent`](frontend/src/components/PanelContent.tsx) can render ordered lists with stronger typography when format is set.
+**Output:** Presenter formats `content` with numbered markdown list or a new optional `content_format: "ranked_list" | "markdown"` field. Frontend [`PanelContent`](../../../frontend/src/components/PanelContent.tsx) can render ordered lists with stronger typography when format is set.
 
 **Combiner hint:** For L4 multi-POV list prompts, combiner micro may still merge — list format applies to final presenter output, not per-segment POV blocks.
 
@@ -264,7 +264,7 @@ Prefer **no new required fields** — empty `follow_up_options` falls back to de
 
 ### WR prompt — follow-up aware but no suggestions
 
-[`app/graph/prompts.py`](app/graph/prompts.py) mentions interpreting *"tell me more about …"* from history. Phase 19 adds explicit suggestion generation post-presenter (not WR-only) unless product decision splits WR clarifying questions on **next** message intake.
+[`app/graph/prompts.py`](../../../app/graph/prompts.py) mentions interpreting *"tell me more about …"* from history. Phase 19 adds explicit suggestion generation post-presenter (not WR-only) unless product decision splits WR clarifying questions on **next** message intake.
 
 ### App — single send path (reuse)
 
@@ -305,7 +305,7 @@ Drill-down and chips should call `handleSend` with constructed text — no new t
 | 3 | **Presenter** | Replace static `DEFAULT_FOLLOW_UP_OPTIONS` with generated list + fallback |
 | 4 | **List format** | WR and/or presenter detects list intent; formats numbered output; optional `content_format` |
 | 5 | **Choice themes** | Ensure 4 steer options in generator prompt; document slot semantics |
-| 6 | **Frontend types** | Extend [`frontend/src/types/panel.ts`](frontend/src/types/panel.ts) if metadata added |
+| 6 | **Frontend types** | Extend [`frontend/src/types/panel.ts`](../../../frontend/src/types/panel.ts) if metadata added |
 | 7 | **PanelCard / PanelSegments** | Clickable titles; optional chip kind styling |
 | 8 | **WR prompt** | Strengthen follow-up + list-intent routing hints (optional clarifying question on ambiguous drill-down) |
 | 9 | **Tests** | `tests/test_follow_up_options.py`, `tests/test_list_format.py`; extend `test_pov_segments` regression |
@@ -315,15 +315,15 @@ Drill-down and chips should call `handleSend` with constructed text — no new t
 
 ## Implementation order
 
-1. [`app/graph/follow_up_utils.py`](app/graph/follow_up_utils.py) — Pydantic models + `generate_follow_up_options()` with mock/LLM path
-2. [`app/graph/nodes/presenter.py`](app/graph/nodes/presenter.py) — integrate generator; fallback to `DEFAULT_FOLLOW_UP_OPTIONS`
+1. [`app/graph/follow_up_utils.py`](../../../app/graph/follow_up_utils.py) — Pydantic models + `generate_follow_up_options()` with mock/LLM path
+2. [`app/graph/nodes/presenter.py`](../../../app/graph/nodes/presenter.py) — integrate generator; fallback to `DEFAULT_FOLLOW_UP_OPTIONS`
 3. List-format detection + markdown template in presenter (and WR hint if needed)
-4. [`frontend/src/components/PanelSegments.tsx`](frontend/src/components/PanelSegments.tsx) — clickable titles + callback props
-5. [`frontend/src/components/PanelCard.tsx`](frontend/src/components/PanelCard.tsx) — thread `onSegmentClick`; footer chip polish
-6. [`frontend/src/components/ResultsWall.tsx`](frontend/src/components/ResultsWall.tsx) + [`App.tsx`](frontend/src/App.tsx) — wire drill-down to `handleSend`
-7. [`tests/test_follow_up_options.py`](tests/test_follow_up_options.py) — generator fallback, presenter emits non-default options
-8. [`tests/test_list_format.py`](tests/test_list_format.py) — top-N markdown structure
-9. Regression: [`tests/test_pov_segments.py`](tests/test_pov_segments.py) — all 9 tests green
+4. [`frontend/src/components/PanelSegments.tsx`](../../../frontend/src/components/PanelSegments.tsx) — clickable titles + callback props
+5. [`frontend/src/components/PanelCard.tsx`](../../../frontend/src/components/PanelCard.tsx) — thread `onSegmentClick`; footer chip polish
+6. [`frontend/src/components/ResultsWall.tsx`](../../../frontend/src/components/ResultsWall.tsx) + [`App.tsx`](../../../frontend/src/App.tsx) — wire drill-down to `handleSend`
+7. [`tests/test_follow_up_options.py`](../../../tests/test_follow_up_options.py) — generator fallback, presenter emits non-default options
+8. [`tests/test_list_format.py`](../../../tests/test_list_format.py) — top-N markdown structure
+9. Regression: [`tests/test_pov_segments.py`](../../../tests/test_pov_segments.py) — all 9 tests green
 10. Docs + deploy
 
 ---
@@ -371,7 +371,7 @@ Detection can live in WR `current_task` summary or presenter post-processing of 
 
 When touching presenter output, preserve:
 
-- `build_pov_segments()` rules in [`pov_segments.py`](app/graph/pov_segments.py) — especially `_is_single_lens_run` and mayor_data fallback
+- `build_pov_segments()` rules in [`pov_segments.py`](../../../app/graph/pov_segments.py) — especially `_is_single_lens_run` and mayor_data fallback
 - Search + researcher: `active_agents = ["researcher"]` + `resource_reader` in `mayor_data` → `pov_segments == []`
 - Multi art + ui_design merged combiner output → 2 mayor_data segments
 
@@ -427,16 +427,16 @@ pytest tests/test_follow_up_options.py tests/test_list_format.py
 
 | Area | Path |
 |------|------|
-| Graph | [`app/graph/builder.py`](app/graph/builder.py) |
-| Presenter | [`app/graph/nodes/presenter.py`](app/graph/nodes/presenter.py) |
-| POV segments | [`app/graph/pov_segments.py`](app/graph/pov_segments.py) |
-| WR | [`app/graph/nodes/wide_receiver.py`](app/graph/nodes/wide_receiver.py) |
-| Schemas | [`app/graph/schemas.py`](app/graph/schemas.py), [`SCHEMA.md`](SCHEMA.md) |
-| Conversation | [`app/core/conversation.py`](app/core/conversation.py) |
-| Worker / WS | [`app/worker.py`](app/worker.py), [`app/api/ws.py`](app/api/ws.py) |
-| Frontend shell | [`frontend/src/App.tsx`](frontend/src/App.tsx) |
-| Panel UI | [`frontend/src/components/PanelCard.tsx`](frontend/src/components/PanelCard.tsx), [`PanelSegments.tsx`](frontend/src/components/PanelSegments.tsx) |
-| Results wall | [`frontend/src/components/ResultsWall.tsx`](frontend/src/components/ResultsWall.tsx) |
+| Graph | [`app/graph/builder.py`](../../../app/graph/builder.py) |
+| Presenter | [`app/graph/nodes/presenter.py`](../../../app/graph/nodes/presenter.py) |
+| POV segments | [`app/graph/pov_segments.py`](../../../app/graph/pov_segments.py) |
+| WR | [`app/graph/nodes/wide_receiver.py`](../../../app/graph/nodes/wide_receiver.py) |
+| Schemas | [`app/graph/schemas.py`](../../../app/graph/schemas.py), [`SCHEMA.md`](../../../SCHEMA.md) |
+| Conversation | [`app/core/conversation.py`](../../../app/core/conversation.py) |
+| Worker / WS | [`app/worker.py`](../../../app/worker.py), [`app/api/ws.py`](../../../app/api/ws.py) |
+| Frontend shell | [`frontend/src/App.tsx`](../../../frontend/src/App.tsx) |
+| Panel UI | [`frontend/src/components/PanelCard.tsx`](../../../frontend/src/components/PanelCard.tsx), [`PanelSegments.tsx`](../../../frontend/src/components/PanelSegments.tsx) |
+| Results wall | [`frontend/src/components/ResultsWall.tsx`](../../../frontend/src/components/ResultsWall.tsx) |
 
 **New files (expected):**
 
@@ -479,16 +479,16 @@ cd frontend && npm run dev
 
 | Doc | Change |
 |-----|--------|
-| [AI_MAP.md](AI_MAP.md) | Document interactive follow-ups + drill-down as **live** |
-| [SCHEMA.md](SCHEMA.md) | `follow_up_options` generation; optional `content_format` |
-| [ROADMAP.md](ROADMAP.md) | Check off Phase 19; move Phase 20 to "Next" |
-| [README.md](README.md) | Update current graph line to Phase 19 |
+| [AI_MAP.md](../../../AI_MAP.md) | Document interactive follow-ups + drill-down as **live** |
+| [SCHEMA.md](../../../SCHEMA.md) | `follow_up_options` generation; optional `content_format` |
+| [ROADMAP.md](../../../ROADMAP.md) | Check off Phase 19; move Phase 20 to "Next" |
+| [README.md](../../../README.md) | Update current graph line to Phase 19 |
 
 ---
 
 ## Request
 
-Please review [AI_MAP.md](AI_MAP.md) (current chain), [SCHEMA.md](SCHEMA.md) (`follow_up_options`), and [ROADMAP.md](ROADMAP.md) (Phase 19 scope) before starting.
+Please review [AI_MAP.md](../../../AI_MAP.md) (current chain), [SCHEMA.md](../../../SCHEMA.md) (`follow_up_options`), and [ROADMAP.md](../../../ROADMAP.md) (Phase 19 scope) before starting.
 
 **Goal:** Implement Phase 19 — clickable segment drill-down, LLM-generated `follow_up_options` (context-related, adjacent, choice themes), structured list formats, tests, docs, commit + deploy.
 

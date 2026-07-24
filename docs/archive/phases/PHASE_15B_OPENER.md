@@ -14,7 +14,7 @@ Phases 1–15 are complete and deployed. Phase 15 shipped subject agent **scaffo
 
 **Example:** *"Design a user interface for a science app"* → WR alarms `art` (aesthetics, composition) + `ui_design` (patterns, usability) + optional `coder` (implementation) → combiners weave POV segments → defense keeps output reasonable → presenter.
 
-Architecture docs: [AI_MAP.md](AI_MAP.md), [ROADMAP.md](ROADMAP.md), [SCHEMA.md](SCHEMA.md).
+Architecture docs: [AI_MAP.md](../../../AI_MAP.md), [ROADMAP.md](../../../ROADMAP.md), [SCHEMA.md](../../../SCHEMA.md).
 
 ---
 
@@ -158,7 +158,7 @@ Verify: processing Panel shows POV badges; `MayorData.pov` populated; combiners 
 
 ## Request
 
-Please review [AI_MAP.md](AI_MAP.md), [SCHEMA.md](SCHEMA.md), and [ROADMAP.md](ROADMAP.md) before starting.
+Please review [AI_MAP.md](../../../AI_MAP.md), [SCHEMA.md](../../../SCHEMA.md), and [ROADMAP.md](../../../ROADMAP.md) before starting.
 
 **Goal:** Implement Phase 15B POV agent matrix, fix routing override gap, migrate off depth-tier agents, commit + deploy.
 

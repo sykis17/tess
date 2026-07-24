@@ -6,7 +6,7 @@
 **implemented and unit-tested**, including optional Performance auto-wake,
 wake/sleep ops API, Sleep-all resting cost, and distinct Wake FAILED vs
 intentional-sleep UI. Track C (shared Redis / seamless) remains Session 9.
-Authoritative ops behavior: [deploy/MULTI_CLOUD.md](deploy/MULTI_CLOUD.md).
+Authoritative ops behavior: [deploy/MULTI_CLOUD.md](../../../deploy/MULTI_CLOUD.md).
 
 ## Context
 
@@ -27,7 +27,7 @@ standbys, but only one is the active routing target under `active_only`.
 
 Prior openers: [MULTI_CLOUD_HARDENING_S7_OPENER.md](MULTI_CLOUD_HARDENING_S7_OPENER.md)
 … [MULTI_CLOUD_HARDENING_OPENER.md](MULTI_CLOUD_HARDENING_OPENER.md).  
-Reference: [deploy/MULTI_CLOUD.md](deploy/MULTI_CLOUD.md).  
+Reference: [deploy/MULTI_CLOUD.md](../../../deploy/MULTI_CLOUD.md).  
 Public narrative: http://5.78.186.223/architecture/
 
 This session is **routing-policy + ops-ui product work**, not LangGraph/POV.
@@ -102,7 +102,7 @@ is still “reconnect + resubmit” for sessions on a lost home.
    auto-sleep), failure clears lock + cooldown, per-provider margin override,
    Sleep all = hard reset. Manual Wake/Sleep always available.
 
-Written into [deploy/MULTI_CLOUD.md](deploy/MULTI_CLOUD.md).
+Written into [deploy/MULTI_CLOUD.md](../../../deploy/MULTI_CLOUD.md).
 
 ---
 
@@ -168,14 +168,14 @@ Shared session Redis + reconnect with same `session_id`. Out of scope for S8.
 
 | Concern | Location |
 |---------|----------|
-| Routing state / policy | [`app/ops/models.py`](app/ops/models.py) |
-| Dual / Performance modes | [`app/ops/routing_modes.py`](app/ops/routing_modes.py) |
-| Standby wake/sleep / auto-wake | [`app/ops/standby_power.py`](app/ops/standby_power.py) |
-| Failover / force active | [`app/ops/failover.py`](app/ops/failover.py) |
-| Assignment | [`app/ops/balancer.py`](app/ops/balancer.py) |
-| Ops admin UI | [`frontend/public/ops-ui/index.html`](frontend/public/ops-ui/index.html) |
-| Ops status UI | [`frontend/public/ops-status/index.html`](frontend/public/ops-status/index.html) |
-| Celery wake/sleep tasks | [`app/worker.py`](app/worker.py) |
+| Routing state / policy | [`app/ops/models.py`](../../../app/ops/models.py) |
+| Dual / Performance modes | [`app/ops/routing_modes.py`](../../../app/ops/routing_modes.py) |
+| Standby wake/sleep / auto-wake | [`app/ops/standby_power.py`](../../../app/ops/standby_power.py) |
+| Failover / force active | [`app/ops/failover.py`](../../../app/ops/failover.py) |
+| Assignment | [`app/ops/balancer.py`](../../../app/ops/balancer.py) |
+| Ops admin UI | [`frontend/public/ops-ui/index.html`](../../../frontend/public/ops-ui/index.html) |
+| Ops status UI | [`frontend/public/ops-status/index.html`](../../../frontend/public/ops-status/index.html) |
+| Celery wake/sleep tasks | [`app/worker.py`](../../../app/worker.py) |
 
 ---
 

@@ -4,7 +4,7 @@
 
 Phases 1–15C are complete. The live graph runs **POV agents** (disciplinary lenses), **curator/editor combiners** (Mayor sorts + flags overlap; Micro dedupes into consensus), **defense**, and **presenter**. Multi-POV pipelines complete within a **12-minute** Celery budget on CPX11 with `llama3.2:1b`.
 
-Architecture docs: [AI_MAP.md](AI_MAP.md), [ROADMAP.md](ROADMAP.md), [SCHEMA.md](SCHEMA.md).
+Architecture docs: [AI_MAP.md](../../../AI_MAP.md), [ROADMAP.md](../../../ROADMAP.md), [SCHEMA.md](../../../SCHEMA.md).
 
 **Phase 16 goal:** Add **product modes** — user-facing intent profiles that steer Wide Receiver routing and default chain depth **without** building four separate LangGraphs.
 
@@ -25,8 +25,8 @@ Architecture docs: [AI_MAP.md](AI_MAP.md), [ROADMAP.md](ROADMAP.md), [SCHEMA.md]
 | Mayor role | Curator — sort, catalog, `overlap_notes`, per-segment `source_agents` |
 | Micro role | Editor — dedupe, consensus prose ("Multiple sources confirm…") |
 | Schema | `MicroDataSegment.overlap_notes`, `source_agents` on segments + `UsableAnswer` |
-| Code | [`app/graph/prompts.py`](app/graph/prompts.py), [`app/graph/schemas.py`](app/graph/schemas.py), [`app/graph/combiner_utils.py`](app/graph/combiner_utils.py) |
-| Tests | 7 new tests in [`tests/test_combiner_utils.py`](tests/test_combiner_utils.py); **20 total** in Docker |
+| Code | [`app/graph/prompts.py`](../../../app/graph/prompts.py), [`app/graph/schemas.py`](../../../app/graph/schemas.py), [`app/graph/combiner_utils.py`](../../../app/graph/combiner_utils.py) |
+| Tests | 7 new tests in [`tests/test_combiner_utils.py`](../../../tests/test_combiner_utils.py); **20 total** in Docker |
 | Canonical multi-POV prompt | *"Design a science app UI covering aesthetics and usability"* → `art` + `ui_design` → combiners → defense |
 
 **Known limits (15C):**
@@ -203,7 +203,7 @@ def process_user_input(user_input: str, session_id: str) -> None:
 
 ### GraphState — no `product_mode` yet
 
-[`app/graph/state.py`](app/graph/state.py) — `GraphState` has 20 fields; `build_initial_state()` does not accept or set `product_mode`.
+[`app/graph/state.py`](../../../app/graph/state.py) — `GraphState` has 20 fields; `build_initial_state()` does not accept or set `product_mode`.
 
 **After Phase 16:**
 
@@ -263,19 +263,19 @@ product_mode: str  # add to GraphState; default "auto" in build_initial_state()
 
 ### Implementation order
 
-1. [`app/core/product_modes.py`](app/core/product_modes.py) — registry + validation + WR rule snippets
-2. [`app/core/ws_payload.py`](app/core/ws_payload.py) — `parse_incoming_payload()` (or inline in worker)
-3. [`app/graph/state.py`](app/graph/state.py) — `product_mode` on `GraphState` + `build_initial_state()`
-4. [`app/graph/schemas.py`](app/graph/schemas.py) — `product_mode` on `Panel`
-5. [`app/worker.py`](app/worker.py) — parse payload; pass mode into initial state; echo on Panels
-6. [`app/api/ws.py`](app/api/ws.py) — forward raw payload (no parse in WS layer)
-7. [`app/graph/prompts.py`](app/graph/prompts.py) — inject mode block into WR; optional combiner/defense appendices
-8. [`app/graph/routing.py`](app/graph/routing.py) — `apply_product_mode_routing()` after POV override (do not regress 15B)
-9. [`app/graph/nodes/wide_receiver.py`](app/graph/nodes/wide_receiver.py) — read `product_mode` from state; echo on processing Panel
-10. [`frontend/src/components/ModeSelector.tsx`](frontend/src/components/ModeSelector.tsx) + [`App.tsx`](frontend/src/App.tsx) — header selector
-11. [`frontend/src/hooks/useWebSocket.ts`](frontend/src/hooks/useWebSocket.ts) — JSON envelope when mode ≠ `auto`
-12. [`frontend/src/types/panel.ts`](frontend/src/types/panel.ts) — `product_mode?: string`
-13. [`tests/test_product_modes.py`](tests/test_product_modes.py) — routing nudges, parse, backward compat
+1. [`app/core/product_modes.py`](../../../app/core/product_modes.py) — registry + validation + WR rule snippets
+2. [`app/core/ws_payload.py`](../../../app/core/ws_payload.py) — `parse_incoming_payload()` (or inline in worker)
+3. [`app/graph/state.py`](../../../app/graph/state.py) — `product_mode` on `GraphState` + `build_initial_state()`
+4. [`app/graph/schemas.py`](../../../app/graph/schemas.py) — `product_mode` on `Panel`
+5. [`app/worker.py`](../../../app/worker.py) — parse payload; pass mode into initial state; echo on Panels
+6. [`app/api/ws.py`](../../../app/api/ws.py) — forward raw payload (no parse in WS layer)
+7. [`app/graph/prompts.py`](../../../app/graph/prompts.py) — inject mode block into WR; optional combiner/defense appendices
+8. [`app/graph/routing.py`](../../../app/graph/routing.py) — `apply_product_mode_routing()` after POV override (do not regress 15B)
+9. [`app/graph/nodes/wide_receiver.py`](../../../app/graph/nodes/wide_receiver.py) — read `product_mode` from state; echo on processing Panel
+10. [`frontend/src/components/ModeSelector.tsx`](../../../frontend/src/components/ModeSelector.tsx) + [`App.tsx`](../../../frontend/src/App.tsx) — header selector
+11. [`frontend/src/hooks/useWebSocket.ts`](../../../frontend/src/hooks/useWebSocket.ts) — JSON envelope when mode ≠ `auto`
+12. [`frontend/src/types/panel.ts`](../../../frontend/src/types/panel.ts) — `product_mode?: string`
+13. [`tests/test_product_modes.py`](../../../tests/test_product_modes.py) — routing nudges, parse, backward compat
 
 ---
 
@@ -300,7 +300,7 @@ def parse_incoming_payload(raw: str) -> tuple[str, str]:
 
 ### Mode registry sketch
 
-[`app/core/product_modes.py`](app/core/product_modes.py):
+[`app/core/product_modes.py`](../../../app/core/product_modes.py):
 
 ```python
 from enum import Enum
@@ -319,7 +319,7 @@ def validate_product_mode(mode: str | None) -> str: ...
 def get_wr_rules_block(mode: str) -> str: ...
 ```
 
-**Naming:** Mode key is `coding` (per [SCHEMA.md](SCHEMA.md)); display label in UI may read "Coding" or "Coding platform" (per [AI_MAP.md](AI_MAP.md) Main Product Functions).
+**Naming:** Mode key is `coding` (per [SCHEMA.md](../../../SCHEMA.md)); display label in UI may read "Coding" or "Coding platform" (per [AI_MAP.md](../../../AI_MAP.md) Main Product Functions).
 
 ### WR prompt pattern
 
@@ -458,8 +458,8 @@ docker compose restart worker   # pick up new WR prompts
 
 **UI checks:**
 
-- Mode selector visible in `app-header` beside session ID ([`App.tsx`](frontend/src/App.tsx)).
-- Completed Panel shows mode chip in [`PanelCard.tsx`](frontend/src/components/PanelCard.tsx) (near POV badges).
+- Mode selector visible in `app-header` beside session ID ([`App.tsx`](../../../frontend/src/App.tsx)).
+- Completed Panel shows mode chip in [`PanelCard.tsx`](../../../frontend/src/components/PanelCard.tsx) (near POV badges).
 - Plain-text send from legacy clients still works unchanged.
 
 **Canonical multi-POV regression (any mode or `auto`):**
@@ -472,16 +472,16 @@ docker compose restart worker   # pick up new WR prompts
 
 | Doc | Change |
 |-----|--------|
-| [AI_MAP.md](AI_MAP.md) | Update "Phase 15B — live" header to **15C**; mark product modes **live** under Main Product Functions |
-| [SCHEMA.md](SCHEMA.md) | Move `product_mode` from Planned → Live on Panel; document WS JSON envelope |
-| [ROADMAP.md](ROADMAP.md) | Check off Phase 16; move Phase 17 to "Next" |
-| [README.md](README.md) | Update current graph line to Phase 16; note mode selector |
+| [AI_MAP.md](../../../AI_MAP.md) | Update "Phase 15B — live" header to **15C**; mark product modes **live** under Main Product Functions |
+| [SCHEMA.md](../../../SCHEMA.md) | Move `product_mode` from Planned → Live on Panel; document WS JSON envelope |
+| [ROADMAP.md](../../../ROADMAP.md) | Check off Phase 16; move Phase 17 to "Next" |
+| [README.md](../../../README.md) | Update current graph line to Phase 16; note mode selector |
 
 ---
 
 ## Request
 
-Please review [AI_MAP.md](AI_MAP.md) (Main Product Functions), [SCHEMA.md](SCHEMA.md) (planned `product_mode`), and [ROADMAP.md](ROADMAP.md) before starting.
+Please review [AI_MAP.md](../../../AI_MAP.md) (Main Product Functions), [SCHEMA.md](../../../SCHEMA.md) (planned `product_mode`), and [ROADMAP.md](../../../ROADMAP.md) before starting.
 
 **Goal:** Implement Phase 16 product modes — mode selector in frontend, `product_mode` in graph state and Panels, mode-aware WR routing (with helpers), backward-compatible WebSocket transport, tests, docs, commit + deploy.
 

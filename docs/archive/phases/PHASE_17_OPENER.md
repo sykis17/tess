@@ -4,7 +4,7 @@
 
 Phases 1–16 are complete. The live graph runs **POV agents**, **curator/editor combiners**, **defense**, **presenter**, and **product modes** (Research / Planner / Coding / Builder). Multi-POV pipelines complete within a **12-minute** Celery budget on CPX11 with `llama3.2:1b`.
 
-Architecture docs: [AI_MAP.md](AI_MAP.md), [ROADMAP.md](ROADMAP.md), [SCHEMA.md](SCHEMA.md).
+Architecture docs: [AI_MAP.md](../../../AI_MAP.md), [ROADMAP.md](../../../ROADMAP.md), [SCHEMA.md](../../../SCHEMA.md).
 
 **Phase 17 goal:** Add user-selectable **chain profiles (L0–L4)** — output depth levels that gate which graph stages run — plus `output_level` on Panels and a **compare** UI for benchmarking the same question at different depths.
 
@@ -22,12 +22,12 @@ Architecture docs: [AI_MAP.md](AI_MAP.md), [ROADMAP.md](ROADMAP.md), [SCHEMA.md]
 
 | Area | Status |
 |------|--------|
-| Product modes | `auto`, `research`, `planner`, `coding`, `builder` — registry in [`app/core/product_modes.py`](app/core/product_modes.py) |
-| WS transport | Plain text → `auto`; JSON `{ text, product_mode }` via [`app/core/ws_payload.py`](app/core/ws_payload.py) |
-| Research guard | Prunes unmatched POVs; industry topics → `researcher` + search ([`app/graph/routing.py`](app/graph/routing.py) `_apply_research_pov_guard`) |
+| Product modes | `auto`, `research`, `planner`, `coding`, `builder` — registry in [`app/core/product_modes.py`](../../../app/core/product_modes.py) |
+| WS transport | Plain text → `auto`; JSON `{ text, product_mode }` via [`app/core/ws_payload.py`](../../../app/core/ws_payload.py) |
+| Research guard | Prunes unmatched POVs; industry topics → `researcher` + search ([`app/graph/routing.py`](../../../app/graph/routing.py) `_apply_research_pov_guard`) |
 | GraphState | `product_mode: str` on state + `build_initial_state()` |
 | Panels | `product_mode` echoed on processing + completed Panels |
-| Frontend | [`ModeSelector.tsx`](frontend/src/components/ModeSelector.tsx) in header |
+| Frontend | [`ModeSelector.tsx`](../../../frontend/src/components/ModeSelector.tsx) in header |
 | Tests | **37 total** — `test_pov_routing`, `test_combiner_utils`, `test_product_modes` |
 | Canonical multi-POV | *"Design a science app UI covering aesthetics and usability"* → `art` + `ui_design` → combiners → defense |
 
@@ -209,11 +209,11 @@ def parse_incoming_payload(raw: str) -> tuple[str, str]:
 
 ### GraphState — no `chain_profile` yet
 
-[`app/graph/state.py`](app/graph/state.py) — add `chain_profile: str`; `build_initial_state(..., chain_profile: str = "L4")`.
+[`app/graph/state.py`](../../../app/graph/state.py) — add `chain_profile: str`; `build_initial_state(..., chain_profile: str = "L4")`.
 
 ### Panel schema — `output_level` planned
 
-[`app/graph/schemas.py`](app/graph/schemas.py) — add `output_level: str | None = None`.
+[`app/graph/schemas.py`](../../../app/graph/schemas.py) — add `output_level: str | None = None`.
 
 ### Graph builder — single entry, no L0 branch
 
@@ -236,15 +236,15 @@ def parse_incoming_payload(raw: str) -> tuple[str, str]:
 
 ### Routing helpers — always full chain today
 
-[`app/graph/routing.py`](app/graph/routing.py) — `route_after_fan_in` always combiners-or-defense; `should_predict_defense` always True. Gate these on `chain_profile` from state.
+[`app/graph/routing.py`](../../../app/graph/routing.py) — `route_after_fan_in` always combiners-or-defense; `should_predict_defense` always True. Gate these on `chain_profile` from state.
 
 ### Presenter — no `output_level` echo
 
-[`app/graph/nodes/presenter.py`](app/graph/nodes/presenter.py) — add `output_level=state.get("chain_profile")` on Panel.
+[`app/graph/nodes/presenter.py`](../../../app/graph/nodes/presenter.py) — add `output_level=state.get("chain_profile")` on Panel.
 
 ### Frontend — mode only, no chain selector
 
-[`frontend/src/hooks/useWebSocket.ts`](frontend/src/hooks/useWebSocket.ts) — JSON when mode ≠ auto; add `chain_profile` when user picks non-default level.
+[`frontend/src/hooks/useWebSocket.ts`](../../../frontend/src/hooks/useWebSocket.ts) — JSON when mode ≠ auto; add `chain_profile` when user picks non-default level.
 
 ---
 
@@ -284,19 +284,19 @@ def parse_incoming_payload(raw: str) -> tuple[str, str]:
 
 ## Implementation order
 
-1. [`app/core/chain_profiles.py`](app/core/chain_profiles.py) — registry + validation + defaults
-2. [`app/core/ws_payload.py`](app/core/ws_payload.py) — parse `chain_profile`; resolve defaults
-3. [`app/graph/state.py`](app/graph/state.py) + [`app/graph/schemas.py`](app/graph/schemas.py)
-4. [`app/worker.py`](app/worker.py) — pass `chain_profile` into initial state
-5. [`app/graph/chain_gates.py`](app/graph/chain_gates.py) — pure gate functions (unit-testable)
-6. [`app/graph/nodes/direct_responder.py`](app/graph/nodes/direct_responder.py) — L0
-7. [`app/graph/builder.py`](app/graph/builder.py) — START branch + edges
-8. [`app/graph/routing.py`](app/graph/routing.py) — gate fan-out and post-fan-in
-9. [`app/graph/nodes/wide_receiver.py`](app/graph/nodes/wide_receiver.py) — agent cap, prediction badges
-10. [`app/graph/nodes/presenter.py`](app/graph/nodes/presenter.py) — `output_level` echo
+1. [`app/core/chain_profiles.py`](../../../app/core/chain_profiles.py) — registry + validation + defaults
+2. [`app/core/ws_payload.py`](../../../app/core/ws_payload.py) — parse `chain_profile`; resolve defaults
+3. [`app/graph/state.py`](../../../app/graph/state.py) + [`app/graph/schemas.py`](../../../app/graph/schemas.py)
+4. [`app/worker.py`](../../../app/worker.py) — pass `chain_profile` into initial state
+5. [`app/graph/chain_gates.py`](../../../app/graph/chain_gates.py) — pure gate functions (unit-testable)
+6. [`app/graph/nodes/direct_responder.py`](../../../app/graph/nodes/direct_responder.py) — L0
+7. [`app/graph/builder.py`](../../../app/graph/builder.py) — START branch + edges
+8. [`app/graph/routing.py`](../../../app/graph/routing.py) — gate fan-out and post-fan-in
+9. [`app/graph/nodes/wide_receiver.py`](../../../app/graph/nodes/wide_receiver.py) — agent cap, prediction badges
+10. [`app/graph/nodes/presenter.py`](../../../app/graph/nodes/presenter.py) — `output_level` echo
 11. Frontend: `types` → `useWebSocket` → `ChainProfileSelector` → `App` → `PanelCard` badge
 12. Compare UI (minimal v1)
-13. [`tests/test_chain_profiles.py`](tests/test_chain_profiles.py)
+13. [`tests/test_chain_profiles.py`](../../../tests/test_chain_profiles.py)
 14. Docs + deploy
 
 ---
@@ -405,14 +405,14 @@ pytest tests/test_chain_profiles.py
 
 | Area | Path |
 |------|------|
-| Graph | [`app/graph/builder.py`](app/graph/builder.py) |
+| Graph | [`app/graph/builder.py`](../../../app/graph/builder.py) |
 | Chain (new) | `app/core/chain_profiles.py`, `app/graph/chain_gates.py`, `app/graph/nodes/direct_responder.py` |
-| Modes | [`app/core/product_modes.py`](app/core/product_modes.py), [`app/graph/routing.py`](app/graph/routing.py) |
-| WR | [`app/graph/nodes/wide_receiver.py`](app/graph/nodes/wide_receiver.py) |
-| Combiners / defense | [`app/graph/combiner_utils.py`](app/graph/combiner_utils.py), [`app/graph/defense_utils.py`](app/graph/defense_utils.py) |
-| State / schema | [`app/graph/state.py`](app/graph/state.py), [`app/graph/schemas.py`](app/graph/schemas.py) |
-| Worker / WS | [`app/worker.py`](app/worker.py), [`app/api/ws.py`](app/api/ws.py) |
-| Frontend | [`frontend/src/App.tsx`](frontend/src/App.tsx), [`ModeSelector.tsx`](frontend/src/components/ModeSelector.tsx), [`useWebSocket.ts`](frontend/src/hooks/useWebSocket.ts) |
+| Modes | [`app/core/product_modes.py`](../../../app/core/product_modes.py), [`app/graph/routing.py`](../../../app/graph/routing.py) |
+| WR | [`app/graph/nodes/wide_receiver.py`](../../../app/graph/nodes/wide_receiver.py) |
+| Combiners / defense | [`app/graph/combiner_utils.py`](../../../app/graph/combiner_utils.py), [`app/graph/defense_utils.py`](../../../app/graph/defense_utils.py) |
+| State / schema | [`app/graph/state.py`](../../../app/graph/state.py), [`app/graph/schemas.py`](../../../app/graph/schemas.py) |
+| Worker / WS | [`app/worker.py`](../../../app/worker.py), [`app/api/ws.py`](../../../app/api/ws.py) |
+| Frontend | [`frontend/src/App.tsx`](../../../frontend/src/App.tsx), [`ModeSelector.tsx`](../../../frontend/src/components/ModeSelector.tsx), [`useWebSocket.ts`](../../../frontend/src/hooks/useWebSocket.ts) |
 
 **New files (expected):**
 
@@ -464,16 +464,16 @@ docker compose restart worker
 
 | Doc | Change |
 |-----|--------|
-| [AI_MAP.md](AI_MAP.md) | Mark output levels **live**; update "Proposed" → "Live" for L0–L4 |
-| [SCHEMA.md](SCHEMA.md) | `output_level` + `chain_profile` Planned → Live; document WS envelope |
-| [ROADMAP.md](ROADMAP.md) | Check off Phase 17; move Phase 18 to "Next" |
-| [README.md](README.md) | Update current graph line to Phase 17; note chain selector |
+| [AI_MAP.md](../../../AI_MAP.md) | Mark output levels **live**; update "Proposed" → "Live" for L0–L4 |
+| [SCHEMA.md](../../../SCHEMA.md) | `output_level` + `chain_profile` Planned → Live; document WS envelope |
+| [ROADMAP.md](../../../ROADMAP.md) | Check off Phase 17; move Phase 18 to "Next" |
+| [README.md](../../../README.md) | Update current graph line to Phase 17; note chain selector |
 
 ---
 
 ## Request
 
-Please review [AI_MAP.md](AI_MAP.md) (Output Levels), [SCHEMA.md](SCHEMA.md) (chain profiles), and [ROADMAP.md](ROADMAP.md) before starting.
+Please review [AI_MAP.md](../../../AI_MAP.md) (Output Levels), [SCHEMA.md](../../../SCHEMA.md) (chain profiles), and [ROADMAP.md](../../../ROADMAP.md) before starting.
 
 **Goal:** Implement Phase 17 chain profiles — L0 direct path, L1–L4 gates on the existing graph, `chain_profile` / `output_level` on state and Panels, frontend chain selector + minimal compare UI, tests, docs, commit + deploy.
 

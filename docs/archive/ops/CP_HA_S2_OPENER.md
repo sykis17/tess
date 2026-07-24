@@ -20,11 +20,11 @@ off**. Live smoke passed end-to-end:
 
 **Baseline artifacts (do not regress):**
 
-- [`app/ops/consensus.py`](app/ops/consensus.py), [`app/ops/fencing.py`](app/ops/fencing.py)
-- Redis Lua CAS in [`app/ops/store.py`](app/ops/store.py)
-- Overlay [`docker-compose.ops-ha.yml`](docker-compose.ops-ha.yml)
-- Smoke [`scripts/ops_cp_ha_smoke.py`](scripts/ops_cp_ha_smoke.py)
-- Docs: [deploy/MULTI_CLOUD.md](deploy/MULTI_CLOUD.md) § Control-plane HA v1
+- [`app/ops/consensus.py`](../../../app/ops/consensus.py), [`app/ops/fencing.py`](../../../app/ops/fencing.py)
+- Redis Lua CAS in [`app/ops/store.py`](../../../app/ops/store.py)
+- Overlay [`docker-compose.ops-ha.yml`](../../../docker-compose.ops-ha.yml)
+- Smoke [`scripts/ops_cp_ha_smoke.py`](../../../scripts/ops_cp_ha_smoke.py)
+- Docs: [deploy/MULTI_CLOUD.md](../../../deploy/MULTI_CLOUD.md) § Control-plane HA v1
 
 Default prod remains `OPS_HA_ENABLED=false` (single-writer). HA is opt-in overlay.
 

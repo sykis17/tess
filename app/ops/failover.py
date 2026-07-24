@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from app.ops import metrics
 from app.ops.models import (
     HealthSnapshot,
     OpsEvent,
@@ -134,6 +135,7 @@ def evaluate_failover(
                 details={"reason": "no_healthy_standby"},
             )
         )
+        metrics.record_failover("blocked", ops.get_policy().policy.value)
         return None
 
     candidates.sort(reverse=True)
@@ -162,55 +164,62 @@ def _switch(
 ) -> ProviderChangedMessage:
     from app.ops.fencing import FenceError, commit_fenced, resolve_write_fence_term
 
-    # etcd/cache prefilter — Redis CAS in commit_fenced is the real durable fence.
-    term = resolve_write_fence_term()
+    # ops.failover span re-raises on FenceError; the metric records only on success.
+    with metrics.get_tracer().start_as_current_span("ops.failover") as _sp:
+        _sp.set_attribute("ops.event_type", event_type)
+        _sp.set_attribute("ops.to_provider_id", to_id)
+        _sp.set_attribute("ops.from_provider_id", from_id or "")
 
-    dropped = ops.clear_assignments()
+        # etcd/cache prefilter — Redis CAS in commit_fenced is the real durable fence.
+        term = resolve_write_fence_term()
 
-    routing.last_failover_from = from_id
-    routing.last_failover_to = to_id
-    routing.active_provider_id = to_id
-    routing.sessions_dropped_last = dropped
-    routing.last_failover_at = utc_now()
-    # Leaving Dual peer stale on full switch is wrong — clear unless Dual recompute
-    if ops.get_policy().policy != RoutingPolicy.DUAL:
-        routing.dual_peer_id = None
-    routing.performance_challenger_id = None
-    routing.performance_challenger_streak = 0
-    ops.set_routing(routing)
+        dropped = ops.clear_assignments()
 
-    target = ops.get_provider(to_id)
-    msg = ProviderChangedMessage(
-        from_provider_id=from_id,
-        to_provider_id=to_id,
-        sessions_dropped=dropped,
-        ws_base_url=target.effective_ws_base_url() if target else None,
-    )
-    details: dict = {
-        "from": from_id,
-        "to": to_id,
-        "sessions_dropped": dropped,
-        "message": msg.message,
-    }
-    if operator_id:
-        details["operator_id"] = operator_id
-    ops.append_event(
-        OpsEvent(
-            event_type=event_type,
-            provider_id=to_id,
-            details=details,
+        routing.last_failover_from = from_id
+        routing.last_failover_to = to_id
+        routing.active_provider_id = to_id
+        routing.sessions_dropped_last = dropped
+        routing.last_failover_at = utc_now()
+        # Leaving Dual peer stale on full switch is wrong — clear unless Dual recompute
+        if ops.get_policy().policy != RoutingPolicy.DUAL:
+            routing.dual_peer_id = None
+        routing.performance_challenger_id = None
+        routing.performance_challenger_streak = 0
+        ops.set_routing(routing)
+
+        target = ops.get_provider(to_id)
+        msg = ProviderChangedMessage(
+            from_provider_id=from_id,
+            to_provider_id=to_id,
+            sessions_dropped=dropped,
+            ws_base_url=target.effective_ws_base_url() if target else None,
         )
-    )
-    try:
-        commit_fenced(fence_term=term)
-    except FenceError:
-        # commit_fenced already restored + demoted; do not publish.
-        raise
-    publish_provider_changed(msg)
-    logger.warning(
-        "Failover %s -> %s (dropped %s sessions)", from_id, to_id, dropped
-    )
-    return msg
+        details: dict = {
+            "from": from_id,
+            "to": to_id,
+            "sessions_dropped": dropped,
+            "message": msg.message,
+        }
+        if operator_id:
+            details["operator_id"] = operator_id
+        ops.append_event(
+            OpsEvent(
+                event_type=event_type,
+                provider_id=to_id,
+                details=details,
+            )
+        )
+        try:
+            commit_fenced(fence_term=term)
+        except FenceError:
+            # commit_fenced already restored + demoted; do not publish.
+            raise
+        publish_provider_changed(msg)
+        metrics.record_failover("switched", ops.get_policy().policy.value)
+        logger.warning(
+            "Failover %s -> %s (dropped %s sessions)", from_id, to_id, dropped
+        )
+        return msg
 
 
 def force_active_provider(

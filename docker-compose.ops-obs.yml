@@ -1,0 +1,71 @@
+# Opt-in OBSERVABILITY overlay for the ops/HA verification (Step 3).
+#
+# Layers ON TOP of the base + HA overlays; NOT part of the default deploy:
+#   docker compose -f docker-compose.yml \
+#                  -f docker-compose.ops-ha.yml \
+#                  -f docker-compose.ops-obs.yml -p tess-engine up --build -d
+#
+# Turns observability ON (metrics + tracing) and adds a self-hosted otel-collector that
+# writes exported spans to a local file the split-brain harness reads. Everything here is
+# self-hosted and off by default in production.
+#
+# Prefork note (§3a of the plan): the worker command is overridden to --concurrency=1 so
+# the single worker child binds the metrics port exactly once and increments the counters it
+# serves. An env-only overlay would NOT be enough — the base worker command has no
+# --concurrency and would fork per-CPU (the "counters silently never increment" trap).
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    # Verification-only scaffolding: run as root so the file exporter can write into the
+    # named spans volume (the distroless image's default UID 10001 cannot).
+    user: "0:0"
+    volumes:
+      - ./deploy/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ops_spans:/spans
+    expose:
+      - "4318"
+
+  web:
+    environment:
+      OPS_METRICS_ENABLED: "true"
+      OPS_TRACING_ENABLED: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_BSP_SCHEDULE_DELAY: "500"
+    depends_on:
+      otel-collector:
+        condition: service_started
+
+  web-standby:
+    environment:
+      OPS_METRICS_ENABLED: "true"
+      OPS_TRACING_ENABLED: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_BSP_SCHEDULE_DELAY: "500"
+    depends_on:
+      otel-collector:
+        condition: service_started
+
+  worker:
+    # MUST override the command (not just env): --concurrency=1 makes the prefork exposition
+    # correct. See §3a.
+    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=1
+    environment:
+      OPS_METRICS_ENABLED: "true"
+      OPS_METRICS_WORKER_PORT: "9109"
+      OPS_TRACING_ENABLED: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_BSP_SCHEDULE_DELAY: "500"
+    ports:
+      # localhost-bound → host-local, zero-egress (never on a public interface); this is the
+      # SECOND Prometheus scrape target (the web /metrics on :8000/:8001 is the first).
+      - "127.0.0.1:9109:9109"
+    depends_on:
+      otel-collector:
+        condition: service_started
+
+volumes:
+  # Verification-only span sink the harness reads via `docker cp`.
+  ops_spans:

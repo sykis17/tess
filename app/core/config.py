@@ -63,11 +63,24 @@ class Settings(BaseSettings):
     ops_etcd_lease_ttl_seconds: int = 10
     ops_etcd_campaign_interval_seconds: float = 2.0
 
+    # Observability (self-hosted, opt-in, OFF by default). See deploy/MULTI_CLOUD.md.
+    # Metrics = Prometheus pull; traces = OTLP/HTTP → self-hosted collector. No SaaS.
+    ops_metrics_enabled: bool = False
+    ops_metrics_worker_port: int = 9109
+    ops_tracing_enabled: bool = False
+    otel_exporter_otlp_endpoint: str | None = None
+    otel_traces_sampler_ratio: float = 1.0
+    otel_service_name: str = "tess-ops"
+
     def ops_ha_active(self) -> bool:
         """True when CP HA election/fencing is enabled and etcd is configured."""
         if not self.ops_ha_enabled:
             return False
         return bool(self.ops_etcd_endpoints.strip())
+
+    def ops_tracing_active(self) -> bool:
+        """True when tracing is enabled and an OTLP endpoint is configured."""
+        return self.ops_tracing_enabled and bool(self.otel_exporter_otlp_endpoint)
 
 
 settings = Settings()

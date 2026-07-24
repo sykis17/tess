@@ -47,10 +47,14 @@ def request_json(
     token: str | None = None,
     body: dict[str, Any] | None = None,
     timeout: float = 8.0,
+    headers: dict[str, str] | None = None,
 ) -> tuple[int, Any]:
-    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    hdrs = {"Content-Type": "application/json", "Accept": "application/json"}
     if token:
-        headers["Authorization"] = f"Bearer {token}"
+        hdrs["Authorization"] = f"Bearer {token}"
+    if headers:
+        hdrs.update(headers)
+    headers = hdrs
     data = None if body is None else json.dumps(body).encode("utf-8")
     req = urllib.request.Request(url, method=method, headers=headers, data=data)
     try:
@@ -183,8 +187,11 @@ def mutate_probe(
     base: str,
     *,
     token: str | None,
+    headers: dict[str, str] | None = None,
 ) -> tuple[int, Any]:
-    return request_json("POST", f"{base.rstrip('/')}/ops/probe", token=token, body={})
+    return request_json(
+        "POST", f"{base.rstrip('/')}/ops/probe", token=token, body={}, headers=headers
+    )
 
 
 def mutate_set_active(
@@ -348,3 +355,152 @@ def peek_provider_changed(
     # redis-cli subscribe prints message type lines; count "message" entries
     msg_count = sum(1 for m in messages if m == "message")
     return result, msg_count
+
+
+# ---------------------------------------------------------------------------
+# Observability artifacts (s10): Prometheus scrape + exported OTel spans.
+# ---------------------------------------------------------------------------
+def fetch_text(url: str, *, timeout: float = 5.0) -> str:
+    req = urllib.request.Request(url, method="GET")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode("utf-8")
+
+
+def scrape_metrics(base_or_url: str, *, timeout: float = 5.0) -> list[tuple[str, dict[str, str], float]]:
+    """Scrape a Prometheus /metrics endpoint → list of (name, labels, value).
+
+    ``base_or_url`` may be a base (``/metrics`` is appended) or a full URL.
+    """
+    url = base_or_url if base_or_url.rstrip("/").endswith("/metrics") else f"{base_or_url.rstrip('/')}/metrics"
+    text = fetch_text(url, timeout=timeout)
+    samples: list[tuple[str, dict[str, str], float]] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            metric_part, value_part = line.rsplit(" ", 1)
+            value = float(value_part)
+        except ValueError:
+            continue
+        if "{" in metric_part:
+            name, label_blob = metric_part.split("{", 1)
+            labels = _parse_labels(label_blob.rstrip("}"))
+        else:
+            name, labels = metric_part, {}
+        samples.append((name.strip(), labels, value))
+    return samples
+
+
+def _parse_labels(blob: str) -> dict[str, str]:
+    labels: dict[str, str] = {}
+    for part in _split_labels(blob):
+        if "=" not in part:
+            continue
+        key, _, val = part.partition("=")
+        labels[key.strip()] = val.strip().strip('"')
+    return labels
+
+
+def _split_labels(blob: str) -> list[str]:
+    out, cur, in_quote = [], [], False
+    for ch in blob:
+        if ch == '"':
+            in_quote = not in_quote
+            cur.append(ch)
+        elif ch == "," and not in_quote:
+            out.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    if cur:
+        out.append("".join(cur))
+    return out
+
+
+def metric_sum(
+    samples: list[tuple[str, dict[str, str], float]],
+    name: str,
+    **want_labels: str,
+) -> float:
+    """Sum sample values whose name matches and whose labels are a superset of want."""
+    total = 0.0
+    for sname, labels, value in samples:
+        if sname != name:
+            continue
+        if all(labels.get(k) == v for k, v in want_labels.items()):
+            total += value
+    return total
+
+
+def gen_trace_headers(tag: str) -> tuple[dict[str, str], str, str]:
+    """Return (headers, trace_id, request_id) — a sampled W3C traceparent + request id."""
+    import uuid
+
+    trace_id = uuid.uuid4().hex  # 32 hex = 16 bytes
+    span_id = uuid.uuid4().hex[:16]  # 16 hex = 8 bytes
+    request_id = f"{tag}-{uuid.uuid4().hex[:8]}"
+    headers = {
+        "traceparent": f"00-{trace_id}-{span_id}-01",
+        "X-Ops-Request-Id": request_id,
+    }
+    return headers, trace_id, request_id
+
+
+def read_exported_spans(cfg: HarnessConfig) -> list[dict[str, Any]]:
+    """docker cp the collector's spans file, parse OTLP-JSON → list of normalized spans.
+
+    Each span: {"name", "trace_id", "attrs": {key: str}}. Robust to camel/snake keys and
+    a growing NDJSON file; returns [] if the file is not yet present.
+    """
+    import os
+    import tempfile
+
+    cid = dk.container_id(cfg, cfg.collector_service)
+    tmp = os.path.join(tempfile.gettempdir(), "ops_cp_spans.json")
+    dk._run(["docker", "cp", f"{cid}:{cfg.spans_file}", tmp], check=False)
+    spans: list[dict[str, Any]] = []
+    try:
+        with open(tmp, encoding="utf-8") as fh:
+            content = fh.read()
+    except FileNotFoundError:
+        return []
+    for line in content.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        spans.extend(_extract_spans(obj))
+    return spans
+
+
+def _extract_spans(obj: dict[str, Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    resource_spans = obj.get("resourceSpans") or obj.get("resource_spans") or []
+    for rs in resource_spans:
+        scope_spans = rs.get("scopeSpans") or rs.get("scope_spans") or []
+        for ss in scope_spans:
+            for sp in ss.get("spans") or []:
+                attrs: dict[str, str] = {}
+                for kv in sp.get("attributes") or []:
+                    val = kv.get("value") or {}
+                    attrs[kv.get("key", "")] = str(
+                        val.get("stringValue")
+                        if "stringValue" in val
+                        else val.get("intValue")
+                        if "intValue" in val
+                        else val.get("boolValue")
+                        if "boolValue" in val
+                        else val.get("doubleValue", "")
+                    )
+                out.append(
+                    {
+                        "name": sp.get("name", ""),
+                        "trace_id": sp.get("traceId") or sp.get("trace_id") or "",
+                        "attrs": attrs,
+                    }
+                )
+    return out

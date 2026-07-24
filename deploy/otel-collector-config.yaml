@@ -1,0 +1,28 @@
+# Verification-only OpenTelemetry collector config (used by docker-compose.ops-obs.yml).
+#
+# Receives OTLP/HTTP spans from the ops/HA path and writes them to a local file that the
+# split-brain harness reads via `docker cp` (scripts/ops_cp_splitbrain). Self-hosted only —
+# the `file` exporter writes to disk; no hosted/SaaS backend is contacted.
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  file:
+    # Written into the ops_spans volume (see docker-compose.ops-obs.yml); the harness reads
+    # it with `docker cp`. /tmp does not exist in the distroless collector image.
+    path: /spans/spans.json
+    # Low flush interval so the harness spans file settles quickly (matches the low
+    # OTEL_BSP_SCHEDULE_DELAY set on the app services in the obs overlay).
+    flush_interval: 1s
+
+service:
+  telemetry:
+    logs:
+      level: warn
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [file]

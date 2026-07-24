@@ -24,6 +24,7 @@ from app.ops.fencing import (
     get_role_state,
     require_primary_cached,
 )
+from app.ops import metrics
 from app.ops.health_logs import combined_health_logs
 from app.ops.models import (
     ActiveRoutingResponse,
@@ -61,21 +62,29 @@ async def _gate_ops_mutations(request: Request) -> None:
     path = request.url.path.rstrip("/")
     if path.endswith("/ops/ha"):
         return
-    try:
-        require_primary_cached()
-    except NotPrimaryError as exc:
-        role = get_role_state()
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "error": "not_primary",
-                "role": role.role,
-                "fence_term": role.fence_term,
-                "primary_instance_id": role.primary_instance_id,
-                "instance_id": settings.ops_cp_instance_id,
-                "message": str(exc),
-            },
-        ) from exc
+    with metrics.get_tracer().start_as_current_span("ops.fence_gate") as _sp:
+        try:
+            require_primary_cached()
+            _sp.set_attribute("ops.gate", "pass")
+        except NotPrimaryError as exc:
+            # Flag for the observability middleware (→ outcome=fenced_503) + count the reject.
+            request.state.ops_fenced = True
+            metrics.mark_fenced()
+            metrics.record_fence_reject("not_primary", "http_gate")
+            role = get_role_state()
+            _sp.set_attribute("ops.gate", "fenced")
+            _sp.set_attribute("ops.role", role.role)
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "not_primary",
+                    "role": role.role,
+                    "fence_term": role.fence_term,
+                    "primary_instance_id": role.primary_instance_id,
+                    "instance_id": settings.ops_cp_instance_id,
+                    "message": str(exc),
+                },
+            ) from exc
 
 
 router = APIRouter(
@@ -253,7 +262,7 @@ async def connect_provider(
 async def probe_now(
     operator_id: AdminOperator,
 ) -> dict[str, Any]:
-    snapshots = await probe_all_providers()
+    snapshots = await probe_all_providers(source="manual")
     failover_msg = evaluate_failover(snapshots)
     get_store().append_event(
         OpsEvent(
@@ -553,6 +562,7 @@ async def sleep_all_standbys(operator_id: AdminOperator) -> dict[str, Any]:
 async def set_active(
     provider_id: str,
     operator_id: AdminOperator,
+    request: Request,
 ) -> dict[str, Any]:
     from app.ops.fencing import FenceError
 
@@ -561,6 +571,11 @@ async def set_active(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except FenceError as exc:
+        # Durable CAS reject at the endpoint (passed the cached gate, lost the fence
+        # at persist). Flag for the middleware (→ fenced_503) + count at this surface.
+        request.state.ops_fenced = True
+        metrics.mark_fenced()
+        metrics.record_fence_reject(metrics.fence_error_kind(exc), "http_endpoint")
         role = get_role_state()
         raise HTTPException(
             status_code=503,

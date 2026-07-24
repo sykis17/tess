@@ -99,6 +99,100 @@ Convergence waits use **3× lease TTL** (default 30s). Assertions are on Redis /
 CAS no) asserting hard demote + no `provider_changed`, and Celery live-term
 guards.
 
+## Observability (Prometheus + OpenTelemetry) — Step 3
+
+Self-hosted, **opt-in, OFF by default**. Metrics are Prometheus **pull**; traces are
+OTLP/HTTP to a **self-hosted** collector. No hosted/SaaS backend is required or contacted.
+The default deploy (`docker-compose.prod.yml`) is unchanged.
+
+### Toggles (`app/core/config.py`; env is the UPPERCASE form)
+
+| Setting | Env | Default | Purpose |
+|---|---|---|---|
+| `ops_metrics_enabled` | `OPS_METRICS_ENABLED` | `false` | Mount web `/metrics`; start worker exposition |
+| `ops_metrics_worker_port` | `OPS_METRICS_WORKER_PORT` | `9109` | Worker Prometheus HTTP port |
+| `ops_tracing_enabled` | `OPS_TRACING_ENABLED` | `false` | Install the OTLP tracer |
+| `otel_exporter_otlp_endpoint` | `OTEL_EXPORTER_OTLP_ENDPOINT` | `None` | Collector base URL (`/v1/traces` appended) |
+| `otel_traces_sampler_ratio` | `OTEL_TRACES_SAMPLER_RATIO` | `1.0` | Parent-based ratio (ops path is low-volume) |
+| `otel_service_name` | `OTEL_SERVICE_NAME` | `tess-ops` | Trace resource `service.name` |
+
+When both toggles are off, no middleware/endpoint/exporter is installed — `/health`, `/ws`,
+and the product path are byte-for-byte unchanged. The product (LangGraph/panel) path is
+**not** instrumented; scope is the ops/HA path only.
+
+### Two scrape targets (don't miss half the system)
+
+A Prometheus `scrape_configs` for a Tess control plane needs **both**:
+
+1. **Web** `/metrics` on each web process — `:8000` (cp-a) and `:8001` (cp-b) in the HA
+   overlay. Serves role/lease/CAS/mutation/probe/failover metrics + the `is_primary` /
+   `fence_term` gauges.
+2. **Worker** on `ops_metrics_worker_port` (`9109`) — serves worker-task + worker-side probe
+   metrics. In the obs overlay it is published **localhost-bound** (`127.0.0.1:9109`,
+   zero-egress).
+
+**Prefork assumption (matters):** the worker exposition assumes the worker runs
+**`--concurrency=1`** (prod sets it; the obs overlay overrides the command to set it). Under
+prefork with concurrency>1, plain per-child `start_http_server` would race the port and split
+counters across child registries — the "metrics silently never increment" trap. To scale the
+worker, either route ops tasks to a dedicated `--concurrency=1`/`--pool=solo` worker, or
+enable `prometheus_client` multiprocess mode (`PROMETHEUS_MULTIPROC_DIR`) with a single
+aggregating exposition — never plain per-child servers. The same caveat applies to running
+**web with `--workers>1`** for the `is_primary`/`fence_term` gauges.
+
+### Cardinality discipline (enforced in CI)
+
+Every metric label value is a fixed code enum or a per-process constant. `provider_id` is
+**unbounded** (`prov_<uuid12>` + BYO) and is **banned** as a label — metrics use
+`provider_type` (4 values); per-provider health stays in `GET /ops/health-logs`.
+`tests/test_ops_metrics.py` asserts the label allowlist (fails CI if a banned label appears).
+
+### Metrics (exposed names)
+
+`tess_ops_role_transitions_total`, `tess_ops_is_primary`, `tess_ops_fence_term`,
+`tess_ops_fence_rejects_total`, `tess_ops_lease_keepalive_total`, `tess_ops_lease_ttl_seconds`,
+`tess_ops_cas_total`, `tess_ops_mutations_total`, `tess_ops_mutation_duration_seconds`,
+`tess_ops_probes_total`, `tess_ops_probe_duration_seconds`, `tess_ops_failovers_total`,
+`tess_ops_worker_task_total`.
+
+### Traces
+
+Spans on the mutation path (`ops.http.mutation` → `ops.fence_gate` → `ops.persist_cas` →
+`ops.publish_provider_changed`) and the promotion path (`ops.promotion` →
+`ops.promote_redis_fence` / `ops.initial_persist`). **Failover trace-continuity:** the client
+sends a W3C `traceparent` + `X-Ops-Request-Id`; a mutation rejected on the standby (503) and
+retried on the new primary share one `trace_id` + `ops.request_id`, so the failover is one
+correlatable trace.
+
+### Example queries (PromQL)
+
+```promql
+tess_ops_is_primary == 1                                              # who is primary
+rate(tess_ops_role_transitions_total{transition="promote"}[5m])       # promotion rate
+rate(tess_ops_fence_rejects_total[5m])                                # fence rejects by kind/surface
+sum(rate(tess_ops_cas_total{result="reject"}[5m]))
+  / sum(rate(tess_ops_cas_total[5m]))                                 # CAS reject ratio
+rate(tess_ops_mutations_total{outcome="fenced_503"}[5m])              # standby refusals
+sum by (provider_type) (rate(tess_ops_probes_total{result="unhealthy"}[5m]))
+rate(tess_ops_lease_keepalive_total{result="failed"}[5m])            # lease health
+```
+
+### Verification (opt-in overlay)
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.ops-ha.yml \
+               -f docker-compose.ops-obs.yml -p tess-engine up --build -d
+OPS_HA_COMPOSE_OBS=docker-compose.ops-obs.yml python -m scripts.ops_cp_splitbrain run s10_failover_visible
+```
+
+`s10_failover_visible` proves a failover end-to-end: it rejects a mutation on the standby,
+kills the primary, retries on the promoted node, then asserts the promoted node's `/metrics`
+(promote counter, `is_primary=1`, `fence_term` bump, `fenced_503`+`success` mutations), the
+worker `:9109` exposition, and one exported trace spanning the reject+success. It needs the
+obs overlay (it errors clearly otherwise). The reject+success land on the same box (the
+standby that became the new primary); true cross-node correlation via an etcd-only partition
+is deferred (WSL2 multi-network flakiness, per the s04/s08 adaptations).
+
 ## Session 8 locked decisions (Dual XOR Performance)
 
 1. **Dual = two concurrent chat homes** — not primary/secondary roles-only.

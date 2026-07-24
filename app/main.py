@@ -12,6 +12,7 @@ from app.api.health import router as health_router
 from app.api.ops import router as ops_router
 from app.api import ws_router
 from app.core.config import settings
+from app.ops import metrics
 from app.ops.bootstrap import bootstrap_ops_control_plane
 from app.ops.failover import evaluate_failover
 from app.ops.fencing import (
@@ -83,27 +84,37 @@ def _ensure_probe_loop() -> None:
 async def _on_become_primary(fence_term: int, lease_id: int) -> None:
     global _held_lease_id
     _held_lease_id = lease_id
-    mark_primary(fence_term, lease_id)
-    try:
-        promote_redis_fence(fence_term)
-    except FenceError:
-        demote("redis_promote_fence_failed")
-        raise
-    restore_store(raise_on_error=False)
-    with write_fence(fence_term):
-        from app.ops.store import persist_store
-
+    # Root span for the promotion path (fires only on an actual promotion — rare).
+    with metrics.get_tracer().start_as_current_span("ops.promotion") as _sp:
+        _sp.set_attribute("ops.instance_id", settings.ops_cp_instance_id)
+        _sp.set_attribute("ops.fence_term", int(fence_term))
+        _sp.set_attribute("ops.lease_id", int(lease_id))
+        mark_primary(fence_term, lease_id)
         try:
-            persist_store(fence_term=fence_term)
-        except FenceError:
-            demote("primary_initial_persist_failed")
+            with metrics.get_tracer().start_as_current_span("ops.promote_redis_fence"):
+                promote_redis_fence(fence_term)
+        except FenceError as exc:
+            metrics.record_fence_reject(metrics.fence_error_kind(exc), "campaign")
+            demote("redis_promote_fence_failed")
             raise
-    _ensure_probe_loop()
-    logger.warning(
-        "CP primary ready instance=%s fence_term=%s",
-        settings.ops_cp_instance_id,
-        fence_term,
-    )
+        restore_store(raise_on_error=False)
+        with write_fence(fence_term):
+            from app.ops.store import persist_store
+
+            try:
+                with metrics.get_tracer().start_as_current_span("ops.initial_persist"):
+                    persist_store(fence_term=fence_term)
+            except FenceError as exc:
+                metrics.record_fence_reject(metrics.fence_error_kind(exc), "campaign")
+                demote("primary_initial_persist_failed")
+                raise
+        _ensure_probe_loop()
+        _sp.set_attribute("ops.outcome", "primary_ready")
+        logger.warning(
+            "CP primary ready instance=%s fence_term=%s",
+            settings.ops_cp_instance_id,
+            fence_term,
+        )
 
 
 async def _campaign_loop() -> None:
@@ -121,7 +132,11 @@ async def _campaign_loop() -> None:
             role = get_role_state()
             if role.role == "primary" and _held_lease_id is not None:
                 ok = await asyncio.to_thread(backend.keepalive, _held_lease_id)
-                if not ok:
+                if ok:
+                    metrics.record_lease_keepalive("ok")
+                    metrics.set_lease_ttl(ttl)
+                else:
+                    metrics.record_lease_keepalive("failed")
                     demote("lease_keepalive_failed")
                     _held_lease_id = None
                     mark_standby()
@@ -158,6 +173,7 @@ async def _campaign_loop() -> None:
 async def lifespan(app: FastAPI):
     global _probe_task, _campaign_task, _held_lease_id
     _ = app
+    metrics.init_tracing("web")  # no-op unless tracing is enabled + endpoint set
     clear_demote_callbacks()
     register_demote_callback(_stop_probe_loop)
     bootstrap_ops_control_plane()
@@ -201,9 +217,23 @@ async def lifespan(app: FastAPI):
             except Exception:
                 logger.exception("failed to resign etcd lease on shutdown")
             _held_lease_id = None
+        metrics.shutdown_tracing()
 
 
 app = FastAPI(title="TESS Engine API", lifespan=lifespan)
+
+# Observability is opt-in: when both toggles are off (default) nothing is mounted, so
+# /health, /ws, and the product path are byte-for-byte unchanged.
+if settings.ops_metrics_enabled or settings.ops_tracing_enabled:
+    app.add_middleware(metrics.OpsObservabilityMiddleware)
+    if settings.ops_metrics_enabled and metrics.prometheus_available():
+        from starlette.responses import Response
+
+        @app.get("/metrics")
+        def _ops_metrics() -> Response:
+            body, content_type = metrics.render_latest()
+            return Response(content=body, media_type=content_type)
+
 app.include_router(health_router)
 app.include_router(ws_router)
 app.include_router(ops_router)

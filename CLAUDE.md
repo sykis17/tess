@@ -150,6 +150,15 @@ split-brain harness:
 - **Known limitation (don't "fix" casually):** after an external fence bump in Redis the
   cluster is unelectable until Redis state is reset — `promote_redis_fence()` requires etcd
   term > stored Redis term. Deliberate recovery design is future work.
+- **Observability cardinality discipline (`app/ops/metrics.py`).** Metrics/traces are
+  self-hosted, opt-in, OFF by default (`OPS_METRICS_ENABLED` / `OPS_TRACING_ENABLED`). Every
+  metric label value must be a **fixed code enum or per-process constant** — `provider_id`
+  (unbounded uuid) and session ids / URLs / error strings are **banned** as labels; use
+  `provider_type` instead. `tests/test_ops_metrics.py` enforces the label allowlist. Worker
+  metric exposition assumes the worker runs `--concurrency=1` (see `deploy/MULTI_CLOUD.md`
+  §Observability). `record_*` helpers never raise. Scope is the ops/HA path only — do **not**
+  instrument the product graph. Verified end-to-end by split-brain scenario
+  `s10_failover_visible` (needs `docker-compose.ops-obs.yml`).
 
 ## Common file pointers
 
@@ -173,3 +182,6 @@ split-brain harness:
 | Ops HTTP endpoints + mutation gate | `app/api/ops.py` |
 | Ops fencing invariants (tests) | `tests/test_ops_fencing.py` |
 | Split-brain harness | `scripts/ops_cp_splitbrain/` |
+| Ops observability (metrics/traces) | `app/ops/metrics.py` + `deploy/MULTI_CLOUD.md` §Observability |
+| Ops metrics cardinality guard (tests) | `tests/test_ops_metrics.py` |
+| Observability verification overlay | `docker-compose.ops-obs.yml` + `deploy/otel-collector-config.yaml` |

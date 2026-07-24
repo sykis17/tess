@@ -12,6 +12,7 @@ from . import (
     s07_redis_cas_bump,
     s08_empty_blob,
     s09_zombie_second_provider,
+    s10_failover_visible,
 )
 
 SCENARIOS = {
@@ -24,6 +25,7 @@ SCENARIOS = {
     s07_redis_cas_bump.ID: s07_redis_cas_bump,
     s08_empty_blob.ID: s08_empty_blob,
     s09_zombie_second_provider.ID: s09_zombie_second_provider,
+    s10_failover_visible.ID: s10_failover_visible,
 }
 
 ORDER = [
@@ -36,4 +38,5 @@ ORDER = [
     s07_redis_cas_bump.ID,
     s08_empty_blob.ID,
     s09_zombie_second_provider.ID,
+    s10_failover_visible.ID,
 ]

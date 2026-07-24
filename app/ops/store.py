@@ -7,6 +7,7 @@ import logging
 import threading
 from typing import Any
 
+from app.ops import metrics
 from app.ops.models import (
     CloudProvider,
     ComparisonReport,
@@ -329,10 +330,12 @@ def promote_redis_fence(fence_term: int) -> None:
             str(int(fence_term)),
         )
         if int(ok) != 1:
+            metrics.record_cas("promote", "reject")
             raise FenceCasError(
                 f"redis promote fence rejected term={fence_term} "
                 f"(stored={client.get(REDIS_FENCE_TERM_KEY)!r})"
             )
+        metrics.record_cas("promote", "accept")
     except FenceCasError:
         raise
     except Exception as exc:
@@ -360,19 +363,30 @@ def persist_store(*, fence_term: int | None = None) -> None:
         if settings.ops_ha_active():
             term = resolve_write_fence_term(fence_term=fence_term)
             payload = json.dumps(get_store().to_redis_payload(fence_term=term))
-            ok = client.eval(
-                _LUA_PERSIST_CAS,
-                2,
-                REDIS_FENCE_TERM_KEY,
-                REDIS_CONTROL_PLANE_KEY,
-                str(int(term)),
-                payload,
-            )
-            if int(ok) != 1:
-                stored = client.get(REDIS_FENCE_TERM_KEY)
-                raise FenceCasError(
-                    f"redis CAS persist rejected term={term} stored={stored!r}"
+            # start_as_current_span re-raises on exception, so the CAS reject still
+            # propagates to the FenceCasError handler below (restore + demote + raise).
+            with metrics.get_tracer().start_as_current_span("ops.persist_cas") as _sp:
+                _sp.set_attribute("ops.op", "persist")
+                _sp.set_attribute("ops.fence_term", int(term))
+                ok = client.eval(
+                    _LUA_PERSIST_CAS,
+                    2,
+                    REDIS_FENCE_TERM_KEY,
+                    REDIS_CONTROL_PLANE_KEY,
+                    str(int(term)),
+                    payload,
                 )
+                if int(ok) != 1:
+                    # Record before the existing restore/demote/raise; do not alter it.
+                    _sp.set_attribute("ops.cas_result", "reject")
+                    metrics.record_cas("persist", "reject")
+                    metrics.record_fence_reject("cas_stale", "persist")
+                    stored = client.get(REDIS_FENCE_TERM_KEY)
+                    raise FenceCasError(
+                        f"redis CAS persist rejected term={term} stored={stored!r}"
+                    )
+                _sp.set_attribute("ops.cas_result", "accept")
+                metrics.record_cas("persist", "accept")
             return
 
         payload = json.dumps(get_store().to_redis_payload(fence_term=fence_term))

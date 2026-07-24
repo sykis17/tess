@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Iterator
 
 from app.core.config import settings
+from app.ops import metrics
 from app.ops.consensus import LiveElection, get_consensus_backend
 
 logger = logging.getLogger(__name__)
@@ -77,22 +78,36 @@ def set_ha_disabled_role() -> None:
         _role.fence_term = None
         _role.lease_id = None
         _role.primary_instance_id = None
+    metrics.set_primary(False)
 
 
 def mark_primary(fence_term: int, lease_id: int | None) -> None:
     with _role_lock:
+        was_primary = _role.role == "primary"
         _role.role = "primary"
         _role.fence_term = fence_term
         _role.lease_id = lease_id
         _role.primary_instance_id = settings.ops_cp_instance_id
+    # Metrics only on an actual transition (setters are re-entered in steady state).
+    metrics.set_primary(True)
+    metrics.set_fence_term(fence_term)
+    if not was_primary:
+        metrics.record_role_transition("promote", "election_won")
 
 
 def mark_standby(*, primary_instance_id: str | None = None, fence_term: int | None = None) -> None:
     with _role_lock:
+        was_primary = _role.role == "primary"
         _role.role = "standby"
         _role.fence_term = fence_term
         _role.lease_id = None
         _role.primary_instance_id = primary_instance_id
+    metrics.set_primary(False)
+    metrics.set_fence_term(fence_term)
+    # Only a giving-up transition (primary→standby) counts; startup and steady-state
+    # standby re-entries (every campaign interval) must not inflate the counter.
+    if was_primary:
+        metrics.record_role_transition("resign_standby", "election_lost")
 
 
 def demote(reason: str) -> None:
@@ -103,6 +118,9 @@ def demote(reason: str) -> None:
         _role.lease_id = None
         # Keep last known term for diagnostics; do not use for writes.
     logger.error("CP demoted reason=%s", reason)
+    metrics.set_primary(False)
+    if was_primary:
+        metrics.record_role_transition("demote", reason)
     if was_primary:
         for cb in list(_on_demote):
             try:

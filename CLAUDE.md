@@ -118,6 +118,39 @@ START
 - **No Cursor rules** (`.cursor/` absent) — `.cursorrules` contains a short set: production-ready typed/Pydantic code, async-first FastAPI, modular layout, Celery delegation for heavy AI work, English-only docs and user-facing strings.
 - **Tests are unit-level** — they exercise routing/parsing/serialization utilities directly, not the live graph. Live integration testing is via the local Docker stack (see `LOCAL_DEV.md`).
 
+## Ops control-plane HA — critical invariants
+
+The ops control plane supports an etcd-leased primary/standby pair (overlay:
+`docker-compose.ops-ha.yml`; default deploy has `OPS_HA_ENABLED=false`, so this is inert
+unless HA is switched on). `deploy/MULTI_CLOUD.md` is the authoritative contract. When
+touching the ops/HA path (`app/ops/`, `app/api/ops.py`, `app/worker.py` ops tasks), these
+rules must not be violated — they are enforced by `tests/test_ops_fencing.py` and the
+split-brain harness:
+
+- **All durable ops writes go through the fence.** `persist_store()` (`app/ops/store.py`)
+  writes via an etcd term check + a Redis Lua CAS on `ops:control_plane:fence_term`
+  (`REDIS_FENCE_TERM_KEY`). Never write the `ops:control_plane` blob
+  (`REDIS_CONTROL_PLANE_KEY`) directly.
+- **A CAS rejection is as severe as an etcd rejection: demote + raise.** `FenceCasError`
+  is never downgraded to a warning.
+- **Celery ops tasks use `check_fence_live()` only** (`app/ops/fencing.py`) — a fresh etcd
+  leader/term check, never cached web role state. `require_primary_cached` and
+  `get_role_state` are banned *in `app/worker.py`*; `tests/test_ops_fencing.py` statically
+  asserts their absence and that `check_fence_live` runs in each ops task. (The HTTP layer
+  deliberately uses cached role in its mutation gate — see below — so the ban is worker-only.)
+- **Mutating `/ops/*` endpoints 503 on standby with the fence body.** The router-level
+  `_gate_ops_mutations` dependency (`app/api/ops.py`) runs *before* per-endpoint auth
+  (`require_admin`); reads (GET/HEAD/OPTIONS) and `/ops/ha` stay available.
+- **Split-brain harness:** `python -m scripts.ops_cp_splitbrain run-all`. Assertions target
+  artifacts (Redis term/blob, pubsub, HTTP bodies), never log strings. A harness failure is a
+  product bug until proven otherwise — fix the product, don't soften the assertion.
+- **Verified baseline:** commit `84b81f5`. Any change to `app/ops/consensus.py`,
+  `app/ops/fencing.py`, or the `store.py` CAS path requires re-running the harness **and**
+  `tests/test_ops_fencing.py` before commit.
+- **Known limitation (don't "fix" casually):** after an external fence bump in Redis the
+  cluster is unelectable until Redis state is reset — `promote_redis_fence()` requires etcd
+  term > stored Redis term. Deliberate recovery design is future work.
+
 ## Common file pointers
 
 | Concern | File |
@@ -136,3 +169,7 @@ START
 | Follow-up generator | `app/graph/follow_up_utils.py` |
 | List format | `app/graph/list_format_utils.py` |
 | Search | `app/search/provider.py` + `app/graph/nodes/resource_*.py` |
+| Ops control-plane HA | `app/ops/consensus.py`, `app/ops/fencing.py`, `app/ops/store.py` |
+| Ops HTTP endpoints + mutation gate | `app/api/ops.py` |
+| Ops fencing invariants (tests) | `tests/test_ops_fencing.py` |
+| Split-brain harness | `scripts/ops_cp_splitbrain/` |

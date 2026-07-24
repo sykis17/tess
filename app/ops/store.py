@@ -30,9 +30,33 @@ REDIS_EVENTS_KEY = "ops:events"
 REDIS_SNAPSHOTS_KEY = "ops:snapshots"
 REDIS_ASSIGNMENTS_KEY = "ops:assignments"
 REDIS_REPORTS_KEY = "ops:reports"
+REDIS_CONTROL_PLANE_KEY = "ops:control_plane"
+REDIS_FENCE_TERM_KEY = "ops:control_plane:fence_term"
 
 MAX_EVENTS = 2000
 MAX_SNAPSHOTS = 2000
+
+# Promote: install higher fence term if Redis term is strictly lower.
+_LUA_PROMOTE_FENCE = """
+local cur = tonumber(redis.call('GET', KEYS[1]) or '0')
+local nxt = tonumber(ARGV[1])
+if cur < nxt then
+  redis.call('SET', KEYS[1], ARGV[1])
+  return 1
+end
+return 0
+"""
+
+# Persist: write blob only when fence term matches exactly.
+_LUA_PERSIST_CAS = """
+local cur = tonumber(redis.call('GET', KEYS[1]) or '0')
+local term = tonumber(ARGV[1])
+if cur == term then
+  redis.call('SET', KEYS[2], ARGV[2])
+  return 1
+end
+return 0
+"""
 
 
 class OpsStore:
@@ -208,9 +232,9 @@ class OpsStore:
         with self._lock:
             return list(self.reports.values())
 
-    def to_redis_payload(self) -> dict[str, Any]:
+    def to_redis_payload(self, *, fence_term: int | None = None) -> dict[str, Any]:
         with self._lock:
-            return {
+            payload: dict[str, Any] = {
                 "providers": {
                     pid: p.model_dump(mode="json") for pid, p in self.providers.items()
                 },
@@ -228,6 +252,9 @@ class OpsStore:
                 "rr_index": self._rr_index,
                 "saved_at": utc_now().isoformat(),
             }
+            if fence_term is not None:
+                payload["fence_term"] = fence_term
+            return payload
 
     def load_redis_payload(self, payload: dict[str, Any]) -> None:
         with self._lock:
@@ -276,47 +303,110 @@ def reset_store() -> OpsStore:
         return _store
 
 
-def persist_store() -> None:
-    """Best-effort Redis snapshot of the ops control plane."""
+def _redis_client():
+    import redis as redis_lib
+
     from app.core.config import settings
+
+    return redis_lib.from_url(
+        settings.redis_url,
+        decode_responses=True,
+        socket_connect_timeout=1.0,
+        socket_timeout=1.0,
+    )
+
+
+def promote_redis_fence(fence_term: int) -> None:
+    """Install Redis fence term on promote (CAS: only if stored term < fence_term)."""
+    from app.ops.fencing import FenceCasError, PersistError
+
+    client = _redis_client()
+    try:
+        ok = client.eval(
+            _LUA_PROMOTE_FENCE,
+            1,
+            REDIS_FENCE_TERM_KEY,
+            str(int(fence_term)),
+        )
+        if int(ok) != 1:
+            raise FenceCasError(
+                f"redis promote fence rejected term={fence_term} "
+                f"(stored={client.get(REDIS_FENCE_TERM_KEY)!r})"
+            )
+    except FenceCasError:
+        raise
+    except Exception as exc:
+        logger.exception("redis promote fence failed term=%s", fence_term)
+        raise PersistError(f"redis promote fence failed: {exc}") from exc
+    finally:
+        client.close()
+
+
+def persist_store(*, fence_term: int | None = None) -> None:
+    """Persist ops control plane to Redis.
+
+    When HA is active, uses Lua CAS on ``ops:control_plane:fence_term`` so a
+    stale writer cannot clobber a newer primary (etcd-check-then-SET is not enough).
+    When HA is off, uses unconditional SET (single-writer mode).
+    """
+    from app.core.config import settings
+    from app.ops.fencing import FenceCasError, PersistError, resolve_write_fence_term
 
     if not settings.ops_persist_enabled:
         return
+
+    client = _redis_client()
     try:
-        import redis as redis_lib
+        if settings.ops_ha_active():
+            term = resolve_write_fence_term(fence_term=fence_term)
+            payload = json.dumps(get_store().to_redis_payload(fence_term=term))
+            ok = client.eval(
+                _LUA_PERSIST_CAS,
+                2,
+                REDIS_FENCE_TERM_KEY,
+                REDIS_CONTROL_PLANE_KEY,
+                str(int(term)),
+                payload,
+            )
+            if int(ok) != 1:
+                stored = client.get(REDIS_FENCE_TERM_KEY)
+                raise FenceCasError(
+                    f"redis CAS persist rejected term={term} stored={stored!r}"
+                )
+            return
 
-        client = redis_lib.from_url(
-            settings.redis_url,
-            decode_responses=True,
-            socket_connect_timeout=0.5,
-            socket_timeout=0.5,
-        )
+        payload = json.dumps(get_store().to_redis_payload(fence_term=fence_term))
+        client.set(REDIS_CONTROL_PLANE_KEY, payload)
+    except FenceCasError as exc:
+        logger.error("ops persist CAS rejected: %s", exc)
+        # Roll back in-memory mutations and demote — same severity as etcd reject.
         try:
-            payload = json.dumps(get_store().to_redis_payload())
-            client.set("ops:control_plane", payload)
-        finally:
-            client.close()
-    except Exception:
-        logger.debug("ops persist skipped", exc_info=True)
+            restore_store(raise_on_error=False)
+        except Exception:
+            logger.exception("restore after CAS reject failed")
+        from app.ops.fencing import demote
+
+        demote("redis_cas_rejected")
+        raise
+    except PersistError:
+        raise
+    except Exception as exc:
+        logger.exception("ops persist failed")
+        raise PersistError(f"ops persist failed: {exc}") from exc
+    finally:
+        client.close()
 
 
-def restore_store() -> bool:
+def restore_store(*, raise_on_error: bool = False) -> bool:
     """Load control plane from Redis if present."""
     from app.core.config import settings
 
     if not settings.ops_persist_enabled:
         return False
     try:
-        import redis as redis_lib
-
-        client = redis_lib.from_url(
-            settings.redis_url,
-            decode_responses=True,
-            socket_connect_timeout=0.5,
-            socket_timeout=0.5,
-        )
+        client = _redis_client()
         try:
-            raw = client.get("ops:control_plane")
+            raw = client.get(REDIS_CONTROL_PLANE_KEY)
             if not raw:
                 return False
             get_store().load_redis_payload(json.loads(raw))
@@ -324,8 +414,20 @@ def restore_store() -> bool:
         finally:
             client.close()
     except Exception:
-        logger.debug("ops restore skipped", exc_info=True)
+        logger.exception("ops restore failed")
+        if raise_on_error:
+            raise
         return False
+
+
+def read_redis_fence_term() -> int:
+    """Read the durable Redis fence term (0 if absent)."""
+    client = _redis_client()
+    try:
+        raw = client.get(REDIS_FENCE_TERM_KEY)
+        return int(raw) if raw is not None else 0
+    finally:
+        client.close()
 
 
 def ensure_default_hetzner(

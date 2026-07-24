@@ -56,12 +56,29 @@ class Settings(BaseSettings):
     ops_probe_enabled: bool = True
     ops_persist_enabled: bool = True
 
+    # Control-plane HA (etcd lease + Redis CAS fencing). Empty endpoints = HA off.
+    ops_ha_enabled: bool = False
+    ops_etcd_endpoints: str = ""
+    ops_cp_instance_id: str = "cp-default"
+    ops_etcd_lease_ttl_seconds: int = 10
+    ops_etcd_campaign_interval_seconds: float = 2.0
+
+    def ops_ha_active(self) -> bool:
+        """True when CP HA election/fencing is enabled and etcd is configured."""
+        if not self.ops_ha_enabled:
+            return False
+        return bool(self.ops_etcd_endpoints.strip())
+
 
 settings = Settings()
 
 
 def should_skip_llm_follow_ups() -> bool:
-    """Return True when presenter should skip the follow-up LLM call."""
+    """Return True when presenter should skip the follow-up LLM call.
+
+    SKIP_LLM_FOLLOW_UPS=true forces skip on any model. Models whose name
+    contains ``:1b`` always skip (hard floor); false cannot re-enable LLM chips.
+    """
     if settings.skip_llm_follow_ups:
         return True
     return ":1b" in settings.ollama_model

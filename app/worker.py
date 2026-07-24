@@ -38,15 +38,23 @@ celery_app = Celery(
 
 @celery_app.task(name="ops_probe_providers")
 def ops_probe_providers() -> dict[str, object]:
-    """Celery entry for scheduled multi-cloud health probes + failover."""
+    """Celery entry for scheduled multi-cloud health probes + failover.
+
+    Uses a fresh etcd leader/term check only — never cached web role state.
+    """
     from app.ops.failover import evaluate_failover
+    from app.ops.fencing import check_fence_live, write_fence
     from app.ops.prober import probe_all_providers
 
+    live = check_fence_live()
     snapshots = asyncio.run(probe_all_providers())
-    failover_msg = evaluate_failover(snapshots)
+    with write_fence(live.fence_term):
+        failover_msg = evaluate_failover(snapshots)
     return {
         "probed": len(snapshots),
         "failover": failover_msg.model_dump(mode="json") if failover_msg else None,
+        "fence_term": live.fence_term,
+        "leader": live.leader,
     }
 
 
@@ -60,11 +68,17 @@ def ops_standby_wake(
     operator_id: str | None = None,
 ) -> dict[str, object]:
     """Wake an AWS/GCP standby via scripts/*_standby.py (long-running)."""
+    from app.ops.fencing import check_fence_live, write_fence
     from app.ops.standby_power import power_action_for_provider
 
-    return power_action_for_provider(
-        provider_id, "wake", operator_id=operator_id
-    )
+    live = check_fence_live()
+    with write_fence(live.fence_term):
+        result = power_action_for_provider(
+            provider_id, "wake", operator_id=operator_id
+        )
+    result["fence_term"] = live.fence_term
+    result["leader"] = live.leader
+    return result
 
 
 @celery_app.task(
@@ -77,11 +91,18 @@ def ops_standby_sleep(
     operator_id: str | None = None,
 ) -> dict[str, object]:
     """Stop an AWS/GCP standby via scripts/*_standby.py."""
+    from app.ops.fencing import check_fence_live, write_fence
     from app.ops.standby_power import power_action_for_provider
 
-    return power_action_for_provider(
-        provider_id, "sleep", operator_id=operator_id
-    )
+    live = check_fence_live()
+    with write_fence(live.fence_term):
+        result = power_action_for_provider(
+            provider_id, "sleep", operator_id=operator_id
+        )
+    result["fence_term"] = live.fence_term
+    result["leader"] = live.leader
+    return result
+
 
 
 _REDUCER_KEYS = frozenset({

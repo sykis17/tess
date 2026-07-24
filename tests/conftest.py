@@ -11,4 +11,6 @@ def _disable_ops_redis_persist(monkeypatch: pytest.MonkeyPatch) -> None:
     """Avoid hanging on unreachable Redis during unit tests."""
     monkeypatch.setattr(settings, "ops_persist_enabled", False)
     monkeypatch.setattr(settings, "ops_probe_enabled", False)
+    monkeypatch.setattr(settings, "ops_ha_enabled", False)
+    monkeypatch.setattr(settings, "ops_etcd_endpoints", "")
     reset_store()

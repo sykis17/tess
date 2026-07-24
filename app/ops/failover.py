@@ -13,7 +13,7 @@ from app.ops.models import (
     utc_now,
 )
 from app.ops.notify import publish_provider_changed
-from app.ops.store import OpsStore, get_store, persist_store
+from app.ops.store import OpsStore, get_store
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ def evaluate_failover(
         dual_msg = evaluate_dual_homes(snapshots, store=ops)
         if dual_msg is not None:
             return dual_msg
-        persist_store()
+        _commit_counters(ops)
         return None
 
     # Performance: score chase with anti-flap (also covers unhealthy incumbent)
@@ -102,7 +102,7 @@ def evaluate_failover(
             if pref_ok >= policy.recovery_threshold:
                 return _switch(ops, routing, active_id, preferred)
         ops.set_routing(routing)
-        persist_store()
+        _commit_counters(ops)
         return None
 
     candidates = []
@@ -126,7 +126,7 @@ def evaluate_failover(
 
     if not candidates:
         ops.set_routing(routing)
-        persist_store()
+        _commit_counters(ops)
         ops.append_event(
             OpsEvent(
                 event_type="failover_blocked",
@@ -141,6 +141,16 @@ def evaluate_failover(
     return _switch(ops, routing, active_id, target_id)
 
 
+def _commit_counters(ops: OpsStore) -> None:
+    """Persist counter updates; identical fence severity to switch path."""
+    from app.ops.fencing import FenceError, commit_fenced
+
+    try:
+        commit_fenced()
+    except FenceError:
+        raise
+
+
 def _switch(
     ops: OpsStore,
     routing: RoutingState,
@@ -150,6 +160,11 @@ def _switch(
     operator_id: str | None = None,
     event_type: str = "failover",
 ) -> ProviderChangedMessage:
+    from app.ops.fencing import FenceError, commit_fenced, resolve_write_fence_term
+
+    # etcd/cache prefilter — Redis CAS in commit_fenced is the real durable fence.
+    term = resolve_write_fence_term()
+
     dropped = ops.clear_assignments()
 
     routing.last_failover_from = from_id
@@ -186,7 +201,11 @@ def _switch(
             details=details,
         )
     )
-    persist_store()
+    try:
+        commit_fenced(fence_term=term)
+    except FenceError:
+        # commit_fenced already restored + demoted; do not publish.
+        raise
     publish_provider_changed(msg)
     logger.warning(
         "Failover %s -> %s (dropped %s sessions)", from_id, to_id, dropped
@@ -233,5 +252,7 @@ def force_active_provider(
                     details={"reason": "force_active_no_peer"},
                 )
             )
-        persist_store()
+        from app.ops.fencing import commit_fenced
+
+        commit_fenced()
     return msg

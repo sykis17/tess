@@ -55,9 +55,18 @@ def bootstrap_ops_control_plane() -> None:
     policy.latency_p95_threshold_ms = settings.ops_latency_threshold_ms
     store.set_policy(policy)
 
+    if settings.ops_ha_active():
+        # Standby must not last-write-wins the Redis blob; primary persists after promote.
+        logger.info(
+            "Ops control plane ready (restored=%s, providers=%s, ha=on, persist=deferred)",
+            restored,
+            len(store.list_providers()),
+        )
+        return
+
     persist_store()
     logger.info(
-        "Ops control plane ready (restored=%s, providers=%s)",
+        "Ops control plane ready (restored=%s, providers=%s, ha=off)",
         restored,
         len(store.list_providers()),
     )

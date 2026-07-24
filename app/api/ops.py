@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from app.core.config import settings
 from app.ops.admin_auth import require_admin
 from app.ops.balancer import (
     assign_session,
@@ -18,6 +19,11 @@ from app.ops.byo import register_customer_server
 from app.ops.chaos import clear_chaos, set_chaos
 from app.ops.comparison import run_comparison
 from app.ops.failover import evaluate_failover, force_active_provider
+from app.ops.fencing import (
+    NotPrimaryError,
+    get_role_state,
+    require_primary_cached,
+)
 from app.ops.health_logs import combined_health_logs
 from app.ops.models import (
     ActiveRoutingResponse,
@@ -45,12 +51,77 @@ from app.providers.cloud import get_adapter
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/ops", tags=["ops"])
+
+async def _gate_ops_mutations(request: Request) -> None:
+    """Standby CP refuses mutating /ops/* with 503 (reads stay available)."""
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return
+    if not settings.ops_ha_active():
+        return
+    path = request.url.path.rstrip("/")
+    if path.endswith("/ops/ha"):
+        return
+    try:
+        require_primary_cached()
+    except NotPrimaryError as exc:
+        role = get_role_state()
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "not_primary",
+                "role": role.role,
+                "fence_term": role.fence_term,
+                "primary_instance_id": role.primary_instance_id,
+                "instance_id": settings.ops_cp_instance_id,
+                "message": str(exc),
+            },
+        ) from exc
+
+
+router = APIRouter(
+    prefix="/ops",
+    tags=["ops"],
+    dependencies=[Depends(_gate_ops_mutations)],
+)
 
 # Re-export for tests that import _check_admin from this module.
 from app.ops.admin_auth import _check_admin  # noqa: E402
 
 AdminOperator = Annotated[str, Depends(require_admin)]
+
+
+@router.get("/ha")
+async def get_ha_status() -> dict[str, Any]:
+    """Control-plane HA role / fence diagnostics (admin not required for liveness)."""
+    role = get_role_state()
+    live_leader = None
+    live_term = None
+    if settings.ops_ha_active():
+        try:
+            from app.ops.consensus import get_consensus_backend
+
+            live = get_consensus_backend().read_election()
+            live_leader = live.leader
+            live_term = live.fence_term
+        except Exception as exc:
+            logger.exception("failed to read etcd election for /ops/ha")
+            return {
+                "ha_enabled": True,
+                "role": role.role,
+                "fence_term": role.fence_term,
+                "instance_id": settings.ops_cp_instance_id,
+                "primary_instance_id": role.primary_instance_id,
+                "etcd_error": str(exc),
+            }
+    return {
+        "ha_enabled": settings.ops_ha_active(),
+        "role": role.role if settings.ops_ha_active() else "ha_disabled",
+        "fence_term": role.fence_term,
+        "instance_id": settings.ops_cp_instance_id,
+        "primary_instance_id": role.primary_instance_id or live_leader,
+        "etcd_leader": live_leader,
+        "etcd_fence_term": live_term,
+    }
 
 
 @router.get("/providers")
@@ -243,9 +314,11 @@ async def get_routing(_operator_id: AdminOperator) -> dict[str, Any]:
     )
 
     store = get_store()
-    # Soft-timeout stuck wakes so UI never sits forever on enqueue-only
-    clear_stale_auto_wake_inflight(store)
-    expire_stale_power_actions(store)
+    # Soft-timeouts mutate routing — primary only when HA is on.
+    can_mutate = (not settings.ops_ha_active()) or get_role_state().role == "primary"
+    if can_mutate:
+        clear_stale_auto_wake_inflight(store)
+        expire_stale_power_actions(store)
     routing = store.get_routing()
     policy = store.get_policy()
     active = (
@@ -481,10 +554,23 @@ async def set_active(
     provider_id: str,
     operator_id: AdminOperator,
 ) -> dict[str, Any]:
+    from app.ops.fencing import FenceError
+
     try:
         msg = force_active_provider(provider_id, operator_id=operator_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except FenceError as exc:
+        role = get_role_state()
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "fence_rejected",
+                "role": role.role,
+                "fence_term": role.fence_term,
+                "message": str(exc),
+            },
+        ) from exc
     return {"failover": msg, "routing": get_store().get_routing()}
 
 

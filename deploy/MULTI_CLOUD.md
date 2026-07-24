@@ -8,6 +8,8 @@ and probe `/health` to drive failover, share, and balance policies.
 - Each provider runs its **own** Caddy + web + worker + Redis stack (same as
   [`docker-compose.prod.yml`](../docker-compose.prod.yml)).
 - One host runs the **ops control plane** (this repo’s `/ops/*` API + background prober).
+  Production default remains a **single** CP process (`OPS_HA_ENABLED=false`).
+  Optional **CP HA** (etcd lease + Redis CAS fencing) is documented below.
 - **Failover v1 does not migrate in-flight sessions.** On switchover, routing
   assignments are cleared and `active_provider_id` flips. The control plane
   publishes `type: "provider_changed"` on Redis channel `ops:provider_changed`;
@@ -24,6 +26,55 @@ Client ──► active provider (WS)  [or Dual: sticky assign across two homes]
 Control plane ──probe──► Hetzner / AWS / GCP /customer /health
               ──failover──► update active_provider_id
 ```
+
+## Control-plane HA v1 (etcd + Redis CAS)
+
+Opt-in overlay — does **not** change the live single-CP Hetzner deploy until you
+enable it deliberately.
+
+### What is fenced
+
+Only the etcd lease holder (primary) may mutate durable CP authority. Every
+durable Redis write uses **Lua CAS** on `ops:control_plane:fence_term` (not
+“etcd check then blind `SET`”). Celery ops tasks fresh-read etcd leader+term on
+each invocation and pass that live term into CAS — they must not use cached web
+role state.
+
+| Fenced surface | Risk if a zombie CP writes |
+|---|---|
+| `active_provider_id` / `dual_peer_id` / routing policy | Wrong traffic home |
+| Failure/success counters, Performance streak | Spurious failover |
+| Session assignments | Wrong Dual/share sticky home |
+| Provider registry / chaos flags / base URLs | False failovers, bad reconnect URLs |
+| Auto-wake locks + Celery wake/sleep | Duplicate cloud cost |
+| `ops:provider_changed` publish | Clients reconnect on false signal |
+| `SET ops:control_plane` | Last-write-wins clobber |
+
+Ephemeral: event trail, comparison reports, decision strings (still restored on
+CAS failure because they ride the same blob).
+
+### Run the overlay
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.ops-ha.yml up --build
+# CP-A :8000 (instance cp-a), CP-B :8001 (instance cp-b), etcd, redis
+curl -s http://127.0.0.1:8000/ops/ha
+curl -s http://127.0.0.1:8001/ops/ha
+python scripts/ops_cp_ha_smoke.py
+```
+
+Env knobs: `OPS_HA_ENABLED`, `OPS_ETCD_ENDPOINTS`, `OPS_CP_INSTANCE_ID`,
+`OPS_ETCD_LEASE_TTL_SECONDS`. When HA is off, behavior stays single-writer
+(unconditional Redis `SET`).
+
+Standby mutating `/ops/*` returns **503** with `{role, fence_term, ...}`. GETs
+remain available (memory may lag until promote + restore).
+
+### Unit tests
+
+`pytest tests/test_ops_fencing.py` — includes the TOCTOU case (etcd yes / Redis
+CAS no) asserting hard demote + no `provider_changed`, and Celery live-term
+guards.
 
 ## Session 8 locked decisions (Dual XOR Performance)
 

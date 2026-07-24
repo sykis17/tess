@@ -25,18 +25,13 @@
 - [x] **Phase 18:** Pipeline status wall & results wall — `pipeline_stage` on streamed Panels; sticky status bar; virtual folder tree from agent `folder_path`; results wall filter; structured `pov_segments` on completed Panels; `tests/test_pipeline_stages.py`, `tests/test_pov_segments.py`.
 - [x] **Phase 19:** Interactive learning UX — clickable POV segment drill-down; LLM-generated `follow_up_options` with `follow_up_kinds`; structured `ranked_list` content format; WR list-intent and drill-down routing hints; `tests/test_follow_up_options.py`, `tests/test_list_format.py`.
 - [x] **Phase 20:** Streaming & polish — token streaming for L0 direct responder and POV specialists (`is_streaming` Panel deltas); mid-chain steer via send-while-processing (`session_control` + Celery revoke); CPX11 stream throttle; `tests/test_stream_utils.py`, `tests/test_session_control.py`, `tests/test_interruption.py`.
+- [x] **Phase 21:** Presenter gap fix — two-phase presenter (answer first, chips second); `review_passed` → Presenting status-wall mapping; skip-LLM follow-up fast path (`:1b` hard floor + `SKIP_LLM_FOLLOW_UPS`); `tests/test_presenter_delivery.py`. Phase B LLM chip refresh is unit-tested only — not prod-verified on CPX11 (`:1b` hard-floor skip).
 
 ---
 
 ## Next — Full AI Chain
 
 Phases below map to the [target architecture](AI_MAP.md#target-ai-chain-full-vision). Each phase should keep backward-compatible Panels and deployable increments.
-
-### Phase 21 — Presenter gap & final-answer delivery
-
-Production issue (2026-07-12): after defense passes, UI freezes on *"Quality checks passed — formatting final answer…"* for many minutes. Root cause: presenter blocks on **`generate_follow_up_options` LLM** with no progress Panel; status wall stays on **Defense** because `review_passed` Panel sets `pipeline_stage=defense`.
-
-See [PHASE_21_OPENER.md](PHASE_21_OPENER.md) for full brief, deliverables (two-phase presenter recommended), and test matrix.
 
 ### Future (post–Phase 21)
 

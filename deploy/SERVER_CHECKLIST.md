@@ -122,7 +122,7 @@ First response may take 30–60 seconds while the model loads.
 SKIP_LLM_FOLLOW_UPS=true
 ```
 
-Presenter finishes in seconds after defense with static/topic-fallback chips. Also auto-enabled when `OLLAMA_MODEL` contains `:1b` unless you set `SKIP_LLM_FOLLOW_UPS=false` explicitly.
+Presenter finishes in seconds after defense with static/topic-fallback chips. Also auto-enabled whenever `OLLAMA_MODEL` contains `:1b` (hard floor — `SKIP_LLM_FOLLOW_UPS=false` cannot re-enable LLM chips on `:1b`). On larger models, set `SKIP_LLM_FOLLOW_UPS=true` to force the fast path.
 
 ---
 

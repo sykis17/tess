@@ -6,11 +6,20 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.core.config import should_skip_llm_follow_ups
 from app.graph.follow_up_utils import build_fallback_follow_ups
 from app.graph.nodes.presenter import presenter_node
 from app.graph.schemas import DEFAULT_FOLLOW_UP_OPTIONS, MayorData, UsableAnswer
 from app.graph.state import build_initial_state
 from app.llm.types import LLMResponse
+
+
+def test_skip_llm_follow_ups_hard_floor_on_1b_model() -> None:
+    """:1b models always skip follow-up LLM; SKIP_LLM_FOLLOW_UPS=false cannot override."""
+    with patch("app.core.config.settings") as mock_settings:
+        mock_settings.skip_llm_follow_ups = False
+        mock_settings.ollama_model = "llama3.2:1b"
+        assert should_skip_llm_follow_ups() is True
 
 
 def _mock_llm_response(content: str) -> LLMResponse:

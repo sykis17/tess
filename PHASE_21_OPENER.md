@@ -211,6 +211,8 @@ After deploy to `5.78.186.223`:
 4. Confirm **completed** answer appears before or with chips (per chosen deliverable).
 5. `docker compose ... logs -f worker` — look for `presenter` timing logs; no 15-minute soft limit during presenter-only work.
 
+**Closeout note (2026-07-23):** On CPX11 with `llama3.2:1b`, Phase B (LLM chip refresh on the same `panel_id`) never runs in production — `:1b` is a hard floor (`skip_llm=True`). Live prod verifies Phase A + Presenting mapping only; Phase B remains unit-test coverage.
+
 ---
 
 ## Quick win (optional before full Phase 21)

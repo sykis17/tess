@@ -16,6 +16,11 @@
 
 services:
   otel-collector:
+    # Pinned to 0.111.0: during Step 3, 0.116.0's distroless binary would not exec on
+    # this Docker Desktop / WSL2 engine. This pin may not apply on a Linux host — the
+    # offline step's target env should re-test the newer image and either unpin or keep
+    # the pin with a verified reason (see deploy/MULTI_CLOUD.md §Observability). The
+    # offline stack bakes this same version into tess-engine-otel:offline.
     image: otel/opentelemetry-collector-contrib:0.111.0
     restart: unless-stopped
     command: ["--config=/etc/otelcol-contrib/config.yaml"]

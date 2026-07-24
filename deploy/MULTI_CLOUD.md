@@ -193,6 +193,128 @@ obs overlay (it errors clearly otherwise). The reject+success land on the same b
 standby that became the new primary); true cross-node correlation via an etcd-only partition
 is deferred (WSL2 multi-network flakiness, per the s04/s08 adaptations).
 
+## Offline / sovereign packaging (Step 4)
+
+The full HA + observability stack deploys and runs **fully offline** — zero required
+outbound network at deploy or runtime. This is proven, not asserted: the packaged
+bundle is deployed with egress blocked and the split-brain harness `run-all` passes
+**10/10** in that environment. "Offline" scopes to the **platform**; the LLM upstream
+is the deliberate exception (the offline profile uses Ollama-only, local).
+
+### Sovereignty Audit — egress inventory
+
+Every outbound vector, enumerated by grep+read, and how the offline path resolves it.
+
+| # | Egress point | Where | Phase | Offline resolution |
+|---|---|---|---|---|
+| 1 | Base image pulls (`python:3.11-slim`, `node:20-alpine`, `alpine:3.20`, `redis:7-alpine`, `caddy:2-alpine`, `quay.io/coreos/etcd:v3.5.16`, `otel/...collector-contrib:0.111.0`, `ollama/ollama`) | Dockerfiles + compose files | build/deploy | Pre-pulled + `docker save` into the bundle; offline `up --no-build` + `pull_policy: never` |
+| 2 | `pip install -r requirements.txt` (unpinned) | `Dockerfile` | build | Baked into the image on the connected machine; **no pip at deploy**; `pip freeze` → `requirements.lock.txt` for provenance |
+| 3 | `npm ci && npm run build` | `deploy/deploy.sh`, `frontend/Dockerfile` | build | Built on the connected machine; `dist/` ships in the bundle; no npm at deploy |
+| 4 | **Google Fonts CDN** (`fonts.googleapis.com`/`gstatic.com`) — the one runtime egress in the shipped SPA | `frontend/index.html`, `frontend/architecture/index.html` | runtime (browser) | **Self-hosted**: vendored woff2 + `@font-face` under `frontend/public/fonts/` (OFL, see `OFL.txt`); CDN `<link>`s removed |
+| 5 | `ollama pull <model>` (GB weights) | `deploy/deploy.sh` | deploy | Out of the acceptance path (harness never calls the LLM); model pre-seed is a documented, optional step |
+| 6 | Let's Encrypt ACME (domain mode) | `deploy/Caddyfile` | deploy | IP/offline mode uses `Caddyfile.ip` (`:80`, no ACME); Caddy is not in the harness stack |
+| 7 | `git pull` / `git clone` | `deploy/DEPLOY.md`, `server-bootstrap.sh` | deploy | Replaced by the bundle's `git archive` repo snapshot |
+| 8 | Docker/Node install from `download.docker.com` / `deb.nodesource.com` | `server-bootstrap.sh` | host bootstrap | Documented host pre-req (out of bundle scope) |
+| 9 | Gemini API | `app/llm/gemini.py` | runtime | **Deliberate online exception**; unreachable when `DEFAULT_LLM_PROVIDER=ollama` |
+| 10 | Search: Tavily / DDGS / page fetch | `app/search/` | runtime | Gated by chain profile (`allows_search`=L3/L4) + no `TAVILY_API_KEY`; off in the offline profile |
+| 11 | AWS/GCP standby APIs, `checkip.amazonaws.com` | `scripts/aws_standby.py`, `scripts/gcp_standby.py` | operator-only | Not in the app/runtime path; never invoked during offline deploy |
+| 12 | OTLP export | `app/ops/metrics.py` (`OTEL_EXPORTER_OTLP_ENDPOINT`) | runtime | Self-hosted collector only; env-driven, points at the in-stack `otel-collector` — no SaaS |
+
+In the Ollama-only, search-off, HA+obs config, app egress is limited to *local/loopback*
+endpoints (Ollama, Redis, etcd, the in-stack otel-collector, a `127.0.0.1:8000/health`
+probe) — zero public internet. One code-default caveat: `default_llm_provider` ships
+`"gemini"`; the offline env sets it to `ollama`.
+
+### Packaging mechanism
+
+A single `docker save` **tarball** (`tess-offline-bundle-<commit>.tar.gz`) carries all
+images (one `all-images.tar` for layer dedup), the exact-commit repo snapshot, the built
+CDN-free `frontend/dist`, the installer/verifier scripts, and a `MANIFEST.sha256`.
+Integrity is loud at every gate: the outer `.sha256`, `sha256sum -c MANIFEST.sha256`, a
+post-`docker load` image-ID check, and a **commit-binding** guard — the app image's
+`org.tess.commit` label must equal the repo snapshot commit and the bundle-lock commit
+(closes the "bind-mounted code vs. baked image" gap; `build-bundle.sh` requires a clean
+tree so all three agree).
+
+### Build the bundle (connected machine)
+
+```bash
+deploy/offline/build-bundle.sh            # clean tree required
+#   → tess-offline-bundle-<commit>.tar.gz (+ .sha256)
+```
+
+### Deploy on the air-gapped host
+
+```bash
+sha256sum -c tess-offline-bundle-<commit>.tar.gz.sha256   # verify in transit
+mkdir tess-offline && tar -C tess-offline -xzf tess-offline-bundle-<commit>.tar.gz && cd tess-offline
+./install-offline.sh --target /opt/tess-engine   # verify manifest, load, guards, up --no-build, smoke
+./verify-egress-blocked.sh --target /opt/tess-engine   # egress self-check + harness run-all 10/10
+```
+
+`install-offline.sh --prod` additionally refuses to start unless a strong
+`OPS_ADMIN_TOKEN` is set (fail-closed).
+
+### Egress-block mechanism, and why the harness runs in a container
+
+The block is **engine-enforced `internal: true` networks** in `docker-compose.offline.yml`
+(both `default` and `ops-ha-redis`). This is the correct mechanism on Docker Desktop /
+WSL2: the engine runs in the `docker-desktop` utility VM, so iptables in the WSL2 distro
+would not touch container networking, whereas the `internal` flag is enforced by the engine
+wherever it runs. **Verified:** a container on an internal network cannot reach
+`1.1.1.1:443` (IP layer, not just DNS).
+
+An internal network *also* removes host-loopback published-port reachability, so the
+split-brain harness cannot run from the host. It runs from a small **in-container runner**
+(`deploy/offline/harness-runner`, `docker:cli` + `python3`) attached to
+`tess-engine_default`, mounting the docker socket, reaching the CP nodes by name.
+`verify-egress-blocked.sh` addresses them by **container name** (`tess-engine-web-1`, …),
+not compose service alias: a manual `docker network connect` during s03/s05 restores the
+container name but **not** the service alias, so `http://web:8000` stops resolving after a
+partition heal while `http://tess-engine-web-1:8000` keeps working. (From the host-based
+run this never surfaced because nodes were reached via published ports.)
+
+**Linux VPS alternative.** On a real Linux host you may instead use
+`deploy/offline/firewall-egress-block.sh` (a `DOCKER-USER` chain default-drop with an
+RFC1918 allowlist), which blocks container→internet while *keeping* host-published ports —
+so the harness can run from the host there. It is **not** for Docker Desktop. Revert with
+`deploy/offline/firewall-restore.sh`.
+
+### Admin token requirements
+
+Gated `/ops/*` mutations are fail-closed (503 with no token). For a real deploy, generate a
+strong secret and set `OPS_ADMIN_TOKEN` (or the multi-operator `OPS_ADMIN_TOKENS` JSON map)
+in `.env.offline`:
+
+```bash
+openssl rand -hex 32     # never print/commit the real value
+```
+
+The compose fallback `ha-harness-token` is for the local harness only; `--prod` install
+rejects it.
+
+### Deferred hardening (documented, not silent)
+
+1. **Non-root containers.** The app image still runs as root. Deferred from this step
+   because it is orthogonal to packaging and risks the 10/10 gate — the dev base bind-mounts
+   `.:/app`, so a non-root uid writing `__pycache__` / the Prometheus multiproc dir can hit
+   permission failures. Planned change (dedicated PR, re-running the full harness + pytest):
+   `useradd app; USER app; PYTHONDONTWRITEBYTECODE=1`; worker metrics bind on `9109` is fine
+   (>1024); `otel-collector` keeps `user: "0:0"` (distroless UID 10001 cannot write the
+   `ops_spans` volume). The offline stack itself has **no** `.:/app` bind mount (image-only),
+   so this is lower-risk there.
+2. **Reproducible rebuild.** `requirements.txt` is unpinned. This step captures `pip freeze`
+   → `requirements.lock.txt` for provenance (the deployed artifact is the saved image, not a
+   rebuild). A hash-pinned lockfile (`--require-hashes`) is the follow-up.
+
+### otel-collector pin
+
+Pinned to `0.111.0` because during Step 3, `0.116.0`'s distroless binary would not exec on
+this Docker Desktop / WSL2 engine. The offline stack bakes the same version into
+`tess-engine-otel:offline` (config baked in, so there is no host-path config mount). **TODO
+on a Linux VPS:** re-test the newer image and either unpin or keep the pin with a verified
+reason. (`0.116.0` images are present locally but not yet validated end-to-end here.)
+
 ## Session 8 locked decisions (Dual XOR Performance)
 
 1. **Dual = two concurrent chat homes** — not primary/secondary roles-only.

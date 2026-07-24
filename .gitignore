@@ -14,3 +14,9 @@ frontend/dist/
 # Test / harness output
 *_pytest_*.txt
 harness_run_all.txt
+
+# Offline bundle build output + real offline env (the .example stays tracked)
+deploy/offline/dist/
+tess-offline-bundle-*.tar.gz
+tess-offline-bundle-*.tar.gz.sha256
+.env.offline

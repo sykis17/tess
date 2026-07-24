@@ -48,6 +48,17 @@ Ollama must be running on the host (default `llama3.2`); Docker containers reach
 
 Production server: `5.78.186.223` (Hetzner CPX11). Update via `ssh root@<server> "cd /opt/tess-engine && git pull && ./deploy/deploy.sh"`. See `deploy/DEPLOY.md` and `deploy/SERVER_CHECKLIST.md`.
 
+**Offline / sovereign deploy (Step 4):** the full HA + observability stack packages into a
+single `docker save` bundle that deploys and runs with zero outbound network, proven by the
+split-brain harness `run-all` 10/10 under egress block. See `deploy/MULTI_CLOUD.md` §Offline
+packaging (the Sovereignty Audit egress table lives there) and `deploy/offline/`
+(`build-bundle.sh` → `install-offline.sh` → `verify-egress-blocked.sh`;
+`docker-compose.offline.yml` is the self-contained, bind-mount-free, `internal:`-network
+stack). Egress is blocked by engine-enforced internal networks, which also drop host
+port-publishing, so the harness runs from an in-container runner reaching nodes by container
+name. Non-root containers and a hash-pinned requirements lockfile are **deliberately
+deferred** (documented in `deploy/MULTI_CLOUD.md` §Deferred hardening).
+
 ## Architecture
 
 ### Data flow
@@ -185,3 +196,5 @@ split-brain harness:
 | Ops observability (metrics/traces) | `app/ops/metrics.py` + `deploy/MULTI_CLOUD.md` §Observability |
 | Ops metrics cardinality guard (tests) | `tests/test_ops_metrics.py` |
 | Observability verification overlay | `docker-compose.ops-obs.yml` + `deploy/otel-collector-config.yaml` |
+| Offline / sovereign stack | `docker-compose.offline.yml` + `deploy/offline/` (`build-bundle.sh`, `install-offline.sh`, `verify-egress-blocked.sh`) |
+| Sovereignty audit + offline runbook | `deploy/MULTI_CLOUD.md` §Offline packaging |

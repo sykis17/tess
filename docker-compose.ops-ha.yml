@@ -8,6 +8,13 @@
 #
 # web (cp-a) and web-standby (cp-b) share Redis; only the etcd lease holder
 # mutates ops state (Redis CAS on ops:control_plane:fence_term).
+#
+# ops-ha-redis: optional second network so the split-brain harness can partition
+# primary↔Redis without also cutting etcd (see scripts/ops_cp_splitbrain).
+
+networks:
+  ops-ha-redis:
+    name: ops-ha-redis
 
 services:
   etcd:
@@ -38,12 +45,22 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    networks:
+      - default
+      - ops-ha-redis
+
   web:
     environment:
       OPS_HA_ENABLED: "true"
       OPS_ETCD_ENDPOINTS: http://etcd:2379
       OPS_CP_INSTANCE_ID: cp-a
       OPS_ETCD_LEASE_TTL_SECONDS: "10"
+      # Harness / local HA demo token (override in real deploys).
+      OPS_ADMIN_TOKEN: ${OPS_ADMIN_TOKEN:-ha-harness-token}
+    networks:
+      - default
+      - ops-ha-redis
     depends_on:
       etcd:
         condition: service_healthy
@@ -65,8 +82,12 @@ services:
       OPS_CP_INSTANCE_ID: cp-b
       OPS_ETCD_LEASE_TTL_SECONDS: "10"
       OPS_PROBE_ENABLED: "true"
+      OPS_ADMIN_TOKEN: ${OPS_ADMIN_TOKEN:-ha-harness-token}
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       DEFAULT_LLM_PROVIDER: ollama
+    networks:
+      - default
+      - ops-ha-redis
     depends_on:
       etcd:
         condition: service_healthy
@@ -92,6 +113,7 @@ services:
       # Must match the co-located primary web instance id when this worker
       # should be allowed to mutate; for dual-web demo, point at cp-a host worker.
       OPS_CP_INSTANCE_ID: cp-a
+      OPS_ADMIN_TOKEN: ${OPS_ADMIN_TOKEN:-ha-harness-token}
 
 volumes:
   etcd_data:

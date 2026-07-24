@@ -70,6 +70,29 @@ Env knobs: `OPS_HA_ENABLED`, `OPS_ETCD_ENDPOINTS`, `OPS_CP_INSTANCE_ID`,
 Standby mutating `/ops/*` returns **503** with `{role, fence_term, ...}`. GETs
 remain available (memory may lag until promote + restore).
 
+**Fence-before-auth:** the HA mutate gate (`_gate_ops_mutations`) runs before
+admin auth. Unauthenticated mutate against a standby therefore returns **503**
+with fence detail — not **401**. Authed standby mutate is also **503**. The
+split-brain harness treats standby **401** as a failure (gate not exercised).
+
+When etcd is unreachable, the sitting primary **demotes** after lease keepalive
+fails (authority is the lease — it must not serve forever on a cached
+`primary` role).
+
+### Split-brain harness (Step 2)
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.ops-ha.yml -p tess-engine up --build -d
+python -m scripts.ops_cp_splitbrain run-all
+# or: python -m scripts.ops_cp_splitbrain run s02_pause_primary
+```
+
+Each scenario resets to a clean baseline (recreate webs/etcd, wipe Redis fence
+keys) so CAS-bump / empty-blob scenarios cannot contaminate later runs.
+Convergence waits use **3× lease TTL** (default 30s). Assertions are on Redis /
+`GET /ops/ha` / HTTP artifacts — not log strings. See
+[`scripts/ops_cp_splitbrain/README.md`](../scripts/ops_cp_splitbrain/README.md).
+
 ### Unit tests
 
 `pytest tests/test_ops_fencing.py` — includes the TOCTOU case (etcd yes / Redis

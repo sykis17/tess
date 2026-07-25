@@ -446,6 +446,39 @@ self-archives this block, with run metadata, on the next real run.
 ===============================================================================
 ```
 
-## 7. Process note
+## 7. A note on method
 
-*(draft pending)*
+The preceding sections rest on artifacts: a reader can run the tests, replay the
+scenarios, read the exported spans. This one cannot. It describes how the work was
+produced, which is the author's account rather than a repository fact — the
+attested part of the document, included because the method left marks concrete
+enough to check.
+
+The work was produced by one context and reviewed by another that deliberately
+lacked it. The producer knew what the stack was configured to do and why each
+mechanism was there; the reviewer saw only what the code and the diff said, with no
+memory of the intent behind them. Claims were settled against artifacts — the fence
+term in Redis, the bodies of HTTP responses, the spans the collector wrote — rather
+than against a description of what those artifacts were supposed to contain. The
+separation is the point: a producer reads past their own assumptions, and a reader
+without those assumptions does not.
+
+That arrangement is what surfaced the concurrency question behind Finding 3.
+Nothing in the running system looked wrong — the endpoint answered, the tests
+passed — and it took a reviewer with no knowledge of how the worker was configured
+to ask why a counter's correctness depended on a setting the verified stack never
+established. The same discipline produced the provenance split in §4: the decision
+to mark which catches can be re-run from the repository and which rest on this
+account, rather than presenting all six in one voice.
+
+The method was also turned on this report. During its preparation the same checking
+corrected a scenario count from nine to ten, moved the citation for the s08
+limitation to the files that actually document it, and kept the offline bundle's
+byte sizes — recorded nowhere — out of the appendix. The review that examined the
+system also fact-checked the document describing it.
+
+None of this is novel, and the tooling that carried it is incidental to the point.
+What the method buys is the distinction §5 drew: a claim checked by someone who
+lacks the context that produced it is worth more than the same claim checked by the
+person who made it. That is why this section exists, and why it is the one section
+here that rests on the author's account rather than on artifacts a reader can run.

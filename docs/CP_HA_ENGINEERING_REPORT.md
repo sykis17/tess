@@ -50,8 +50,6 @@ says I am primary" and "I write to Redis," leadership can change. What the contr
 plane needs is both a monotonic notion of authority and enforcement at the moment
 of the write itself. That pairing is the subject of the next section.
 
-<!-- Sections below are drafted one at a time; see docs/CP_HA_REPORT_EVIDENCE.md. -->
-
 ## 2. Design
 
 The control plane's authority is an etcd lease. One node holds the lease and is
@@ -220,7 +218,7 @@ layers had it in front of them and did not see it, and why. The last column mark
 provenance — whether the catch can be re-demonstrated from the repository as it
 stands today (**A**), or whether the fix and its pinning test live in the
 repository while the discovery itself is the author's account of the process
-(**B**). §5 and the process note return to that distinction.
+(**B**). §5 and the method note return to that distinction.
 
 | # | Finding — caught by | Root cause → fix or decision | Which other layers had it in front of them and missed it, and why | Prov. |
 |---|---|---|---|---|
@@ -238,7 +236,7 @@ not; and s10's assertion that a failover's two spans share one trace id sits in
 the tree, ready to fail the moment the header decode regresses. The other three —
 1, 3, and 5 — leave their fix and its pinning test in the repository, while the
 discovery itself (a design review, a cold review, a prediction confirmed by a
-spike) is the author's account of how the work went, taken up again in the process
+spike) is the author's account of how the work went, taken up again in the method
 note. The distinction is worth preserving: a claim that can be re-run is a
 different kind of evidence than a claim that must be believed.
 
@@ -460,7 +458,7 @@ mechanism was there; the reviewer saw only what the code and the diff said, with
 memory of the intent behind them. Claims were settled against artifacts — the fence
 term in Redis, the bodies of HTTP responses, the spans the collector wrote — rather
 than against a description of what those artifacts were supposed to contain. The
-separation is the point: a producer reads past their own assumptions, and a reader
+separation is what does the work: a producer reads past their own assumptions, and a reader
 without those assumptions does not.
 
 That arrangement is what surfaced the concurrency question behind Finding 3.

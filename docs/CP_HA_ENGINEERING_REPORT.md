@@ -314,7 +314,137 @@ author's account.
 
 ## 6. Numbers appendix
 
-*(draft pending)*
+The receipts behind the report. Every figure here is drawn from the repository at
+commit `b9d2d12` (the Step 4 head) plus the Step 5 pre-work.
+
+### 6.1 Commits
+
+| Short | Date | Subject |
+|-------|------|---------|
+| `84b81f5` | 2026-07-24 | ops: CP HA v1 — etcd lease election + fence-term CAS (verified) |
+| `e56be6c` | 2026-07-24 | ops: CP HA Step 2 split-brain harness (9/9 PASS) |
+| `5dd7919` | 2026-07-25 | Step 3: Prometheus metrics + OpenTelemetry tracing for the ops/HA path |
+| `b9d2d12` | 2026-07-25 | Step 4: offline / sovereign packaging — deploy + run fully offline, harness 10/10 under egress block |
+
+The `9/9 PASS` in `e56be6c` is the nine fencing scenarios; the tenth
+(failover-visibility) arrived with the observability work in `5dd7919`, making the
+current total ten.
+
+### 6.2 Tests
+
+`pytest tests/` collects **271 tests**. Two suites are the fencing and
+observability guards, and their names are the specification:
+
+*`tests/test_ops_fencing.py` (8):* `test_promote_and_persist_cas_happy_path`,
+`test_stale_persist_cas_rejected_hard`,
+`test_toctou_etcd_yes_redis_cas_no_blocks_switch_and_publish`,
+`test_etcd_reject_same_severity_as_cas`,
+`test_celery_uses_only_fresh_live_election`,
+`test_celery_task_bodies_do_not_read_cached_role`,
+`test_worker_source_grep_no_stale_role_fields`,
+`test_check_fence_live_ha_disabled_is_synthetic`.
+
+*`tests/test_ops_metrics.py` (10):* `test_all_metrics_are_tess_ops_prefixed`,
+`test_every_label_is_allowlisted_and_not_banned`, `test_no_metric_uses_provider_id`,
+`test_provider_type_label_domain_matches_enum`,
+`test_recorders_never_raise_when_disabled`, `test_recorders_never_raise_when_enabled`,
+`test_fence_error_kind_maps_subclasses`,
+`test_ops_task_observed_reraises_not_primary`,
+`test_ops_task_observed_passes_return_value`, `test_classify_outcome_bounded`.
+
+These run as part of `pytest`; there is no hosted CI, so this suite and the
+doc-link and cardinality checks are local gates rather than a pipeline.
+
+### 6.3 Scenario matrix
+
+`python -m scripts.ops_cp_splitbrain run-all` runs all ten and prints `10/10 PASS`
+when clean; the offline verifier asserts the same under an egress block.
+
+| ID | Scenario |
+|----|----------|
+| s01 | Primary killed mid-idle |
+| s02 | Primary paused (frozen process / stale lease) |
+| s03 | Network partition: primary ↔ etcd |
+| s04 | Primary loses Redis (paused, not partitioned) |
+| s05 | Network partition: standby ↔ etcd (must not falsely promote) |
+| s06 | etcd down — sitting primary demotes after lease TTL |
+| s07 | Real-Redis CAS reject via `fence_term` bump |
+| s08 | Empty-blob restore + stale wrong-term writer reject |
+| s09 | Zombie write with a second dummy provider |
+| s10 | Failover visible in metrics + one trace (needs the observability overlay) |
+
+Scenarios s01–s09 are the fencing set; s10 is the failover-visibility scenario.
+
+### 6.4 Metrics and queries
+
+Thirteen `tess_ops_*` metrics (`app/ops/metrics.py`):
+`role_transitions_total`, `is_primary`, `fence_term`, `fence_rejects_total`,
+`lease_keepalive_total`, `lease_ttl_seconds`, `cas_total`, `mutations_total`,
+`mutation_duration_seconds`, `probes_total`, `probe_duration_seconds`,
+`failovers_total`, `worker_task_total`. Duration histograms use buckets
+`(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0)`. Label cardinality
+is bounded by an allowlist — `provider_id` (an unbounded uuid) is banned as a label;
+`provider_type` (four values) is used instead — and `tests/test_ops_metrics.py`
+enforces it.
+
+Example queries (from `deploy/MULTI_CLOUD.md`):
+
+```promql
+tess_ops_is_primary == 1                                             # who is primary
+rate(tess_ops_role_transitions_total{transition="promote"}[5m])      # promotion rate
+rate(tess_ops_fence_rejects_total[5m])                               # fence rejects by kind/surface
+sum(rate(tess_ops_cas_total{result="reject"}[5m]))
+  / sum(rate(tess_ops_cas_total[5m]))                                # CAS reject ratio
+rate(tess_ops_mutations_total{outcome="fenced_503"}[5m])             # standby refusals
+sum by (provider_type) (rate(tess_ops_probes_total{result="unhealthy"}[5m]))
+rate(tess_ops_lease_keepalive_total{result="failed"}[5m])           # lease health
+```
+
+Traces nest `ops.http.mutation` → `ops.fence_gate` → `ops.persist_cas` →
+`ops.publish_provider_changed` on the mutation path, and `ops.promotion` →
+`ops.promote_redis_fence` / `ops.initial_persist` on promotion. The collector
+(`deploy/otel-collector-config.yaml`) takes OTLP/HTTP on `:4318` and writes spans
+to a file with a one-second flush.
+
+### 6.5 Environment pins
+
+The otel-collector is pinned to `otel/opentelemetry-collector-contrib:0.111.0` in
+three places (`docker-compose.ops-obs.yml`, `deploy/offline/otel/Dockerfile`,
+`deploy/MULTI_CLOUD.md`), because `0.116.0`'s distroless binary would not exec on
+this Docker Desktop / WSL2 engine — with an explicit "re-test on a Linux VPS" to-do.
+The Python OpenTelemetry libraries are unpinned in `requirements.txt`; their exact
+versions are captured at build time in the bundle's `requirements.lock.txt`.
+
+### 6.6 Offline bundle
+
+`deploy/offline/build-bundle.sh` produces a single `docker save` archive of five
+images by default — `tess-engine-app:offline`, `tess-engine-otel:offline`,
+`tess-engine-harness-runner:offline`, `redis:7-alpine`,
+`quay.io/coreos/etcd:v3.5.16` — plus two more with `--with-prod` (`caddy:2-alpine`
+and a digest-pinned `ollama/ollama`). Alongside the images the archive carries a git
+archive of the repository at HEAD, the built frontend, `requirements.lock.txt`, a
+`bundle-lock.txt` (commit, build date, third-party digests), per-image IDs, the
+installer / verifier / firewall scripts, `.env.offline.example`, a `VERSION`, and a
+`MANIFEST.sha256`. The manifest records sha256 hashes and image IDs; the bundle's
+byte sizes are not recorded, and none is cited here.
+
+### 6.7 Attestation
+
+The text below is what `deploy/offline/verify-egress-blocked.sh` prints to stdout on
+a passing run — the verifier's on-pass output, not a captured dated artifact. No
+dated attestation file has been produced yet; the `--report` flag added in Step 5
+self-archives this block, with run metadata, on the next real run.
+
+```
+===============================================================================
+ SOVEREIGNTY ATTESTATION
+   - every project container attaches to internal networks only
+   - web / web-standby / worker cannot reach 1.1.1.1:443 or pypi.org
+   - redis / etcd reachable locally (stack fully functional)
+   - no image pull/build occurred during the run
+   - split-brain harness run-all: 10/10 PASS, egress blocked
+===============================================================================
+```
 
 ## 7. Process note
 

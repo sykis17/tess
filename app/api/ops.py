@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
 from app.ops.admin_auth import require_admin
@@ -101,7 +103,16 @@ AdminOperator = Annotated[str, Depends(require_admin)]
 
 @router.get("/ha")
 async def get_ha_status() -> dict[str, Any]:
-    """Control-plane HA role / fence diagnostics (admin not required for liveness)."""
+    """Control-plane HA role / fence diagnostics (admin not required for liveness).
+
+    The fresh etcd read is offloaded to a thread and time-bounded: a role/liveness
+    endpoint must stay responsive when etcd is degraded (e.g. quorum lost, where a
+    reachable-but-non-serving member makes a linearizable read hang for the full
+    client timeout). On timeout it falls back to the cached role — which the campaign
+    loop keeps current, including the demotion — so operators (and the split-brain
+    harness) can still read the role promptly instead of blocking on the coordinator
+    being diagnosed.
+    """
     role = get_role_state()
     live_leader = None
     live_term = None
@@ -109,11 +120,15 @@ async def get_ha_status() -> dict[str, Any]:
         try:
             from app.ops.consensus import get_consensus_backend
 
-            live = get_consensus_backend().read_election()
+            backend = get_consensus_backend()
+            live = await asyncio.wait_for(
+                run_in_threadpool(backend.read_election),
+                timeout=2.5,
+            )
             live_leader = live.leader
             live_term = live.fence_term
         except Exception as exc:
-            logger.exception("failed to read etcd election for /ops/ha")
+            logger.warning("etcd read for /ops/ha unavailable (%s); reporting cached role", exc)
             return {
                 "ha_enabled": True,
                 "role": role.role,

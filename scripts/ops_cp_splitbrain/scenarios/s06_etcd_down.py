@@ -15,9 +15,12 @@ def run(ctx: ScenarioContext) -> None:
     topo = ctx.topo
     primary_base = topo.primary_base
     primary_id = topo.primary_id
-    etcd_name = dk.container_name(cfg, cfg.etcd_service)
-
-    dk.docker_stop(etcd_name)
+    # Under a 3-node quorum, stopping ONE node leaves the cluster serving (the client
+    # fails over). Stop a MAJORITY (2 of 3) so quorum is genuinely lost — the condition
+    # this scenario asserts on: no member can serve keepalive / leader reads.
+    down_names = [dk.container_name(cfg, s) for s in cfg.etcd_services[:2]]
+    for name in down_names:
+        dk.docker_stop(name)
 
     def _primary_demoted():
         try:
@@ -73,7 +76,8 @@ def run(ctx: ScenarioContext) -> None:
             f"mutate did not fail loudly with etcd down status={code} body={body}"
         )
 
-    dk.docker_start(etcd_name)
+    for name in down_names:
+        dk.docker_start(name)
 
     def _relected():
         try:

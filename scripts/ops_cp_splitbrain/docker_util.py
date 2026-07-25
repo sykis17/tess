@@ -140,10 +140,20 @@ def redis_cli(cfg: HarnessConfig, *redis_args: str) -> str:
     return (result.stdout or "").strip()
 
 
+def etcdctl(cfg: HarnessConfig, service: str, *etcd_args: str) -> str:
+    """Run etcdctl (v3 API) inside an etcd member container."""
+    cid = container_id(cfg, service)
+    result = _run(
+        ["docker", "exec", "-e", "ETCDCTL_API=3", cid, "etcdctl", *etcd_args],
+        check=True,
+    )
+    return (result.stdout or "").strip()
+
+
 def heal_all(cfg: HarnessConfig) -> None:
     """Best-effort: unpause/start CP services, reconnect networks, start etcd/redis."""
     for service in (
-        cfg.etcd_service,
+        *cfg.etcd_services,
         cfg.redis_service,
         cfg.web_service,
         cfg.standby_service,

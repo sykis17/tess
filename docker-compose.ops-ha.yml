@@ -16,34 +16,66 @@ networks:
   ops-ha-redis:
     name: ops-ha-redis
 
+# 3-node etcd quorum (active-active-active): tolerates one node loss with the
+# coordination layer intact. Losing a *majority* (2 of 3) is what makes durable
+# consensus unavailable — see split-brain scenario s06. Anchor env shared by all
+# three members (peer/cluster token, auto-compaction so history does not grow
+# unbounded from day one). docker-compose.offline.yml stays single-node on purpose.
+x-etcd-common: &etcd-common
+  image: quay.io/coreos/etcd:v3.5.32
+  restart: unless-stopped
+  environment: &etcd-common-env
+    ETCD_DATA_DIR: /etcd-data
+    ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+    ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+    ETCD_INITIAL_CLUSTER: "etcd-1=http://etcd-1:2380,etcd-2=http://etcd-2:2380,etcd-3=http://etcd-3:2380"
+    ETCD_INITIAL_CLUSTER_TOKEN: tess-ops-cp
+    ETCD_INITIAL_CLUSTER_STATE: new
+    ETCD_AUTO_COMPACTION_MODE: revision
+    ETCD_AUTO_COMPACTION_RETENTION: "1000"
+  healthcheck:
+    test:
+      [
+        "CMD",
+        "etcdctl",
+        "endpoint",
+        "health",
+        "--endpoints=http://127.0.0.1:2379",
+      ]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+
 services:
-  etcd:
-    image: quay.io/coreos/etcd:v3.5.16
-    restart: unless-stopped
+  etcd-1:
+    <<: *etcd-common
     environment:
-      ETCD_NAME: tess-etcd
-      ETCD_DATA_DIR: /etcd-data
-      ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
-      ETCD_ADVERTISE_CLIENT_URLS: http://etcd:2379
-      ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
-      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd:2380
-      ETCD_INITIAL_CLUSTER: tess-etcd=http://etcd:2380
-      ETCD_INITIAL_CLUSTER_TOKEN: tess-ops-cp
-      ETCD_INITIAL_CLUSTER_STATE: new
+      <<: *etcd-common-env
+      ETCD_NAME: etcd-1
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd-1:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd-1:2380
     volumes:
-      - etcd_data:/etcd-data
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "etcdctl",
-          "endpoint",
-          "health",
-          "--endpoints=http://127.0.0.1:2379",
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      - etcd1_data:/etcd-data
+
+  etcd-2:
+    <<: *etcd-common
+    environment:
+      <<: *etcd-common-env
+      ETCD_NAME: etcd-2
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd-2:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd-2:2380
+    volumes:
+      - etcd2_data:/etcd-data
+
+  etcd-3:
+    <<: *etcd-common
+    environment:
+      <<: *etcd-common-env
+      ETCD_NAME: etcd-3
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd-3:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd-3:2380
+    volumes:
+      - etcd3_data:/etcd-data
 
   redis:
     networks:
@@ -53,7 +85,7 @@ services:
   web:
     environment:
       OPS_HA_ENABLED: "true"
-      OPS_ETCD_ENDPOINTS: http://etcd:2379
+      OPS_ETCD_ENDPOINTS: http://etcd-1:2379,http://etcd-2:2379,http://etcd-3:2379
       OPS_CP_INSTANCE_ID: cp-a
       OPS_ETCD_LEASE_TTL_SECONDS: "10"
       # Harness / local HA demo token (override in real deploys).
@@ -62,7 +94,11 @@ services:
       - default
       - ops-ha-redis
     depends_on:
-      etcd:
+      etcd-1:
+        condition: service_healthy
+      etcd-2:
+        condition: service_healthy
+      etcd-3:
         condition: service_healthy
       redis:
         condition: service_started
@@ -78,7 +114,7 @@ services:
     environment:
       REDIS_URL: redis://redis:6379/0
       OPS_HA_ENABLED: "true"
-      OPS_ETCD_ENDPOINTS: http://etcd:2379
+      OPS_ETCD_ENDPOINTS: http://etcd-1:2379,http://etcd-2:2379,http://etcd-3:2379
       OPS_CP_INSTANCE_ID: cp-b
       OPS_ETCD_LEASE_TTL_SECONDS: "10"
       OPS_PROBE_ENABLED: "true"
@@ -89,7 +125,11 @@ services:
       - default
       - ops-ha-redis
     depends_on:
-      etcd:
+      etcd-1:
+        condition: service_healthy
+      etcd-2:
+        condition: service_healthy
+      etcd-3:
         condition: service_healthy
       redis:
         condition: service_started
@@ -109,11 +149,13 @@ services:
   worker:
     environment:
       OPS_HA_ENABLED: "true"
-      OPS_ETCD_ENDPOINTS: http://etcd:2379
+      OPS_ETCD_ENDPOINTS: http://etcd-1:2379,http://etcd-2:2379,http://etcd-3:2379
       # Must match the co-located primary web instance id when this worker
       # should be allowed to mutate; for dual-web demo, point at cp-a host worker.
       OPS_CP_INSTANCE_ID: cp-a
       OPS_ADMIN_TOKEN: ${OPS_ADMIN_TOKEN:-ha-harness-token}
 
 volumes:
-  etcd_data:
+  etcd1_data:
+  etcd2_data:
+  etcd3_data:

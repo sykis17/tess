@@ -17,6 +17,11 @@ REDIS_FENCE_KEY = "ops:control_plane:fence_term"
 REDIS_BLOB_KEY = "ops:control_plane"
 REDIS_PROVIDER_CHANGED = "ops:provider_changed"
 
+# etcd durable artifacts (authoritative after the cutover, steps 4-5). The term is
+# already minted here today; the blob key is unwritten until EtcdFenceStore is wired in.
+ETCD_FENCE_KEY = "/tess/ops/cp/fence_term"
+ETCD_BLOB_KEY = "/tess/ops/cp/blob"
+
 
 @dataclass
 class Topology:
@@ -114,6 +119,44 @@ def active_provider_id(cfg: HarnessConfig) -> str | None:
         return None
     routing = blob.get("routing") or {}
     return routing.get("active_provider_id")
+
+
+def _etcdctl(cfg: HarnessConfig, *args: str) -> str | None:
+    """Run etcdctl on the first reachable etcd member; None if all are down."""
+    for service in cfg.etcd_services:
+        try:
+            return dk.etcdctl(cfg, service, *args)
+        except dk.DockerError:
+            continue
+    return None
+
+
+def etcd_fence_term(cfg: HarnessConfig) -> int:
+    raw = _etcdctl(cfg, "get", ETCD_FENCE_KEY, "--print-value-only")
+    raw = (raw or "").strip()
+    return int(raw) if raw.isdigit() else 0
+
+
+def etcd_blob(cfg: HarnessConfig) -> dict[str, Any] | None:
+    raw = _etcdctl(cfg, "get", ETCD_BLOB_KEY, "--print-value-only")
+    if not raw or not raw.strip():
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
+def etcd_active_provider_id(cfg: HarnessConfig) -> str | None:
+    blob = etcd_blob(cfg)
+    if not blob:
+        return None
+    return (blob.get("routing") or {}).get("active_provider_id")
+
+
+def etcd_del_blob(cfg: HarnessConfig) -> None:
+    """Delete the etcd durable blob key (scenario isolation; no-op until cutover)."""
+    _etcdctl(cfg, "del", ETCD_BLOB_KEY)
 
 
 def wait_until(

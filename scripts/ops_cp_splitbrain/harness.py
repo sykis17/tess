@@ -34,11 +34,11 @@ class ScenarioResult:
 def reset_stack(cfg: HarnessConfig) -> None:
     """Restore known-clean state: heal faults, recreate CP+etcd, flush Redis keys."""
     dk.heal_all(cfg)
-    # Recreate etcd + webs so lease state is fresh; keep redis but wipe CP keys.
+    # Recreate etcd members + webs so lease state is fresh; keep redis but wipe CP keys.
     try:
         dk.compose_recreate(
             cfg,
-            cfg.etcd_service,
+            *cfg.etcd_services,
             cfg.web_service,
             cfg.standby_service,
         )
@@ -62,6 +62,15 @@ def reset_stack(cfg: HarnessConfig) -> None:
         time.sleep(3.0)
         obs.redis_del(cfg, obs.REDIS_FENCE_KEY, obs.REDIS_BLOB_KEY)
 
+    # Prepared for the etcd cutover (steps 4-5): drop the etcd durable blob so a
+    # scenario starts clean, while the monotonic term persists in the etcd volumes
+    # (wiping the volumes would reset the term to 0 and mask monotonicity checks).
+    # No-op until EtcdFenceStore is authoritative — the key is unwritten today.
+    try:
+        obs.etcd_del_blob(cfg)
+    except Exception:
+        pass
+
     # Ensure redis-only network exists and webs/redis are attached (scenario 4).
     try:
         dk.ensure_network(cfg.redis_only_network)
@@ -76,7 +85,7 @@ def reset_stack(cfg: HarnessConfig) -> None:
 def verify_clean_baseline(cfg: HarnessConfig) -> obs.Topology:
     """Assert single primary, redis fence+blob consistent, no leftover faults."""
     # No paused containers among CP services.
-    for service in (cfg.web_service, cfg.standby_service, cfg.etcd_service, cfg.redis_service):
+    for service in (cfg.web_service, cfg.standby_service, *cfg.etcd_services, cfg.redis_service):
         name = dk.container_name(cfg, service)
         # Status via inspect State.Status
         import json

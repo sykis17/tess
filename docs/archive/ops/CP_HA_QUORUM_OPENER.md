@@ -39,7 +39,22 @@ harness + `tests/test_ops_fencing.py` before each commit).
   runs one contract against both backends — **4/4 against a live etcd** (273 unit +
   parity green; harness re-verified 10/10). `EtcdFenceStore` is not yet wired into
   `persist_store` — that is Steps 4–5.
-- **Steps 3–6 — pending**, one landing each (see Migration plan).
+- **Step 3 — LANDED.** The harness overlay ([docker-compose.ops-ha.yml](../../../docker-compose.ops-ha.yml))
+  is now a **3-node etcd quorum** (etcd-1/2/3, 3.5.32, auto-compaction). The client
+  fails over across all member URLs
+  ([app/ops/consensus.py](../../../app/ops/consensus.py)::`etcd_post_failover`), so a
+  single-node loss is transparent while a majority loss demotes. The harness is
+  3-member-aware (config/heal/reset/baseline) and `s06` now stops **2 of 3** to
+  reach genuine quorum loss; etcd-artifact observables
+  (`etcd_fence_term`/`etcd_blob`/…) are prepared for the cutover.
+  **Robustness fix the 3-node topology surfaced:** `GET /ops/ha` did a *blocking*
+  synchronous `read_election()` on the async event loop; a reachable-but-quorum-less
+  member made that read hang ~8–10s, so the endpoint could not report the (already
+  correct) demotion within the harness window. `/ops/ha` now offloads the fresh read
+  to a thread with a 2.5s bound and falls back to the cached role
+  ([app/api/ops.py](../../../app/api/ops.py)). Verified: 273 unit + 4/4 live-etcd
+  parity; **split-brain harness run-all 10/10 on the 3-node cluster**.
+- **Steps 4–6 — pending**, one landing each (see Migration plan).
 
 ---
 
@@ -112,11 +127,13 @@ store.
    across a full cycle" survives the etcd-down window in scenario `s06`.
 7. **`EtcdFenceStore` asserts a payload-size bound** (etcd's ~1.5 MiB default
    request limit — distinct from compaction debt; the blob grows with providers).
-8. **etcd stays on the 3.5.x line**, patch-pinned to current (3.5.32), bump
-   riding Step 3. `docker-compose.offline.yml` stays **single-node** this arc (the
-   3-node etcd is a harness verification overlay; multi-node-offline is deferred
-   to the multi-cloud third-leg session, keeping the Sovereignty Audit
-   unperturbed).
+8. **etcd stays on the 3.5.x line.** The harness overlay (`docker-compose.ops-ha.yml`)
+   is pinned to current **3.5.32** and is now a **3-node quorum** (etcd-1/2/3).
+   `docker-compose.offline.yml` stays **single-node at 3.5.16** — the version the
+   Sovereignty Audit was verified against; aligning it to 3.5.32 is a deferred
+   follow-up that requires re-running the offline egress harness, so the audit
+   evidence is not edited to claim an unverified image. Multi-node-offline is
+   deferred to the multi-cloud third-leg session.
 9. **Leases replace polling for soft-timeout — later, not here.** Parity on plain
    CAS first.
 
@@ -209,7 +226,7 @@ Run **all three** on every step that touches the store / consensus / CAS path
      -e ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380 \
      -e ETCD_INITIAL_ADVERTISE_PEER_URLS=http://127.0.0.1:2380 \
      -e ETCD_INITIAL_CLUSTER=t=http://127.0.0.1:2380 \
-     -e ETCD_INITIAL_CLUSTER_STATE=new quay.io/coreos/etcd:v3.5.16
+     -e ETCD_INITIAL_CLUSTER_STATE=new quay.io/coreos/etcd:v3.5.32
    OPS_TEST_ETCD_ENDPOINT=http://127.0.0.1:12379 pytest tests/test_fence_store_parity.py
    docker rm -f tess-parity-etcd
    ```
@@ -219,6 +236,28 @@ Run **all three** on every step that touches the store / consensus / CAS path
    the web container took from `.env` (compose interpolates `${OPS_ADMIN_TOKEN}`);
    and export `OPS_HA_COMPOSE_OBS=docker-compose.ops-obs.yml` so `s10` can scrape
    `/metrics`.
+
+## etcd operations (3-node cluster)
+
+- **Compaction:** automated from day one — `ETCD_AUTO_COMPACTION_MODE=revision` +
+  `ETCD_AUTO_COMPACTION_RETENTION=1000` on each member
+  (`docker-compose.ops-ha.yml`). History stays bounded with no operator cron.
+- **Defrag:** compaction frees logical space, not the file. Run
+  `etcdctl defrag` one member at a time during a maintenance window if the DB file
+  grows (it briefly blocks the member) — not automated.
+- **Snapshots:** `etcdctl snapshot save` from any member; restore with
+  `etcdctl snapshot restore`. After cutover the durable blob + term live in etcd, so
+  a snapshot is the control-plane backup.
+- **Quorum:** 3 members tolerate **one** loss transparently (client fails over).
+  Losing **two** (scenario `s06`) makes the cluster unavailable — the primary
+  demotes and mutations fail loudly, which is correct. Recover by restarting a
+  member to regain majority.
+- **Client failover:** web/worker pass all three client URLs via
+  `OPS_ETCD_ENDPOINTS`; `EtcdHttpConsensus` tries them in order
+  (`app/ops/consensus.py::etcd_post_failover`), so a single-node loss is transparent
+  to election/keepalive.
+- **Disks:** etcd needs fsync-capable storage; the named volumes
+  (`etcd1_data`/`etcd2_data`/`etcd3_data`) satisfy this on the harness host.
 
 ## Baseline artifacts (do not regress)
 

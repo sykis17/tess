@@ -53,6 +53,32 @@ def etcd_post(endpoint: str, path: str, body: dict, *, timeout: float = 2.0) -> 
         return resp.json()
 
 
+def etcd_post_failover(
+    endpoints: list[str], path: str, body: dict, *, timeout: float = 2.0
+) -> dict:
+    """Try each etcd endpoint in order; return the first success.
+
+    A node that is down (transport error) or cannot serve the request (e.g. a
+    linearizable read with no quorum -> 5xx) is skipped and the next endpoint is
+    tried, so losing **one** of three etcd nodes does not fail the call. If **every**
+    endpoint fails (quorum genuinely lost), the last error is raised — the caller
+    (election / keepalive) then treats etcd as unreachable and demotes, which is the
+    correct behavior once a majority is gone. etcd is Raft-replicated, so a lease or
+    key created via one endpoint is visible through any other; calls need not stick
+    to one node.
+    """
+    if not endpoints:
+        raise RuntimeError("no etcd endpoints configured")
+    last_exc: Exception | None = None
+    for endpoint in endpoints:
+        try:
+            return etcd_post(endpoint, path, body, timeout=timeout)
+        except httpx.HTTPError as exc:
+            last_exc = exc
+    assert last_exc is not None
+    raise last_exc
+
+
 @dataclass(frozen=True)
 class LiveElection:
     """Fresh snapshot of etcd leader + fence term."""
@@ -73,15 +99,30 @@ class ConsensusBackend(Protocol):
 
 
 class EtcdHttpConsensus:
-    """etcd v3 JSON gateway client (one endpoint URL, e.g. http://etcd:2379)."""
+    """etcd v3 JSON gateway client over one or more endpoints (comma string or list).
 
-    def __init__(self, endpoint: str, *, timeout: float = 2.0) -> None:
-        self._endpoint = endpoint.rstrip("/")
+    With a 3-node cluster, all member client URLs are passed so a single node loss
+    fails over to a surviving member (see ``etcd_post_failover``) instead of demoting
+    the primary. A single endpoint still works (list of one).
+    """
+
+    def __init__(self, endpoints: str | list[str], *, timeout: float = 2.0) -> None:
+        if isinstance(endpoints, str):
+            endpoints = endpoints.split(",")
+        normalized: list[str] = []
+        for raw in endpoints:
+            e = raw.strip().rstrip("/")
+            if not e:
+                continue
+            if not e.startswith("http"):
+                e = f"http://{e}"
+            normalized.append(e)
+        self._endpoints = normalized
         self._timeout = timeout
         self._lease_id: int | None = None
 
     def _post(self, path: str, body: dict) -> dict:
-        return etcd_post(self._endpoint, path, body, timeout=self._timeout)
+        return etcd_post_failover(self._endpoints, path, body, timeout=self._timeout)
 
     def read_election(self) -> LiveElection:
         leader_resp = self._post("/v3/kv/range", {"key": _b64(LEADER_KEY)})
@@ -280,10 +321,8 @@ def get_consensus_backend() -> ConsensusBackend:
             return _backend
         if not settings.ops_ha_active():
             raise RuntimeError("consensus backend requested while HA is disabled")
-        endpoint = settings.ops_etcd_endpoints.split(",")[0].strip()
-        if not endpoint.startswith("http"):
-            endpoint = f"http://{endpoint}"
-        _backend = EtcdHttpConsensus(endpoint)
+        # Pass all endpoints so the client fails over across the 3-node cluster.
+        _backend = EtcdHttpConsensus(settings.ops_etcd_endpoints)
         return _backend
 
 

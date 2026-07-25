@@ -17,7 +17,7 @@ class HarnessConfig:
     compose_files: tuple[str, ...]
     project_name: str
     redis_service: str
-    etcd_service: str
+    etcd_services: tuple[str, ...]
     web_service: str
     standby_service: str
     redis_only_network: str
@@ -64,7 +64,13 @@ def load_config() -> HarnessConfig:
         compose_files=compose_files,
         project_name=os.environ.get("OPS_HA_COMPOSE_PROJECT", "tess-engine"),
         redis_service=os.environ.get("OPS_HA_REDIS_SERVICE", "redis"),
-        etcd_service=os.environ.get("OPS_HA_ETCD_SERVICE", "etcd"),
+        etcd_services=tuple(
+            s.strip()
+            for s in os.environ.get(
+                "OPS_HA_ETCD_SERVICES", "etcd-1,etcd-2,etcd-3"
+            ).split(",")
+            if s.strip()
+        ),
         web_service=os.environ.get("OPS_HA_WEB_SERVICE", "web"),
         standby_service=os.environ.get("OPS_HA_STANDBY_SERVICE", "web-standby"),
         redis_only_network=os.environ.get("OPS_HA_REDIS_NETWORK", "ops-ha-redis"),

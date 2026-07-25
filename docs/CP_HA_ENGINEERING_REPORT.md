@@ -211,7 +211,36 @@ not seen it.
 
 ## 4. Findings
 
-*(draft pending)*
+Six defects, drawn from across the layers. Two of the catches come from the
+chaos harness's ten scenarios — nine fencing scenarios, plus the
+failover-visibility scenario (s10) added with the observability work — and the
+rest from the design-review, unit-test, cold-review, and packaging layers. The
+column that carries the argument is the fourth: for each defect, which *other*
+layers had it in front of them and did not see it, and why. The last column marks
+provenance — whether the catch can be re-demonstrated from the repository as it
+stands today (**A**), or whether the fix and its pinning test live in the
+repository while the discovery itself is the author's account of the process
+(**B**). §5 and the process note return to that distinction.
+
+| # | Finding — caught by | Root cause → fix or decision | Which other layers had it in front of them and missed it, and why | Prov. |
+|---|---|---|---|---|
+| 1 | **TOCTOU on the fenced write** — design review | An etcd check followed by a plain Redis `SET` leaves a gap in which leadership can change between the two. Closed by the `_LUA_PERSIST_CAS` compare-and-swap — write the blob only if the stored fence term still matches the writer's — with rollback-demote-raise on rejection; pinned by the "etcd says yes, Redis says no" unit test. | Unit tests confirm the fix but could not have found the gap: it lived in the design and was closed before code existed for a test to exercise. The chaos harness would catch a regression through s07/s08, but the defect never shipped to be caught there. | B |
+| 2 | **Unelectable after an external fence bump** — chaos harness (s08) | `promote_redis_fence` installs a term only when the etcd term exceeds the stored Redis term, so a Redis fence bumped ahead of etcd out-of-band is un-promotable and the cluster cannot re-elect until state is reset. Kept as a documented known limitation — fencing working as designed, exposing a missing recovery path — rather than quietly patched. | A design review reasons about the intended path and would not predict it; unit tests assert that the compare-and-swap rejects a stale writer, but they do not model the follow-on state in which no writer can win. It appears only when the fence ordering is deliberately corrupted and the next election is then observed. | A |
+| 3 | **Worker metrics silently depend on `--concurrency=1`** — cold review | The worker binds its metrics port once and assumes the single child is the one running the ops tasks; under prefork with more children the counters split across registries or the bind races, and the base worker command never set `--concurrency=1` (an environment override alone does not fix it). Corrected by overriding the worker command where metrics matter, and guarded at runtime by the s10 worker-exposition assertion. | Unit tests import the module in one process and never fork, so the prefork race is structurally invisible to them. Live smoke against the default command looks healthy — the endpoint answers — while the counters quietly never move. Only a reviewer reasoning about the prefork model, or the runtime exposition assertion, brings it to the surface. | B |
+| 4 | **Failover traces silently did not link** — live artifact assertion (s10) | ASGI request headers are byte-keyed, but the W3C propagator looks up the string key `traceparent`, so context extraction found nothing and every request became its own root trace. Fixed by decoding the headers into a string-keyed carrier before extraction. | The unit tests passed throughout — they do not build a byte-keyed ASGI scope and assert on emitted span parentage — and the metrics were unaffected, because counters increment regardless of trace linkage. Only asserting on the collector's exported spans, and requiring two of them to share one trace id, could surface it. | A |
+| 5 | **Internal networks remove host port-publishing** — offline environment | Marking both compose networks `internal: true` is the egress block, but the same setting also removes host-loopback reachability of published ports, so the host-based harness could not reach the nodes at all. Absorbed by a pre-designed fallback: publish no host ports and run the harness from a container inside the network, reaching nodes by container name. | Every earlier layer ran against host-published ports, so the constraint did not exist for any of them to encounter. It is a property of the packaged topology and can appear only once the stack is assembled the way it ships. | B |
+| 6 | **Service alias lost after a heal** — offline environment | A partition-heal `docker network connect` restores a container's name in DNS but not its compose service alias, so `http://web:8000` stops resolving after a heal while the container name keeps working. Handled by addressing nodes by container name throughout the harness, a convention now documented at the source. | Invisible in every host-based run, where nodes are reached over published ports and never by alias. It surfaces only when the offline environment forces in-network addressing and a heal is actually exercised. | A |
+
+Three of the six catches — 2, 4, and 6 — can be checked against the repository as
+it stands: run s08 and the cluster stays unelectable; heal a partition under the
+offline stack and `http://web:8000` stops resolving while the container name does
+not; and s10's assertion that a failover's two spans share one trace id sits in
+the tree, ready to fail the moment the header decode regresses. The other three —
+1, 3, and 5 — leave their fix and its pinning test in the repository, while the
+discovery itself (a design review, a cold review, a prediction confirmed by a
+spike) is the author's account of how the work went, taken up again in the process
+note. The distinction is worth preserving: a claim that can be re-run is a
+different kind of evidence than a claim that must be believed.
 
 ## 5. What is and isn't proven
 

@@ -1,10 +1,10 @@
 # CP-HA Engineering Report — Evidence Pack
 
-> **Working document.** This maps every claim the report will make to a
-> commit / test / file:line / captured artifact, so the author can fact-check the
-> prose against the repo, not against memory. It lives in `docs/` while the report
-> is being written and **graduates to `docs/archive/ops/`** once the report ships
-> and this pack becomes historical.
+> **Archived reference.** This maps every claim the report makes to a
+> commit / test / file:line / captured artifact, so the prose could be fact-checked
+> against the repo rather than against memory. It lived in `docs/` while the report
+> was written and was **archived here under `docs/archive/ops/`** once the report
+> shipped and the pack became historical.
 >
 > **Provenance:** verified against `git` HEAD `b9d2d12` (plus the pre-work commit
 > `002ea7d`) on 2026-07-25. Line numbers are current as of that HEAD and will
@@ -78,20 +78,20 @@ See §6.1 for the general provenance note this feeds.
 - **Root cause:** etcd-check-*then*-Redis-`SET` is two steps with a gap; nothing
   made the Redis write conditional on the term still being current.
 - **Fix:** a Redis Lua compare-and-swap. `_LUA_PERSIST_CAS`
-  ([`app/ops/store.py:52`](../app/ops/store.py)) writes the blob only if the
+  ([`app/ops/store.py:52`](../../../app/ops/store.py)) writes the blob only if the
   stored fence term still equals the writer's term; `persist_store()`
-  ([`store.py:348`](../app/ops/store.py)) runs it and, on rejection, raises
-  `FenceCasError` ([`app/ops/fencing.py:31`](../app/ops/fencing.py)), rolls back
+  ([`store.py:348`](../../../app/ops/store.py)) runs it and, on rejection, raises
+  `FenceCasError` ([`app/ops/fencing.py:31`](../../../app/ops/fencing.py)), rolls back
   in-memory state, and demotes — **the same severity as an etcd rejection**.
   Keys: `REDIS_FENCE_TERM_KEY` (`store.py:35`), `REDIS_CONTROL_PLANE_KEY`
   (`store.py:34`).
 - **The test that pins it:**
   `tests/test_ops_fencing.py::test_toctou_etcd_yes_redis_cas_no_blocks_switch_and_publish`
-  ([`:155`](../tests/test_ops_fencing.py)) — etcd forced leader @term 5, Redis
+  ([`:155`](../../../tests/test_ops_fencing.py)) — etcd forced leader @term 5, Redis
   already @term 6 ("another primary won the TOCTOU window"); asserts
   `pytest.raises(FenceError)`, no `provider_changed` published, role demoted,
   in-memory flip rolled back. Severity-parity test:
-  `test_etcd_reject_same_severity_as_cas` ([`:199`](../tests/test_ops_fencing.py)).
+  `test_etcd_reject_same_severity_as_cas` ([`:199`](../../../tests/test_ops_fencing.py)).
 - **Commit:** `84b81f5` (CAS calls later instrumented in `5dd7919`).
 - **Which layers missed it & why:** unit tests *confirm* the fix but did not
   *find* the gap — the gap was in the design, closed before implementation. Once
@@ -108,16 +108,16 @@ See §6.1 for the general provenance note this feeds.
   cluster correctly rejects stale writers but then **cannot re-elect** until Redis
   state is reset.
 - **Root cause / by-design:** `promote_redis_fence()`
-  ([`store.py:320`](../app/ops/store.py)) installs a term only if `etcd_term >
+  ([`store.py:320`](../../../app/ops/store.py)) installs a term only if `etcd_term >
   stored_redis_term`. That is the fencing invariant working — but it also means an
   externally-inflated Redis term is un-promotable. This is fencing exposing a
   *missing recovery path*, not a fencing bug.
 - **Decision (documented, deliberately not "fixed"):**
-  [`CLAUDE.md`](../CLAUDE.md) "Known limitation" (§ Ops control-plane HA) and
-  [`scripts/ops_cp_splitbrain/README.md`](../scripts/ops_cp_splitbrain/README.md).
+  [`CLAUDE.md`](../../../CLAUDE.md) "Known limitation" (§ Ops control-plane HA) and
+  [`scripts/ops_cp_splitbrain/README.md`](../../../scripts/ops_cp_splitbrain/README.md).
   Recovery design is future work.
 - **Scenario:** `s08_empty_blob.py` part (b)
-  ([`scenarios/s08_empty_blob.py`](../scripts/ops_cp_splitbrain/scenarios/s08_empty_blob.py))
+  ([`scenarios/s08_empty_blob.py`](../../../scripts/ops_cp_splitbrain/scenarios/s08_empty_blob.py))
   sets Redis fence ahead of etcd and asserts the stale writer cannot flip
   `active_provider_id` or clobber the blob; the scenario itself skips the final
   re-election wait *because* the cluster is intentionally left unelectable (see
@@ -138,7 +138,7 @@ See §6.1 for the general provenance note this feeds.
   split across per-child registries) under Celery prefork with concurrency > 1 —
   a "green but blind" instrumentation failure.
 - **Root cause:** `start_worker_metrics_server()`
-  ([`app/ops/metrics.py:422`](../app/ops/metrics.py)) binds `:9109` once and
+  ([`app/ops/metrics.py:422`](../../../app/ops/metrics.py)) binds `:9109` once and
   assumes it is the same single child that runs the ops tasks and increments
   counters. Prefork with N children would race the port / fork per-CPU. The
   correctness silently depended on `--concurrency=1`, which the base worker
@@ -148,9 +148,9 @@ See §6.1 for the general provenance note this feeds.
   `docker-compose.ops-obs.yml` (the "counters silently never increment" trap
   comment + `command:` override) and `docker-compose.offline.yml`; prod sets it in
   `docker-compose.prod.yml`. Documented: `deploy/MULTI_CLOUD.md` §Observability
-  ("Prefork assumption (matters)") and [`CLAUDE.md`](../CLAUDE.md). Runtime guard:
+  ("Prefork assumption (matters)") and [`CLAUDE.md`](../../../CLAUDE.md). Runtime guard:
   `s10_failover_visible._assert_worker_exposition`
-  ([`scenarios/s10_failover_visible.py:169`](../scripts/ops_cp_splitbrain/scenarios/s10_failover_visible.py))
+  ([`scenarios/s10_failover_visible.py:169`](../../../scripts/ops_cp_splitbrain/scenarios/s10_failover_visible.py))
   fails with "must … run the worker at --concurrency=1 (§3a)" if `:9109` is
   unreachable.
 - **Commit:** `5dd7919` (propagated to offline in `b9d2d12`).
@@ -176,11 +176,11 @@ See §6.1 for the general provenance note this feeds.
   propagator looks up the **string** key `traceparent`, so a bytes-keyed carrier
   extracts nothing — silently.
 - **Fix:** `extract_trace_context()`
-  ([`app/ops/metrics.py:320`](../app/ops/metrics.py)) decodes into a `str→str`
+  ([`app/ops/metrics.py:320`](../../../app/ops/metrics.py)) decodes into a `str→str`
   carrier before `propagate.extract(...)`; consumed by the ops mutation
   middleware as the parent context for the `ops.http.mutation` span.
 - **The assertion that caught it:** `s10_failover_visible._trace_ok`
-  ([`scenarios/s10_failover_visible.py:145`](../scripts/ops_cp_splitbrain/scenarios/s10_failover_visible.py))
+  ([`scenarios/s10_failover_visible.py:145`](../../../scripts/ops_cp_splitbrain/scenarios/s10_failover_visible.py))
   collects the two `ops.http.mutation` spans sharing `ops.request_id` and asserts
   `len({trace_id}) == 1` with outcomes `{fenced_503, success}`. A bytes-keyed
   carrier makes those two spans carry *different* trace_ids → assertion fails.
@@ -228,7 +228,7 @@ See §6.1 for the general provenance note this feeds.
   throughout; the offline driver injects container names into
   `OPS_HA_SMOKE_A/B`. Heal logic: `docker_util.network_connect()` /
   `heal_all()` (plain reconnect, no `--alias`)
-  ([`scripts/ops_cp_splitbrain/docker_util.py`](../scripts/ops_cp_splitbrain/docker_util.py)).
+  ([`scripts/ops_cp_splitbrain/docker_util.py`](../../../scripts/ops_cp_splitbrain/docker_util.py)).
   Documented: `verify-egress-blocked.sh` header, `MULTI_CLOUD.md` §Offline
   packaging, and — as of `002ea7d` — the `container_name()` docstring, the
   harness-runner Dockerfile, and the MULTI_CLOUD.md provider-table note.
@@ -390,12 +390,12 @@ deferred**, documented in `deploy/MULTI_CLOUD.md` §Deferred hardening + `CLAUDE
 
 ### 5.5 Fence-before-auth ordering (deliberate contract + its tradeoff)
 The router-level `_gate_ops_mutations` dependency
-([`app/api/ops.py:56`](../app/api/ops.py)) runs **before** per-endpoint
+([`app/api/ops.py:56`](../../../app/api/ops.py)) runs **before** per-endpoint
 `require_admin`, returning a 503 with the fence body on standby. Tradeoff
 (documented): topology info (who is primary) is visible to unauthenticated callers
 on mutation endpoints. Reads (GET/HEAD/OPTIONS) and `/ops/ha` stay available.
 Worker-side rule: ops tasks use `check_fence_live()`
-([`app/ops/fencing.py:132`](../app/ops/fencing.py)) only — never cached role;
+([`app/ops/fencing.py:132`](../../../app/ops/fencing.py)) only — never cached role;
 `require_primary_cached` (`:150`) is banned in `app/worker.py`, statically
 asserted by `test_worker_source_grep_no_stale_role_fields`.
 

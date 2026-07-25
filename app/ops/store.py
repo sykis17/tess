@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from typing import Any
+from typing import Any, Protocol
 
 from app.ops import metrics
 from app.ops.models import (
@@ -317,23 +317,134 @@ def _redis_client():
     )
 
 
+class FenceStore(Protocol):
+    """Durable fence store seam: mirrored CAS-guard term + control-plane blob.
+
+    Pure storage. Backend implementations do the atomic term/blob operations and
+    nothing else — severity handling (restore + demote + raise) and metrics live
+    in the module-level wrappers below, so every backend inherits identical
+    semantics. See ``deploy/MULTI_CLOUD.md`` for the fence contract.
+    """
+
+    def read_term(self) -> int:
+        """Return the stored fence term (0 if absent)."""
+        ...
+
+    def promote_term(self, term: int) -> bool:
+        """Monotonic install (CAS: only if stored term < ``term``). Accept -> True."""
+        ...
+
+    def cas_persist(self, term: int, payload: str) -> bool:
+        """Write the blob iff stored term == ``term`` (atomic). Accept -> True."""
+        ...
+
+    def write_blob(self, payload: str) -> None:
+        """Unconditional blob write (HA-off single-writer path)."""
+        ...
+
+    def read_blob(self) -> str | None:
+        """Return the raw control-plane blob (None if absent)."""
+        ...
+
+
+class RedisFenceStore:
+    """Redis-backed ``FenceStore`` — the two Lua CAS scripts + blob get/set.
+
+    Each operation opens and closes its own client via the module-level
+    ``_redis_client`` factory (kept as a module symbol so tests that
+    ``monkeypatch`` it continue to inject their fake).
+    """
+
+    def read_term(self) -> int:
+        client = _redis_client()
+        try:
+            raw = client.get(REDIS_FENCE_TERM_KEY)
+            return int(raw) if raw is not None else 0
+        finally:
+            client.close()
+
+    def promote_term(self, term: int) -> bool:
+        client = _redis_client()
+        try:
+            ok = client.eval(
+                _LUA_PROMOTE_FENCE,
+                1,
+                REDIS_FENCE_TERM_KEY,
+                str(int(term)),
+            )
+            return int(ok) == 1
+        finally:
+            client.close()
+
+    def cas_persist(self, term: int, payload: str) -> bool:
+        client = _redis_client()
+        try:
+            ok = client.eval(
+                _LUA_PERSIST_CAS,
+                2,
+                REDIS_FENCE_TERM_KEY,
+                REDIS_CONTROL_PLANE_KEY,
+                str(int(term)),
+                payload,
+            )
+            return int(ok) == 1
+        finally:
+            client.close()
+
+    def write_blob(self, payload: str) -> None:
+        client = _redis_client()
+        try:
+            client.set(REDIS_CONTROL_PLANE_KEY, payload)
+        finally:
+            client.close()
+
+    def read_blob(self) -> str | None:
+        client = _redis_client()
+        try:
+            return client.get(REDIS_CONTROL_PLANE_KEY)
+        finally:
+            client.close()
+
+
+_fence_store: FenceStore | None = None
+_fence_store_lock = threading.Lock()
+
+
+def get_fence_store() -> FenceStore:
+    """Return the active fence store (defaults to Redis)."""
+    global _fence_store
+    with _fence_store_lock:
+        if _fence_store is None:
+            _fence_store = RedisFenceStore()
+        return _fence_store
+
+
+def set_fence_store(store: FenceStore | None) -> None:
+    """Override the active fence store (tests / backend selection)."""
+    global _fence_store
+    with _fence_store_lock:
+        _fence_store = store
+
+
+def reset_fence_store() -> FenceStore:
+    """Reset to a fresh Redis fence store."""
+    global _fence_store
+    with _fence_store_lock:
+        _fence_store = RedisFenceStore()
+        return _fence_store
+
+
 def promote_redis_fence(fence_term: int) -> None:
     """Install Redis fence term on promote (CAS: only if stored term < fence_term)."""
     from app.ops.fencing import FenceCasError, PersistError
 
-    client = _redis_client()
+    store = get_fence_store()
     try:
-        ok = client.eval(
-            _LUA_PROMOTE_FENCE,
-            1,
-            REDIS_FENCE_TERM_KEY,
-            str(int(fence_term)),
-        )
-        if int(ok) != 1:
+        if not store.promote_term(fence_term):
             metrics.record_cas("promote", "reject")
             raise FenceCasError(
                 f"redis promote fence rejected term={fence_term} "
-                f"(stored={client.get(REDIS_FENCE_TERM_KEY)!r})"
+                f"(stored={store.read_term()!r})"
             )
         metrics.record_cas("promote", "accept")
     except FenceCasError:
@@ -341,8 +452,6 @@ def promote_redis_fence(fence_term: int) -> None:
     except Exception as exc:
         logger.exception("redis promote fence failed term=%s", fence_term)
         raise PersistError(f"redis promote fence failed: {exc}") from exc
-    finally:
-        client.close()
 
 
 def persist_store(*, fence_term: int | None = None) -> None:
@@ -358,7 +467,7 @@ def persist_store(*, fence_term: int | None = None) -> None:
     if not settings.ops_persist_enabled:
         return
 
-    client = _redis_client()
+    store = get_fence_store()
     try:
         if settings.ops_ha_active():
             term = resolve_write_fence_term(fence_term=fence_term)
@@ -368,20 +477,12 @@ def persist_store(*, fence_term: int | None = None) -> None:
             with metrics.get_tracer().start_as_current_span("ops.persist_cas") as _sp:
                 _sp.set_attribute("ops.op", "persist")
                 _sp.set_attribute("ops.fence_term", int(term))
-                ok = client.eval(
-                    _LUA_PERSIST_CAS,
-                    2,
-                    REDIS_FENCE_TERM_KEY,
-                    REDIS_CONTROL_PLANE_KEY,
-                    str(int(term)),
-                    payload,
-                )
-                if int(ok) != 1:
+                if not store.cas_persist(term, payload):
                     # Record before the existing restore/demote/raise; do not alter it.
                     _sp.set_attribute("ops.cas_result", "reject")
                     metrics.record_cas("persist", "reject")
                     metrics.record_fence_reject("cas_stale", "persist")
-                    stored = client.get(REDIS_FENCE_TERM_KEY)
+                    stored = store.read_term()
                     raise FenceCasError(
                         f"redis CAS persist rejected term={term} stored={stored!r}"
                     )
@@ -390,7 +491,7 @@ def persist_store(*, fence_term: int | None = None) -> None:
             return
 
         payload = json.dumps(get_store().to_redis_payload(fence_term=fence_term))
-        client.set(REDIS_CONTROL_PLANE_KEY, payload)
+        store.write_blob(payload)
     except FenceCasError as exc:
         logger.error("ops persist CAS rejected: %s", exc)
         # Roll back in-memory mutations and demote — same severity as etcd reject.
@@ -407,8 +508,6 @@ def persist_store(*, fence_term: int | None = None) -> None:
     except Exception as exc:
         logger.exception("ops persist failed")
         raise PersistError(f"ops persist failed: {exc}") from exc
-    finally:
-        client.close()
 
 
 def restore_store(*, raise_on_error: bool = False) -> bool:
@@ -418,15 +517,11 @@ def restore_store(*, raise_on_error: bool = False) -> bool:
     if not settings.ops_persist_enabled:
         return False
     try:
-        client = _redis_client()
-        try:
-            raw = client.get(REDIS_CONTROL_PLANE_KEY)
-            if not raw:
-                return False
-            get_store().load_redis_payload(json.loads(raw))
-            return True
-        finally:
-            client.close()
+        raw = get_fence_store().read_blob()
+        if not raw:
+            return False
+        get_store().load_redis_payload(json.loads(raw))
+        return True
     except Exception:
         logger.exception("ops restore failed")
         if raise_on_error:
@@ -436,12 +531,7 @@ def restore_store(*, raise_on_error: bool = False) -> bool:
 
 def read_redis_fence_term() -> int:
     """Read the durable Redis fence term (0 if absent)."""
-    client = _redis_client()
-    try:
-        raw = client.get(REDIS_FENCE_TERM_KEY)
-        return int(raw) if raw is not None else 0
-    finally:
-        client.close()
+    return get_fence_store().read_term()
 
 
 def ensure_default_hetzner(

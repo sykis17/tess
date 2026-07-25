@@ -93,6 +93,28 @@ See [MULTI_CLOUD_HARDENING_S7_OPENER.md](docs/archive/ops/MULTI_CLOUD_HARDENING_
 [MULTI_CLOUD_HARDENING_S2_OPENER.md](docs/archive/ops/MULTI_CLOUD_HARDENING_S2_OPENER.md),
 [MULTI_CLOUD_HARDENING_OPENER.md](docs/archive/ops/MULTI_CLOUD_HARDENING_OPENER.md)).
 
+**Session 10 (multi-cloud track) is reserved for Track C — Shared Redis /
+seamless** (shared session store reachable from both homes; honest
+`/ops/seamless-migration`). Not yet started; distinct from the CP-HA hardening
+lineage below.
+
+### Control-plane HA hardening (distinct lineage)
+
+Makes the ops control plane itself HA. Separate from the multi-cloud demo
+`Session N` numbering above — do not conflate the two.
+
+- **CP HA v1** (`84b81f5`): etcd lease election + fence-term CAS.
+- **Step 2**: split-brain harness (`scripts/ops_cp_splitbrain`, `run-all`).
+- **Step 3**: Prometheus metrics + OpenTelemetry tracing (opt-in, off by default).
+- **Step 4**: offline / sovereign packaging (10/10 harness under egress block).
+- **Step 5**: CP-HA engineering report (`docs/CP_HA_ENGINEERING_REPORT.md`).
+- **Quorum Fence Store** (in progress): move the durable control-plane blob + its
+  CAS guard from Redis into etcd so the fence-guarded durable write is
+  linearizable end-to-end (etcd already owns leader election + the authoritative
+  term; only durable persistence remained a Redis SPOF). 6-step arc, one landing
+  each; **Step 1 (FenceStore seam extraction) landed** with zero behavioral diff.
+  See [CP_HA_QUORUM_OPENER.md](docs/archive/ops/CP_HA_QUORUM_OPENER.md).
+
 ---
 
 ## Principles

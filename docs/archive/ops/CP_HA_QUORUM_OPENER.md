@@ -26,7 +26,20 @@ harness + `tests/test_ops_fencing.py` before each commit).
   term/blob/CAS ops to the active store while keeping metrics and the
   restore→demote→raise severity handling in the wrapper. **Zero behavioral diff**
   — 271 unit tests green; split-brain harness `run-all` green.
-- **Steps 2–6 — pending**, one landing each (see Migration plan).
+- **Step 2 — LANDED.** `EtcdFenceStore` implemented in
+  [app/ops/store.py](../../../app/ops/store.py), reusing the shared `etcd_post`
+  gateway helper now extracted in
+  [app/ops/consensus.py](../../../app/ops/consensus.py): `cas_persist` is a single
+  VALUE-compare `txn`; `promote_term` is a read-then-CAS retry loop; a payload-size
+  guard bounds the blob under etcd's ~1.5 MiB request limit. Promote is now
+  idempotent (`<=`) in both backends (Redis Lua `<`→`<=` + `_FakeRedis` moved to
+  [tests/fence_fakes.py](../../../tests/fence_fakes.py) and updated in the same
+  change). A parameterized parity suite
+  ([tests/test_fence_store_parity.py](../../../tests/test_fence_store_parity.py))
+  runs one contract against both backends — **4/4 against a live etcd** (273 unit +
+  parity green; harness re-verified 10/10). `EtcdFenceStore` is not yet wired into
+  `persist_store` — that is Steps 4–5.
+- **Steps 3–6 — pending**, one landing each (see Migration plan).
 
 ---
 
@@ -177,6 +190,35 @@ Multi-cloud third leg (etcd topology is designed for it but deployed
 single-provider first), lease-based soft-timeout rework, product-graph
 observability. Shared Redis / seamless (Track C) is the multi-cloud demo track's
 concern, not this lineage.
+
+## Verification — per-step gates
+
+Run **all three** on every step that touches the store / consensus / CAS path
+(all remaining steps do). The first two run on the host; the harness needs Docker.
+
+1. **Unit + Redis parity:** `pytest tests/`. This passes with the **etcd contract
+   tests skipped** — a plain green run does **not** exercise the etcd backend.
+   "Green" ≠ "etcd-verified"; never conflate them (that is exactly how a parity
+   suite rots the day after it is written).
+2. **Live-etcd parity (required):** run a throwaway single-node etcd on a published
+   port and point the parity suite at it:
+   ```bash
+   docker run -d --rm -p 12379:2379 --name tess-parity-etcd \
+     -e ETCD_NAME=t -e ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379 \
+     -e ETCD_ADVERTISE_CLIENT_URLS=http://127.0.0.1:2379 \
+     -e ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380 \
+     -e ETCD_INITIAL_ADVERTISE_PEER_URLS=http://127.0.0.1:2380 \
+     -e ETCD_INITIAL_CLUSTER=t=http://127.0.0.1:2380 \
+     -e ETCD_INITIAL_CLUSTER_STATE=new quay.io/coreos/etcd:v3.5.16
+   OPS_TEST_ETCD_ENDPOINT=http://127.0.0.1:12379 pytest tests/test_fence_store_parity.py
+   docker rm -f tess-parity-etcd
+   ```
+3. **Split-brain harness:** bring up base + ops-ha (+ ops-obs for `s10`), then
+   `python -m scripts.ops_cp_splitbrain run-all` = 10/10. Two environment gotchas:
+   the harness reads the admin token from `OPS_ADMIN_TOKEN` and must match the value
+   the web container took from `.env` (compose interpolates `${OPS_ADMIN_TOKEN}`);
+   and export `OPS_HA_COMPOSE_OBS=docker-compose.ops-obs.yml` so `s10` can scrape
+   `/metrics`.
 
 ## Baseline artifacts (do not regress)
 

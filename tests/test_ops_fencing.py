@@ -33,6 +33,7 @@ from app.ops.store import (
     promote_redis_fence,
     reset_store,
 )
+from tests.fence_fakes import _FakeRedis
 
 
 @pytest.fixture(autouse=True)
@@ -54,44 +55,6 @@ def _enable_ha(monkeypatch: pytest.MonkeyPatch, backend: InMemoryConsensus) -> N
     monkeypatch.setattr(settings, "ops_etcd_endpoints", "http://etcd:2379")
     monkeypatch.setattr(settings, "ops_persist_enabled", True)
     set_consensus_backend(backend)
-
-
-class _FakeRedis:
-    """Minimal Redis stand-in that runs the fence Lua scripts."""
-
-    def __init__(self, *, fence_term: int = 0) -> None:
-        self.kv: dict[str, str] = {}
-        if fence_term:
-            self.kv[REDIS_FENCE_TERM_KEY] = str(fence_term)
-
-    def get(self, key: str) -> str | None:
-        return self.kv.get(key)
-
-    def set(self, key: str, value: str) -> None:
-        self.kv[key] = value
-
-    def eval(self, script: str, numkeys: int, *args: str) -> int:
-        keys = list(args[:numkeys])
-        argv = list(args[numkeys:])
-        if "cur < nxt" in script:
-            # promote
-            cur = int(self.kv.get(keys[0], "0"))
-            nxt = int(argv[0])
-            if cur < nxt:
-                self.kv[keys[0]] = argv[0]
-                return 1
-            return 0
-        if "cur == term" in script:
-            cur = int(self.kv.get(keys[0], "0"))
-            term = int(argv[0])
-            if cur == term:
-                self.kv[keys[1]] = argv[1]
-                return 1
-            return 0
-        raise AssertionError(f"unexpected lua script: {script[:80]}")
-
-    def close(self) -> None:
-        return None
 
 
 def _seed_two_providers() -> None:

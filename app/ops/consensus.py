@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 
 LEADER_KEY = "/tess/ops/cp/leader"
 FENCE_TERM_KEY = "/tess/ops/cp/fence_term"
+# Durable control-plane blob key — etcd counterpart of Redis ``ops:control_plane``.
+# Used by ``EtcdFenceStore`` (app/ops/store.py); consensus itself does not read it.
+BLOB_KEY = "/tess/ops/cp/blob"
 
 
 def _b64(raw: str | bytes) -> str:
@@ -35,6 +38,19 @@ def _unb64(raw: str | None) -> str:
     if not raw:
         return ""
     return base64.b64decode(raw).decode("utf-8")
+
+
+def etcd_post(endpoint: str, path: str, body: dict, *, timeout: float = 2.0) -> dict:
+    """POST to an etcd v3 gRPC-JSON gateway endpoint and return the parsed JSON.
+
+    Shared by ``EtcdHttpConsensus`` (election/term) and ``EtcdFenceStore`` (durable
+    blob CAS) so both speak the gateway through one place.
+    """
+    url = f"{endpoint.rstrip('/')}{path}"
+    with httpx.Client(timeout=timeout) as client:
+        resp = client.post(url, json=body)
+        resp.raise_for_status()
+        return resp.json()
 
 
 @dataclass(frozen=True)
@@ -65,11 +81,7 @@ class EtcdHttpConsensus:
         self._lease_id: int | None = None
 
     def _post(self, path: str, body: dict) -> dict:
-        url = f"{self._endpoint}{path}"
-        with httpx.Client(timeout=self._timeout) as client:
-            resp = client.post(url, json=body)
-            resp.raise_for_status()
-            return resp.json()
+        return etcd_post(self._endpoint, path, body, timeout=self._timeout)
 
     def read_election(self) -> LiveElection:
         leader_resp = self._post("/v3/kv/range", {"key": _b64(LEADER_KEY)})

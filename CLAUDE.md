@@ -155,12 +155,21 @@ split-brain harness:
 - **Split-brain harness:** `python -m scripts.ops_cp_splitbrain run-all`. Assertions target
   artifacts (Redis term/blob, pubsub, HTTP bodies), never log strings. A harness failure is a
   product bug until proven otherwise — fix the product, don't soften the assertion.
-- **Verified baseline:** commit `84b81f5`. Any change to `app/ops/consensus.py`,
-  `app/ops/fencing.py`, or the `store.py` CAS path requires re-running the harness **and**
-  `tests/test_ops_fencing.py` before commit.
+- **Verified baseline:** commit `84b81f5` (CP HA v1). The Quorum Fence Store arc extends it
+  on `cursor/cp-ha-quorum-fence-store` — Step 1 (`6331b00`) introduced the `FenceStore` seam
+  in `store.py` (`RedisFenceStore`; `persist_store`/`promote_redis_fence`/`restore_store`
+  delegate to `get_fence_store()`), Step 2 added `EtcdFenceStore` + a parity suite. Any change
+  to `app/ops/consensus.py`, `app/ops/fencing.py`, or the `store.py` CAS path (the `FenceStore`
+  backends) requires re-running, before commit: the split-brain harness,
+  `tests/test_ops_fencing.py`, **and** the live-etcd parity suite
+  (`tests/test_fence_store_parity.py` against a real etcd — a plain `pytest tests/` **skips**
+  the etcd contract, so green alone does not prove the etcd backend). See
+  `docs/archive/ops/CP_HA_QUORUM_OPENER.md` § Verification.
 - **Known limitation (don't "fix" casually):** after an external fence bump in Redis the
   cluster is unelectable until Redis state is reset — `promote_redis_fence()` requires etcd
-  term > stored Redis term. Deliberate recovery design is future work.
+  term >= stored Redis term (idempotent install; a bump to a *higher* term still locks it out).
+  This is the Redis backend's limitation and persists until the etcd cutover collapses the two
+  term stores into one. Deliberate recovery design is future work.
 - **Observability cardinality discipline (`app/ops/metrics.py`).** Metrics/traces are
   self-hosted, opt-in, OFF by default (`OPS_METRICS_ENABLED` / `OPS_TRACING_ENABLED`). Every
   metric label value must be a **fixed code enum or per-process constant** — `provider_id`

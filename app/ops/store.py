@@ -20,6 +20,16 @@ from app.ops.models import (
     utc_now,
 )
 
+# Reused etcd gateway helpers for the etcd-backed FenceStore. No circular import:
+# app.ops.consensus imports only app.core.config.
+from app.ops.consensus import (
+    BLOB_KEY,
+    FENCE_TERM_KEY,
+    _b64,
+    _unb64,
+    etcd_post,
+)
+
 # OpsEvent imported above for ensure_default_hetzner.
 
 logger = logging.getLogger(__name__)
@@ -37,11 +47,13 @@ REDIS_FENCE_TERM_KEY = "ops:control_plane:fence_term"
 MAX_EVENTS = 2000
 MAX_SNAPSHOTS = 2000
 
-# Promote: install higher fence term if Redis term is strictly lower.
+# Promote: idempotent monotonic install — install if stored term <= new (write
+# when strictly lower; no-op rewrite when equal so re-promoting the same term
+# succeeds instead of self-demoting; reject only when stored term is higher).
 _LUA_PROMOTE_FENCE = """
 local cur = tonumber(redis.call('GET', KEYS[1]) or '0')
 local nxt = tonumber(ARGV[1])
-if cur < nxt then
+if cur <= nxt then
   redis.call('SET', KEYS[1], ARGV[1])
   return 1
 end
@@ -331,7 +343,9 @@ class FenceStore(Protocol):
         ...
 
     def promote_term(self, term: int) -> bool:
-        """Monotonic install (CAS: only if stored term < ``term``). Accept -> True."""
+        """Idempotent monotonic install: succeed iff stored term <= ``term``
+        (write when strictly lower, no-op when equal), reject iff stored > term.
+        Accept -> True."""
         ...
 
     def cas_persist(self, term: int, payload: str) -> bool:
@@ -406,6 +420,160 @@ class RedisFenceStore:
             client.close()
 
 
+class EtcdFenceStore:
+    """etcd-backed ``FenceStore`` — authoritative term + durable blob in one
+    linearizable store, via the etcd v3 gRPC-JSON gateway.
+
+    Reuses the gateway helpers from :mod:`app.ops.consensus`. The term key is the
+    same monotonic token consensus mints (``/tess/ops/cp/fence_term``); the blob
+    key (``/tess/ops/cp/blob``) is the etcd counterpart of ``ops:control_plane``.
+    Keys are overridable so tests can run the parity contract in an isolated
+    namespace without touching live election state. Not yet wired into
+    ``persist_store`` — shadow/cutover land in later steps of the Quorum Fence
+    Store arc.
+    """
+
+    # etcd's default --max-request-bytes is ~1.5 MiB; stay under it and fail with a
+    # distinct (non-fence) error rather than letting an oversize blob surface as a
+    # gateway 4xx mid-CAS. The blob grows with providers, so this is a real bound.
+    _MAX_BLOB_BYTES = 1_500_000
+
+    def __init__(
+        self,
+        endpoint: str,
+        *,
+        term_key: str = FENCE_TERM_KEY,
+        blob_key: str = BLOB_KEY,
+        timeout: float = 2.0,
+        max_promote_retries: int = 5,
+    ) -> None:
+        self._endpoint = endpoint.rstrip("/")
+        self._term_key = term_key
+        self._blob_key = blob_key
+        self._timeout = timeout
+        self._max_promote_retries = max_promote_retries
+
+    def _post(self, path: str, body: dict) -> dict:
+        return etcd_post(self._endpoint, path, body, timeout=self._timeout)
+
+    def _guard_size(self, payload: str) -> None:
+        size = len(payload.encode("utf-8"))
+        if size > self._MAX_BLOB_BYTES:
+            from app.ops.fencing import PersistError
+
+            raise PersistError(
+                f"ops control-plane blob {size}B exceeds etcd request budget "
+                f"{self._MAX_BLOB_BYTES}B"
+            )
+
+    def read_term(self) -> int:
+        resp = self._post("/v3/kv/range", {"key": _b64(self._term_key)})
+        kvs = resp.get("kvs") or []
+        if not kvs:
+            return 0
+        raw = _unb64(kvs[0].get("value"))
+        return int(raw) if raw else 0
+
+    def read_blob(self) -> str | None:
+        resp = self._post("/v3/kv/range", {"key": _b64(self._blob_key)})
+        kvs = resp.get("kvs") or []
+        if not kvs:
+            return None
+        return _unb64(kvs[0].get("value")) or None
+
+    def write_blob(self, payload: str) -> None:
+        self._guard_size(payload)
+        self._post(
+            "/v3/kv/put",
+            {"key": _b64(self._blob_key), "value": _b64(payload)},
+        )
+
+    def cas_persist(self, term: int, payload: str) -> bool:
+        """Write the blob iff the etcd term == ``term`` (single linearizable txn)."""
+        self._guard_size(payload)
+        txn = self._post(
+            "/v3/kv/txn",
+            {
+                "compare": [
+                    {
+                        "key": _b64(self._term_key),
+                        "target": "VALUE",
+                        "value": _b64(str(int(term))),
+                    }
+                ],
+                "success": [
+                    {
+                        "request_put": {
+                            "key": _b64(self._blob_key),
+                            "value": _b64(payload),
+                        }
+                    }
+                ],
+                "failure": [],
+            },
+        )
+        return bool(txn.get("succeeded"))
+
+    def promote_term(self, term: int) -> bool:
+        """Idempotent monotonic install. Returns False iff a higher term is stored.
+
+        etcd VALUE compares are lexicographic on bytes, so ``stored < term`` is not
+        expressible as one txn on decimal strings ("9" > "10"). Read-then-CAS with a
+        bounded retry loop instead (mirrors ``_increment_fence_term``): a concurrent
+        writer that changes the term between read and CAS just retries; retry
+        exhaustion raises (contention, not a stale-term reject).
+        """
+        target = int(term)
+        for _ in range(self._max_promote_retries):
+            current = self.read_term()
+            if current > target:
+                return False
+            if current == target:
+                return True
+            if self._cas_install_term(current, target):
+                return True
+        from app.ops.fencing import PersistError
+
+        raise PersistError(
+            f"etcd promote fence term={target} exhausted retries under contention"
+        )
+
+    def _cas_install_term(self, expected: int, new: int) -> bool:
+        """CAS the term key from ``expected`` to ``new``. Accept -> True.
+
+        ``expected == 0`` means the key is absent (consensus mints terms starting
+        at 1), so use a create-only compare; otherwise compare on the stored value.
+        """
+        if expected == 0:
+            compare = {
+                "key": _b64(self._term_key),
+                "target": "CREATE",
+                "create_revision": "0",
+            }
+        else:
+            compare = {
+                "key": _b64(self._term_key),
+                "target": "VALUE",
+                "value": _b64(str(expected)),
+            }
+        txn = self._post(
+            "/v3/kv/txn",
+            {
+                "compare": [compare],
+                "success": [
+                    {
+                        "request_put": {
+                            "key": _b64(self._term_key),
+                            "value": _b64(str(new)),
+                        }
+                    }
+                ],
+                "failure": [],
+            },
+        )
+        return bool(txn.get("succeeded"))
+
+
 _fence_store: FenceStore | None = None
 _fence_store_lock = threading.Lock()
 
@@ -435,7 +603,7 @@ def reset_fence_store() -> FenceStore:
 
 
 def promote_redis_fence(fence_term: int) -> None:
-    """Install Redis fence term on promote (CAS: only if stored term < fence_term)."""
+    """Install fence term on promote (idempotent CAS: stored term <= fence_term)."""
     from app.ops.fencing import FenceCasError, PersistError
 
     store = get_fence_store()

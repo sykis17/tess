@@ -54,7 +54,76 @@ of the write itself. That pairing is the subject of the next section.
 
 ## 2. Design
 
-*(draft pending)*
+The control plane's authority is an etcd lease. One node holds the lease and is
+primary; if it stops renewing, the lease expires and the standby can acquire it.
+Leadership by itself does not order writes, so each time a node wins the lease it
+also mints a *fence term*: an integer, held in etcd, that advances by one on every
+acquisition. That ordering is constructed by the design, not handed down by etcd.
+The increment is itself a compare-and-swap — etcd installs the next value only if
+the stored one has not changed — so two nodes racing to promote cannot both claim
+the same term, and the value only ever moves up; the term is then mirrored into
+Redis under a promotion that accepts it only when it is strictly higher than the
+one already stored. etcd supplies the lease and the atomic transaction; the fence
+term's monotonicity is built on top of them. Because the term is ordered, a writer
+can prove it is newer than another by holding a higher number — and a holder of a
+lower number can be recognized, and rejected, as stale.
+
+That ordering is what closes the gap §1 described. A primary does not check the
+lease and then issue an unconditional write; it carries its fence term into the
+write and conditions the write on that term still being current. The durable
+write to `ops:control_plane` is a Redis Lua script that sets the blob only if the
+fence term stored in Redis still equals the writer's term (`persist_store`
+running the `_LUA_PERSIST_CAS` compare-and-swap). Inside that script the term
+check and the blob write are one atomic step, with no window between them. The
+etcd check and the Redis write, by contrast, stay two separate steps with a real
+gap between them — but the commit is decided only at the second. etcd decides who
+is *allowed* to attempt a write; the Redis compare-and-swap decides who actually
+*commits* one. A zombie that clears the first lock — because it has not yet noticed
+its lease is gone — is stopped at the second, by Redis itself, on the strength of a
+term it can no longer match.
+
+A rejected write is inert unless the rejected node does something about it. A
+compare-and-swap failure here is not a transient error to retry; it is positive
+evidence that another primary exists with a newer term — which means this node is
+the zombie. The design therefore gives a Redis CAS rejection the same severity as
+an etcd rejection: the in-memory mutation is rolled back, the node demotes itself,
+and the error is raised, never downgraded to a warning (`FenceCasError`, handled
+by restore-then-demote-then-raise). That parity is what makes the second lock
+trustworthy. Rejecting the write protects the data; demoting the writer protects
+the *system*, by ensuring a fenced node stops believing it is primary instead of
+looping on a write it will never land.
+
+Two locks and a stand-down rule cover a node that writes directly, but not every
+writer is a request-handling web process. Heavy ops work runs on Celery workers,
+and a task can be enqueued while its node is primary and executed moments after
+that node has lost the lease. A cached role, correct at enqueue time, is exactly
+the stale authority the design exists to reject. So worker ops tasks are required
+to perform a fresh etcd leader-and-term check at the moment they run
+(`check_fence_live`), never a cached role value — and this is enforced
+structurally, not by convention: a test greps the worker source and fails if a
+task reads the cached-role helpers at all. The fresh check is the same fence,
+applied at the one place — deferred execution — where cached authority would
+otherwise slip through.
+
+The last enforcement point is the HTTP surface. Mutating `/ops/*` endpoints are
+gated *before* per-endpoint admin authentication: on a standby, the request is
+refused with a 503 and the fence body regardless of whether the caller's
+credentials are valid. Ordering the fence ahead of auth guarantees that a stale
+or standby node cannot mutate control-plane state even when presented with correct
+admin tokens, and it keeps the refusal uniform across every mutation endpoint. The
+order carries a deliberate cost, recorded as a contract rather than met as a
+surprise: because the fence answers before auth, an unauthenticated caller can
+learn which node is primary from a mutation endpoint's response. Reads and the
+`/ops/ha` status endpoint stay available on both nodes; only mutations are fenced.
+
+Each of these mechanisms — an ordered lease, a write-time compare-and-swap, a
+stand-down rule of equal severity, a fresh authority check for deferred worker
+execution, and a fence-before-auth HTTP gate — closes a gap the previous one
+leaves open. What none of them provides is evidence that they hold under the
+failures they are meant to survive: a frozen process rather than a clean crash, a
+partition rather than a stop, deferred execution under a prefork worker, a
+byte-encoded header, an air-gapped network. Producing that evidence is a separate
+task from stating the design, and it is the subject of the rest of this report.
 
 ## 3. The verification layers
 

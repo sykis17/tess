@@ -244,7 +244,73 @@ different kind of evidence than a claim that must be believed.
 
 ## 5. What is and isn't proven
 
-*(draft pending)*
+A verification result is only as trustworthy as the environment it ran in, so this
+section states each claim together with the boundary of what was actually
+exercised. The scoping is not a retreat from the claims — it is what makes them
+worth stating.
+
+The strongest single claim the evidence supports: on one WSL2 host, a two-node
+control plane survives kill, pause, partition, and deliberate fence corruption
+across ten scenarios with zero egress, and a failover is afterward visible in
+exported metrics and one linked trace. Every word of that sentence is
+load-bearing; the rest of this section shows where each one stops.
+
+*On one host.* The primary and standby are two containers on a single machine, so
+the harness exercises fencing under process-level and network-namespace faults — a
+frozen process, a paused container, a severed network, a lease left to expire — but
+not under what two physical hosts add: asymmetric latency, independent clocks, a
+machine that dies outright. The fencing logic is proven correct against the faults
+it was shown; its behavior across real hosts is not yet proven.
+
+*With zero egress.* The offline run blocks all outbound traffic at the engine
+through `internal: true` networks and checks the block within the same run — `web`,
+`web-standby`, and `worker` each fail to reach `1.1.1.1:443` and `pypi.org` while
+`redis` and `etcd` stay locally reachable and no image is pulled. The block that
+was exercised is the engine's network mode; the iptables scripts in the offline
+directory are an additional path for a Linux VPS, not the mechanism behind the
+10/10.
+
+*One linked trace.* The visible failover is real and it is same-box: the mutation
+is rejected on the standby (`cp-b`), which is then promoted and serves the retry,
+so the reject and the success land on the same node. That is precisely "rejected on
+the standby, retried on the new primary," asserted on the exported spans and
+scraped counters rather than on logs — and it is not a cross-node correlation.
+
+Cross-node reject/success continuity is **not proven**. Demonstrating it would take
+an etcd-only partition that cuts a node off from consensus while leaving it able to
+serve, and that partition was deferred for the reason the harness pauses rather than
+partitions elsewhere: multi-network fault injection is unreliable on this
+single-host engine. The claim is left honest about its shape — one node, two roles
+in sequence — rather than dressed as something larger.
+
+The s08 recovery path **remains open**. When a Redis fence term is bumped ahead of
+etcd out-of-band, the cluster refuses every stale writer and, by the same rule,
+cannot elect a new primary until the Redis state is reset, because promotion
+requires the etcd term to exceed the stored Redis term. That is the fencing
+invariant working as designed, and the recovery gap it leaves was deferred as
+future work, not closed.
+
+Two harness adaptations belong in the record. The s04 scenario pauses Redis instead
+of partitioning it, and s08 does not wait for a final re-election after its
+deliberate fence bump. The file still named `s04_partition_primary_redis` records
+what the scenario was before the adaptation — git history kept honest rather than
+renamed to match. Each adaptation preserves the property its scenario tests; only
+the method changed, for the same single-host reason.
+
+Two further boundaries are settled contracts, not open questions. The observability
+results are pinned to the `0.111.0` collector on this engine — a newer build will
+not exec here, and re-testing on a Linux VPS is an explicit to-do — and the
+fence-before-auth ordering knowingly lets an unauthenticated caller learn which node
+is primary from a mutation endpoint, in exchange for a uniform standby refusal.
+Non-root containers and a hash-pinned rebuild are deferred, and documented as
+deferred, in the operations guide.
+
+The numbers behind these claims are in §6, and three caveats travel with them: no
+dated attestation artifact has been captured yet, only the text the verifier prints
+on a pass; there is no hosted CI, so the link and cardinality checks are local
+gates; and the bundle's sizes are unrecorded, only its hashes. Three of the six
+findings, as §4 set out, are re-runnable from the repository and three rest on the
+author's account.
 
 ## 6. Numbers appendix
 

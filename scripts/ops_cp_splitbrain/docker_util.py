@@ -63,6 +63,16 @@ def container_id(cfg: HarnessConfig, service: str) -> str:
 
 
 def container_name(cfg: HarnessConfig, service: str) -> str:
+    """Resolve a compose service to its docker CONTAINER NAME.
+
+    The harness addresses nodes by container name rather than the compose
+    service alias on purpose: a partition-heal ``docker network connect``
+    (s03/s05, see ``heal_all`` below) restores the container name but NOT the
+    service alias, so ``web:8000`` can stop resolving after a heal while
+    ``tess-engine-web-1:8000`` keeps working. Offline runs (internal networks,
+    no published ports) depend on this — see deploy/MULTI_CLOUD.md
+    §Offline packaging.
+    """
     cid = container_id(cfg, service)
     result = _run(["docker", "inspect", "-f", "{{.Name}}", cid], check=True)
     name = (result.stdout or "").strip().lstrip("/")

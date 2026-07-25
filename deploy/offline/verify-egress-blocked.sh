@@ -17,7 +17,11 @@
 # nodes by CONTAINER NAME (a manual `docker network connect` during s03/s05 does
 # NOT restore compose's service alias, but the container name always resolves).
 #
-# Usage: ./verify-egress-blocked.sh [--target DIR]   (default /opt/tess-engine)
+# Usage: ./verify-egress-blocked.sh [--target DIR] [--report [DIR]]
+#   --target  install dir to verify (default /opt/tess-engine)
+#   --report  on a PASS, self-archive the attestation to DIR (default
+#             deploy/offline/out/, relative to --target). Best-effort and
+#             guarded: it NEVER changes the pass/fail verdict or exit code.
 # =============================================================================
 set -euo pipefail
 
@@ -25,9 +29,16 @@ TARGET="/opt/tess-engine"
 PROJECT="tess-engine"
 COMPOSE_FILE="docker-compose.offline.yml"
 RUNNER_IMAGE="tess-engine-harness-runner:offline"
+DEFAULT_REPORT_DIR="deploy/offline/out"
+REPORT_DIR=""   # empty = stdout only (unchanged default behavior)
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --target) TARGET="$2"; shift ;;
+    --report)
+      # optional DIR; bare `--report` uses the default. Enables self-archiving
+      # only — it can never alter the verifier's verdict (see the tail).
+      if [[ -n "${2:-}" && "${2:-}" != --* ]]; then REPORT_DIR="$2"; shift
+      else REPORT_DIR="$DEFAULT_REPORT_DIR"; fi ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
   shift
@@ -109,12 +120,47 @@ IMAGES_AFTER="$(docker images -q | LC_ALL=C sort -u | sha256sum | cut -d' ' -f1)
 
 [[ $RC -eq 0 ]] || die "split-brain harness run-all FAILED (exit $RC)"
 
+# --- 7. Attestation --------------------------------------------------------------
+# The verdict is already decided above (any failure exited via die(); reaching
+# here means RC==0). Build the attestation ONCE, always print it to stdout, and
+# — only with --report — best-effort self-archive it. The archive is fully
+# guarded (&&/|| so `set -e` cannot trip on it) and we exit "$RC" explicitly, so
+# a failed or partial report write can never flip a real failure to green.
+ATTESTATION="$(cat <<'EOF'
+===============================================================================
+ SOVEREIGNTY ATTESTATION
+   - every project container attaches to internal networks only
+   - web / web-standby / worker cannot reach 1.1.1.1:443 or pypi.org
+   - redis / etcd reachable locally (stack fully functional)
+   - no image pull/build occurred during the run
+   - split-brain harness run-all: 10/10 PASS, egress blocked
+===============================================================================
+EOF
+)"
+
 echo
-echo "==============================================================================="
-echo " SOVEREIGNTY ATTESTATION"
-echo "   - every project container attaches to internal networks only"
-echo "   - web / web-standby / worker cannot reach 1.1.1.1:443 or pypi.org"
-echo "   - redis / etcd reachable locally (stack fully functional)"
-echo "   - no image pull/build occurred during the run"
-echo "   - split-brain harness run-all: 10/10 PASS, egress blocked"
-echo "==============================================================================="
+printf '%s\n' "$ATTESTATION"
+
+if [[ -n "$REPORT_DIR" ]]; then
+  ts="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || echo undated)"
+  head_commit="$(git -C "$TARGET" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  report_file="${REPORT_DIR}/attestation-${ts}.txt"
+  case "$report_file" in /*) report_disp="$report_file" ;; *) report_disp="$PWD/$report_file" ;; esac
+  if mkdir -p "$REPORT_DIR" 2>/dev/null; then
+    {
+      echo "date_utc:      $(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
+      echo "head_commit:   $head_commit"
+      echo "image_set_sha: $IMAGES_AFTER"
+      echo "harness_rc:    $RC"
+      echo
+      printf '%s\n' "$ATTESTATION"
+    } >"$report_file" 2>/dev/null \
+      && say "attestation self-archived -> ${report_disp}" \
+      || say "WARN: attestation report write failed (verifier verdict unaffected)"
+  else
+    say "WARN: could not create report dir '$REPORT_DIR' (verifier verdict unaffected)"
+  fi
+fi
+
+# Explicit: the exit code is the harness verdict (RC==0 here), never the report write.
+exit "$RC"

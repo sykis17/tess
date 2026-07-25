@@ -461,6 +461,13 @@ On startup the API bootstraps:
 | GCP | When `OPS_GCP_BASE_URL` is set |
 | Customer | `POST /ops/byo` after health gate |
 
+_Note: the `http://web:8000` default is a compose service alias — fine in normal
+operation and in prod (which runs no partition-heal fault injection), but it would
+not resolve after a split-brain harness `docker network connect` heal, which
+restores the container name but not the alias (see §Offline packaging). The
+shipped HA/offline stacks therefore leave `OPS_LOCAL_BASE_URL` at its
+`http://127.0.0.1:8000` loopback default rather than `web:8000`._
+
 Env keys: see [`.env.example`](../.env.example).
 
 ## Frontend notice + ops UI

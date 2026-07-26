@@ -203,6 +203,11 @@ for its four manual gates.
 
 ## W2 — Chain instrumentation + eval harness  ·  *the measurement foundation*
 
+> **Handoff notes written:** [W2_HANDOFF_NOTES.md](W2_HANDOFF_NOTES.md) — session-local
+> environment profile, measured gate runtimes, and the W1.5 tooling CI will lean on
+> (`--expect` tally flags, cold-start `run-all`, size ceiling). Fold into the W2 opener at
+> session start, after settling the open decisions below.
+
 **Goal.** Give the graph what the ops plane already has: per-node observability + a
 repeatable eval gate. Nothing downstream (W5, W6) is verifiable without this.
 

@@ -117,6 +117,10 @@ Makes the ops control plane itself HA. Separate from the multi-cloud demo
   scenario (6) → dual-write/shadow retired (5b). etcd is now the sole durable store;
   Redis is caches + pub/sub, with `ops_fence_authority=redis` as the opt-in rollback
   backend. See [CP_HA_QUORUM_OPENER.md](docs/archive/ops/CP_HA_QUORUM_OPENER.md).
+- **Next-steps program** (planned): HA hardening → chain instrumentation + eval harness →
+  run checkpointing → seamless migration ∥ escalation-based chains, converging on
+  performance-routed infrastructure *and* intelligence. See
+  [NEXT_STEPS_PLAN.md](docs/NEXT_STEPS_PLAN.md).
 
 ---
 

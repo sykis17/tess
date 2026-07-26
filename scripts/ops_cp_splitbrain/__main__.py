@@ -20,15 +20,30 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from scripts.ops_cp_splitbrain.config import load_config  # noqa: E402
-from scripts.ops_cp_splitbrain.harness import run_scenario  # noqa: E402
+from scripts.ops_cp_splitbrain.harness import ScenarioResult, run_scenario  # noqa: E402
 from scripts.ops_cp_splitbrain.scenarios import ORDER, SCENARIOS  # noqa: E402
 
 
 def _print_result(result) -> None:
-    status = "PASS" if result.passed else "FAIL"
+    status = "SKIP" if result.skipped else ("PASS" if result.passed else "FAIL")
     print(f"[{status}] {result.scenario_id}  {result.title}  ({result.elapsed_s:.1f}s)")
-    if not result.passed:
+    if result.skipped or not result.passed:
         print(f"         {result.detail}")
+
+
+def _skip_result(mod, cfg) -> ScenarioResult | None:
+    """Explicit topology skip, decided before any docker call; None = applicable."""
+    reason = getattr(mod, "skip_reason", lambda _cfg: None)(cfg)
+    if reason is None:
+        return None
+    return ScenarioResult(
+        scenario_id=mod.ID,
+        title=mod.TITLE,
+        passed=False,
+        detail=f"SKIP: {reason}",
+        elapsed_s=0.0,
+        skipped=True,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -53,9 +68,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "run":
         mod = SCENARIOS[args.scenario_id]
-        result = run_scenario(mod.ID, mod.TITLE, mod.run, cfg=cfg)
+        result = _skip_result(mod, cfg) or run_scenario(mod.ID, mod.TITLE, mod.run, cfg=cfg)
         _print_result(result)
-        return 0 if result.passed else 1
+        # An explicit skip is not a failure artifact.
+        return 0 if (result.passed or result.skipped) else 1
 
     # run-all
     print(
@@ -66,15 +82,23 @@ def main(argv: list[str] | None = None) -> int:
     for sid in ORDER:
         mod = SCENARIOS[sid]
         print(f"\n=== {sid}: {mod.TITLE} ===")
-        result = run_scenario(mod.ID, mod.TITLE, mod.run, cfg=cfg)
+        result = _skip_result(mod, cfg) or run_scenario(mod.ID, mod.TITLE, mod.run, cfg=cfg)
         _print_result(result)
         results.append(result)
 
     print("\n=== SUMMARY ===")
     for r in results:
         _print_result(r)
-    failed = [r for r in results if not r.passed]
-    print(f"\n{len(results) - len(failed)}/{len(results)} PASS")
+    failed = [r for r in results if not (r.passed or r.skipped)]
+    skips = [r for r in results if r.skipped]
+    applicable = len(results) - len(skips)
+    tally = f"\n{applicable - len(failed)}/{applicable} PASS"
+    if skips:
+        reasons = "; ".join(
+            f"{r.scenario_id} ({r.detail.removeprefix('SKIP: ')})" for r in skips
+        )
+        tally += f", {len(skips)} SKIPPED: {reasons}"
+    print(tally)
     return 1 if failed else 0
 
 

@@ -29,6 +29,9 @@ class ScenarioResult:
     passed: bool
     detail: str
     elapsed_s: float
+    # Explicit topology skip (e.g. s11 on single-node etcd): neither PASS nor FAIL,
+    # always reported with its reason in `detail` — never silently absent.
+    skipped: bool = False
 
 
 def reset_stack(cfg: HarnessConfig) -> None:

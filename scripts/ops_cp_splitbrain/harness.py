@@ -102,19 +102,21 @@ def verify_clean_baseline(cfg: HarnessConfig) -> obs.Topology:
             )
 
     topo = obs.wait_single_primary(cfg)
-    # After wipe, primary should re-promote and persist blob.
+    # After wipe, primary should re-promote and persist blob to the AUTHORITATIVE store
+    # (etcd post-cutover; Redis otherwise). Watching the wrong backend would either hang
+    # (etcd authority, empty Redis) or pass vacuously — so key off cfg.fence_authority.
     def _blob_ready() -> bool:
-        fence = obs.redis_fence_term(cfg)
-        blob = obs.redis_blob(cfg)
+        fence = obs.durable_fence_term(cfg)
+        blob = obs.durable_blob(cfg)
         return fence > 0 and blob is not None
 
     obs.wait_until(
         _blob_ready,
         timeout=cfg.convergence_timeout,
         poll=cfg.poll_interval,
-        label="redis fence+blob after election",
+        label=f"durable[{cfg.fence_authority}] fence+blob after election",
     )
-    fence = obs.redis_fence_term(cfg)
+    fence = obs.durable_fence_term(cfg)
     # Primary reported term should match redis (allow cached lag of 0 on first poll).
     a, b = obs.ha_both(cfg)
     reported = max(

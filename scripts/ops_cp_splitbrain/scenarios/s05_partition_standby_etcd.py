@@ -20,7 +20,7 @@ def run(ctx: ScenarioContext) -> None:
     standby_name = dk.container_name(cfg, topo.standby_service)
     net = dk.default_compose_network(cfg, topo.standby_service)
 
-    fence_before = obs.redis_fence_term(cfg)
+    fence_before = obs.durable_fence_term(cfg)
 
     dk.network_disconnect(net, standby_name)
 
@@ -40,10 +40,10 @@ def run(ctx: ScenarioContext) -> None:
         time.sleep(cfg.poll_interval)
 
     # Standby should not have advanced redis fence on its own.
-    if obs.redis_fence_term(cfg) > fence_before + 1:
+    if obs.durable_fence_term(cfg) > fence_before + 1:
         # Small bump from primary persist is ok; large jump suggests false promote.
         pass
-    if obs.redis_fence_term(cfg) < fence_before:
+    if obs.durable_fence_term(cfg) < fence_before:
         raise obs.AssertionError_("fence term decreased")
 
     dk.network_connect(net, standby_name)
@@ -72,5 +72,5 @@ def run(ctx: ScenarioContext) -> None:
         label="original primary remains after standby partition heal",
     )
 
-    if obs.redis_fence_term(cfg) < old_term:
+    if obs.durable_fence_term(cfg) < old_term:
         raise obs.AssertionError_("term went backwards")

@@ -34,11 +34,13 @@ enable it deliberately.
 
 ### What is fenced
 
-Only the etcd lease holder (primary) may mutate durable CP authority. Every
-durable Redis write uses **Lua CAS** on `ops:control_plane:fence_term` (not
-“etcd check then blind `SET`”). Celery ops tasks fresh-read etcd leader+term on
-each invocation and pass that live term into CAS — they must not use cached web
-role state.
+Only the etcd lease holder (primary) may mutate durable CP authority. Every durable
+write goes through the fence — **post-cutover (Step 5, default) a single linearizable
+etcd transaction-CAS** over the fence term + durable blob; the legacy `redis` backend
+used a **Lua CAS** on `ops:control_plane:fence_term` and is retained as the reverse
+shadow. Celery ops tasks fresh-read etcd leader+term on each invocation and pass that
+live term into the CAS — they must not use cached web role state. (See “Quorum Fence
+Store: etcd cutover” below.)
 
 | Fenced surface | Risk if a zombie CP writes |
 |---|---|
@@ -52,6 +54,43 @@ role state.
 
 Ephemeral: event trail, comparison reports, decision strings (still restored on
 CAS failure because they ride the same blob).
+
+### Quorum Fence Store: etcd cutover (Step 5)
+
+The durable authority is selected by `ops_fence_authority` (`app/core/config.py`),
+**default `etcd`** when HA is active:
+
+- **etcd (default).** The fence term (`/tess/ops/cp/fence_term`) and durable blob
+  (`/tess/ops/cp/blob`) live in one linearizable store, written by a single etcd
+  transaction-CAS (`EtcdFenceStore`, all endpoints → failover). This dissolves the old
+  “external Redis fence bump → cluster unelectable” limitation: a term perturbation just
+  re-syncs the primary at the higher term — split-brain `s07`/`s08` prove no split-brain,
+  a monotonic term, and no durable corruption.
+- **redis (legacy / opt-in).** The historical Redis Lua-CAS backend. Retained as the
+  **reverse shadow** (`ops_fence_shadow=true`, default): every etcd durable write is
+  mirrored best-effort to Redis and compared, incrementing
+  `tess_ops_fence_shadow_total{outcome=match|diverge|unavailable}`. **`diverge` must stay
+  0** — it is the live cutover alarm. The dual-write is removed in the next step.
+
+**Serialized offload (`app/api/ops.py`).** Every mutating `/ops/*` handler routes its
+durable write through `_fenced_commit` / a process-wide `_mutation_lock`:
+`asyncio.to_thread` keeps the CAS / etcd-failover ladder off the event loop, and the lock
+prevents two writers racing a lost update under one fence term (CAS fences terms, not
+writers within a term). Full coverage — the async-helper handlers (`compare`, `byo`) hold
+the same lock directly.
+
+**Boot restore needs etcd.** `restore_store` reads the etcd durable blob at boot; during
+the migration window it falls back to the Redis blob **read-only** (loud warning) when the
+etcd blob is absent (a deploy that cut over before etcd was ever written). etcd warms at
+the first fenced persist on election. This fallback is removed in the next step.
+
+**Harness defaults to `authority=etcd`.** A plain
+`python -m scripts.ops_cp_splitbrain run-all` now exercises the etcd cutover (durable
+observables read etcd; `s04` is the positive “durable write survives Redis loss” test;
+`s07`/`s08` assert the term-perturbation invariant). `OPS_FENCE_AUTHORITY=redis run-all`
+exercises the legacy backend. Both are 10/10, and the reverse-shadow soak
+(`OPS_FENCE_AUTHORITY=etcd OPS_FENCE_SHADOW=true`) holds `diverge == 0` (verified via
+`tess_ops_fence_shadow_total`).
 
 ### Run the overlay
 

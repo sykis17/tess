@@ -23,6 +23,11 @@ class HarnessConfig:
     redis_only_network: str
     second_provider_name: str
     second_provider_base_url: str
+    # Which backend is authoritative for durable CP writes in the running stack. Mirrors
+    # the web container's OPS_FENCE_AUTHORITY (compose interpolates the same harness-shell
+    # env), so the durable observables read the store that actually holds the truth. See
+    # deploy/MULTI_CLOUD.md §Control-plane HA and the step-5 env gotchas.
+    fence_authority: str
     # Observability (s10 only; requires the opt-in docker-compose.ops-obs.yml overlay).
     worker_service: str
     worker_metrics_url: str
@@ -76,6 +81,7 @@ def load_config() -> HarnessConfig:
         redis_only_network=os.environ.get("OPS_HA_REDIS_NETWORK", "ops-ha-redis"),
         second_provider_name="ha-harness-secondary",
         second_provider_base_url="http://127.0.0.1:18099",
+        fence_authority=os.environ.get("OPS_FENCE_AUTHORITY", "etcd").strip().lower(),
         worker_service=os.environ.get("OPS_HA_WORKER_SERVICE", "worker"),
         worker_metrics_url=os.environ.get("OPS_HA_WORKER_METRICS", "http://127.0.0.1:9109"),
         collector_service=os.environ.get("OPS_HA_COLLECTOR_SERVICE", "otel-collector"),

@@ -28,6 +28,7 @@ from app.ops.consensus import (
     _b64,
     _unb64,
     etcd_post,
+    etcd_post_failover,
     first_etcd_endpoint,
 )
 
@@ -429,9 +430,9 @@ class EtcdFenceStore:
     same monotonic token consensus mints (``/tess/ops/cp/fence_term``); the blob
     key (``/tess/ops/cp/blob``) is the etcd counterpart of ``ops:control_plane``.
     Keys are overridable so tests can run the parity contract in an isolated
-    namespace without touching live election state. Not yet wired into
-    ``persist_store`` — shadow/cutover land in later steps of the Quorum Fence
-    Store arc.
+    namespace without touching live election state. Authoritative when
+    ``ops_fence_authority == "etcd"`` (all endpoints, failover); also used
+    single-endpoint + bounded as the shadow while Redis is authoritative.
     """
 
     # etcd's default --max-request-bytes is ~1.5 MiB; stay under it and fail with a
@@ -441,21 +442,33 @@ class EtcdFenceStore:
 
     def __init__(
         self,
-        endpoint: str,
+        endpoints: str | list[str],
         *,
         term_key: str = FENCE_TERM_KEY,
         blob_key: str = BLOB_KEY,
         timeout: float = 2.0,
         max_promote_retries: int = 5,
     ) -> None:
-        self._endpoint = endpoint.rstrip("/")
+        if isinstance(endpoints, str):
+            endpoints = endpoints.split(",")
+        normalized: list[str] = []
+        for raw in endpoints:
+            e = raw.strip().rstrip("/")
+            if not e:
+                continue
+            if not e.startswith("http"):
+                e = f"http://{e}"
+            normalized.append(e)
+        # One endpoint -> single attempt (shadow, bounded); many -> try-in-order
+        # failover so an authoritative durable write survives a single-node loss.
+        self._endpoints = normalized
         self._term_key = term_key
         self._blob_key = blob_key
         self._timeout = timeout
         self._max_promote_retries = max_promote_retries
 
     def _post(self, path: str, body: dict) -> dict:
-        return etcd_post(self._endpoint, path, body, timeout=self._timeout)
+        return etcd_post_failover(self._endpoints, path, body, timeout=self._timeout)
 
     def _guard_size(self, payload: str) -> None:
         size = len(payload.encode("utf-8"))
@@ -579,12 +592,24 @@ _fence_store: FenceStore | None = None
 _fence_store_lock = threading.Lock()
 
 
+def _build_authoritative_store() -> FenceStore:
+    """The durable store selected by ops_fence_authority (HA-active only)."""
+    from app.core.config import settings
+
+    if settings.ops_ha_active() and settings.ops_fence_authority == "etcd":
+        # All endpoints -> failover so an authoritative durable write survives a
+        # single-node loss. The failover ladder is bounded and, on the mutation
+        # path, runs in the handler's offloaded thread (see app/api/ops.py).
+        return EtcdFenceStore(settings.ops_etcd_endpoints, timeout=2.0)
+    return RedisFenceStore()
+
+
 def get_fence_store() -> FenceStore:
-    """Return the active fence store (defaults to Redis)."""
+    """Return the authoritative fence store (Redis unless ops_fence_authority=etcd)."""
     global _fence_store
     with _fence_store_lock:
         if _fence_store is None:
-            _fence_store = RedisFenceStore()
+            _fence_store = _build_authoritative_store()
         return _fence_store
 
 
@@ -596,33 +621,42 @@ def set_fence_store(store: FenceStore | None) -> None:
 
 
 def reset_fence_store() -> FenceStore:
-    """Reset to a fresh Redis fence store."""
+    """Reset to a fresh authoritative store per current ops_fence_authority."""
     global _fence_store
     with _fence_store_lock:
-        _fence_store = RedisFenceStore()
+        _fence_store = _build_authoritative_store()
         return _fence_store
 
 
-# --- Shadow store (Quorum Fence Store step 4) ---------------------------------
-# A bounded, SINGLE-ENDPOINT etcd store used only for shadow dual-write. Because
-# EtcdFenceStore talks to one endpoint via etcd_post (never the failover ladder) and
-# uses a short timeout, a shadow write is single-attempt and cannot pay the ~6s
-# multi-endpoint retry cost on the authoritative path — the bounded-latency invariant.
+# --- Shadow store (Quorum Fence Store step 4-5) -------------------------------
+# The shadow is always the NON-authoritative backend, so the shadow direction reverses
+# structurally at cutover (no second flag): Redis-authoritative -> bounded single-endpoint
+# etcd shadow; etcd-authoritative -> Redis shadow. Both are bounded (etcd single-attempt
+# 0.5s; Redis 1.0s socket timeout), so a shadow write can never pay the ~6s failover
+# ladder on the authoritative path.
 SHADOW_TIMEOUT_SECONDS = 0.5
 _shadow_store: FenceStore | None = None
 _shadow_store_lock = threading.Lock()
 
 
 def get_shadow_fence_store() -> FenceStore | None:
-    """Bounded etcd store for shadow dual-write; None when no etcd endpoint is set."""
+    """The non-authoritative backend, bounded; None when HA/etcd is not configured."""
     global _shadow_store
     with _shadow_store_lock:
         if _shadow_store is not None:
             return _shadow_store
-        endpoint = first_etcd_endpoint()
-        if not endpoint:
+        from app.core.config import settings
+
+        if not settings.ops_ha_active():
             return None
-        _shadow_store = EtcdFenceStore(endpoint, timeout=SHADOW_TIMEOUT_SECONDS)
+        if settings.ops_fence_authority == "etcd":
+            # etcd authoritative -> Redis shadows (bounded by its 1.0s socket timeout).
+            _shadow_store = RedisFenceStore()
+        else:
+            endpoint = first_etcd_endpoint()
+            if not endpoint:
+                return None
+            _shadow_store = EtcdFenceStore(endpoint, timeout=SHADOW_TIMEOUT_SECONDS)
         return _shadow_store
 
 
@@ -639,49 +673,56 @@ def reset_shadow_fence_store() -> None:
         _shadow_store = None
 
 
-def _shadow_compare_persist(term: int, payload: str, auth_accept: bool) -> None:
-    """Bounded, best-effort etcd shadow of the durable CAS.
+def _shadow_compare(op: str, shadow_call, auth_accept: bool) -> None:
+    """Mirror a durable op onto the non-authoritative backend and record parity.
 
-    Records ``match|diverge|unavailable`` and NEVER raises or blocks the
-    authoritative path beyond the single-attempt shadow timeout. Divergence (both
-    backends reachable, outcomes differ) is the alarm that must stay 0; an unreachable
-    etcd is ``unavailable`` — counted separately, never a divergence. Only the persist
-    CAS is shadowed: the fence term is already etcd-authoritative (minted by the
-    election), so a promote shadow would be a trivial always-match.
+    Records ``match|diverge|unavailable``, NEVER raises, and never blocks beyond the
+    (bounded) shadow store's own timeout. Divergence (both backends reachable, outcomes
+    differ) is the alarm that must stay 0; an unreachable shadow is ``unavailable`` —
+    counted separately, never a divergence.
+
+    Both ``promote`` and ``persist`` are mirrored so the shadow backend's term stays
+    current. That is load-bearing for the reverse shadow (etcd authoritative, Redis
+    shadowing): if the Redis term were left stale, an otherwise-identical persist would
+    ``cas_persist``-reject on the shadow and falsely diverge. In the forward direction the
+    shadow promote is an idempotent no-op (etcd term already minted by the election).
     """
     store = get_shadow_fence_store()
     if store is None:
-        metrics.record_fence_shadow("persist", "unavailable")
+        metrics.record_fence_shadow(op, "unavailable")
         return
     try:
-        shadow_accept = store.cas_persist(term, payload)
+        shadow_accept = shadow_call(store)
     except Exception:
-        logger.debug("etcd shadow persist unavailable", exc_info=True)
-        metrics.record_fence_shadow("persist", "unavailable")
+        logger.debug("fence shadow %s unavailable", op, exc_info=True)
+        metrics.record_fence_shadow(op, "unavailable")
         return
     metrics.record_fence_shadow(
-        "persist", "match" if bool(shadow_accept) == bool(auth_accept) else "diverge"
+        op, "match" if bool(shadow_accept) == bool(auth_accept) else "diverge"
     )
 
 
 def promote_redis_fence(fence_term: int) -> None:
     """Install fence term on promote (idempotent CAS: stored term <= fence_term)."""
+    from app.core.config import settings
     from app.ops.fencing import FenceCasError, PersistError
 
     store = get_fence_store()
     try:
-        if not store.promote_term(fence_term):
+        auth_accept = store.promote_term(fence_term)
+        if settings.ops_fence_shadow:
+            _shadow_compare("promote", lambda s: s.promote_term(fence_term), auth_accept)
+        if not auth_accept:
             metrics.record_cas("promote", "reject")
             raise FenceCasError(
-                f"redis promote fence rejected term={fence_term} "
-                f"(stored={store.read_term()!r})"
+                f"promote fence rejected term={fence_term} (stored={store.read_term()!r})"
             )
         metrics.record_cas("promote", "accept")
     except FenceCasError:
         raise
     except Exception as exc:
-        logger.exception("redis promote fence failed term=%s", fence_term)
-        raise PersistError(f"redis promote fence failed: {exc}") from exc
+        logger.exception("promote fence failed term=%s", fence_term)
+        raise PersistError(f"promote fence failed: {exc}") from exc
 
 
 def persist_store(*, fence_term: int | None = None) -> None:
@@ -709,7 +750,9 @@ def persist_store(*, fence_term: int | None = None) -> None:
                 _sp.set_attribute("ops.fence_term", int(term))
                 auth_accept = store.cas_persist(term, payload)
                 if settings.ops_fence_shadow:
-                    _shadow_compare_persist(term, payload, auth_accept)
+                    _shadow_compare(
+                        "persist", lambda s: s.cas_persist(term, payload), auth_accept
+                    )
                 if not auth_accept:
                     # Record before the existing restore/demote/raise; do not alter it.
                     _sp.set_attribute("ops.cas_result", "reject")
@@ -751,6 +794,19 @@ def restore_store(*, raise_on_error: bool = False) -> bool:
         return False
     try:
         raw = get_fence_store().read_blob()
+        if not raw and settings.ops_ha_active() and settings.ops_fence_authority == "etcd":
+            # Migration-window insurance (removed in the dual-write-removal step): if the
+            # authoritative etcd blob is absent — a deploy cut over to etcd before ever
+            # shadowing — adopt the Redis blob READ-ONLY and log loudly. Read-only because
+            # restore runs at boot before election; writing etcd here would be an unfenced
+            # durable write. etcd warms at the promotion-time persist on first election.
+            fallback = RedisFenceStore().read_blob()
+            if fallback:
+                logger.warning(
+                    "etcd durable blob absent under etcd authority; adopting Redis blob "
+                    "READ-ONLY as a migration fallback (etcd warms at first fenced persist)"
+                )
+                raw = fallback
         if not raw:
             return False
         get_store().load_redis_payload(json.loads(raw))

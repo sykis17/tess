@@ -20,6 +20,7 @@ from app.ops.fencing import (
 from app.ops.store import (
     REDIS_CONTROL_PLANE_KEY,
     persist_store,
+    reset_fence_store,
     reset_shadow_fence_store,
     reset_store,
     set_shadow_fence_store,
@@ -78,8 +79,14 @@ def _enable_shadow(monkeypatch: pytest.MonkeyPatch, *, on: bool = True) -> None:
     monkeypatch.setattr(settings, "ops_etcd_endpoints", "http://etcd:2379")
     monkeypatch.setattr(settings, "ops_persist_enabled", True)
     monkeypatch.setattr(settings, "ops_fence_shadow", on)
+    # Authoritative = Redis (via _FakeRedis), shadow = the injected fake etcd store: this
+    # covers the forward-shadow direction. Pin authority so the default (now "etcd") does
+    # not swap the authoritative backend out from under the fake. Reverse-shadow (Redis
+    # shadows etcd) is exercised by the split-brain harness soak.
+    monkeypatch.setattr(settings, "ops_fence_authority", "redis")
     monkeypatch.setattr(settings, "ops_cp_instance_id", "cp-a")
     set_consensus_backend(InMemoryConsensus())
+    reset_fence_store()
 
 
 def _spy_shadow(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:

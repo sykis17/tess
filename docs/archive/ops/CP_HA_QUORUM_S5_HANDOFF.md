@@ -25,6 +25,110 @@ WIP persists on disk; finish 5a, run the full gate, commit once.
 
 ---
 
+## STEP 5a — COMPLETE (this commit). NEXT IS 5b.
+
+Everything below documents how 5a was built; it is done and committed. **5a landed the etcd
+cutover as the default** (`ops_fence_authority="etcd"`, `ops_fence_shadow=true`) with the
+ops.py full-coverage mutation-lock offload, the authority-aware harness, and all gates green:
+
+- Unit **284 pass / 2 skip** (HA-enabling tests pin `authority=redis`; two-writer test
+  non-vacuous).
+- Live-etcd **parity 4/4** (throwaway etcd on :12379).
+- Split-brain harness **10/10 under `authority=etcd` + reverse shadow**, and **10/10 under
+  `authority=redis`** (opt-in), with reverse-shadow **`diverge == 0`** (s07/s08 all `match`).
+- Contract docs updated (`CLAUDE.md`, `deploy/MULTI_CLOUD.md`): etcd authoritative by default,
+  unelectable limitation resolved, boot restore needs etcd, full-coverage lock invariant.
+
+**Next session = 5b:** remove the dual-write + `_shadow_compare` + `get_shadow_fence_store` +
+`ops_fence_shadow` + the `restore_store` Redis read-only fallback; make `/ops/ha` term display
+key off `ops_fence_authority`; harness 10/10; update contract + opener; PR #10 → "steps 1-5".
+The design findings and reframe rationale below are the record of *why* the etcd scenarios are
+shaped as they are — keep them when editing the harness.
+
+---
+
+## SESSION 2 UPDATE (historical — how 5a was built)
+
+The ops.py mutation-lock + offload is **DONE and verified**, the 5a tests are **DONE**, and
+the **foundational** authority-aware harness code is **DONE**. The **etcd-authority soak** was
+completed too (see the STATUS block above) — it was *not* the mechanical scenario re-point the
+original plan assumed. The "etcd-reframe design findings" below explain the final shape.
+
+### Working tree now (all uncommitted, tip still `09b62ac`)
+
+- Store core (session 1): `app/core/config.py`, `app/ops/store.py`, `tests/conftest.py`.
+- **NEW this session:** `app/api/ops.py` (lock+offload), `tests/test_ops_mutation_lock.py`,
+  `tests/test_fence_store_authority.py`, `scripts/ops_cp_splitbrain/{config,observables,harness}.py`.
+
+### Done + verified this session
+
+1. **ops.py mutation lock + offload — FULL COVERAGE (decision, see below).** A single
+   process-wide `asyncio.Lock` (`_mutation_lock`) + `_fenced_commit(fn=persist_store, /, *a, **kw)`
+   = `async with _mutation_lock: await asyncio.to_thread(fn, …)`. **All 21** durable-write
+   `/ops/*` handlers routed through it: the enumerated set + `set_active`/routing-modes, **plus**
+   the residuals `chaos`/`assign`/`sleep-all` (offloaded), and `compare`/`byo` (async helpers →
+   they hold the same lock directly via `async with _mutation_lock`, can't `to_thread` a coroutine).
+2. **Why full coverage (was a fork; user approved "Full coverage").** Offloading only the
+   enumerated subset reopens a **cross-path lost-update race**: a thread-borne persist
+   (`to_thread`) runs in parallel with a residual handler's loop-borne sync `persist_store`; they
+   contend only on the store `RLock`, which is not atomic across read→CAS, so both CAS-accept under
+   one term and the later stale full-blob snapshot clobbers the first. One lock over *every* durable
+   write is the only race-free way to introduce the offload.
+3. **Loop-binding hazard checked empirically.** A module-level `asyncio.Lock` binds to the first
+   loop that awaits it and raises if reused from another. Starlette 1.3.1's `TestClient` reuses one
+   process-wide loop, so the existing sync tests are fine; the concurrency tests bind a **fresh lock
+   inside their own `asyncio.run` loop** (via monkeypatch) to stay ordering-independent.
+4. **Tests (all green): 284 pass / 2 skip.**
+   - `test_ops_mutation_lock.py`: two concurrent `POST /ops/providers` under one term → both survive,
+     `max_concurrent == 1`. **Proven non-vacuous**: lock-free the same scenario gives
+     `max_concurrent == 2` (scratch-verified). Plus a test that `_fenced_commit` (offload) and a
+     compare/byo-style `async with _mutation_lock` serialize against each other (the full-coverage property).
+   - `test_fence_store_authority.py`: authority selects Etcd vs Redis (HA-off always Redis); shadow is
+     the non-authoritative backend (reverses at cutover); `restore_store` adopts the Redis blob
+     **read-only + loud** when the etcd blob is absent under etcd authority, and is inert under redis authority.
+5. **Foundational harness code (backward-compatible, redis run-all 10/10).**
+   `config.fence_authority` (from `OPS_FENCE_AUTHORITY`, default redis); `durable_fence_term/blob/
+   active_provider_id(cfg)` dispatch on it; `assert_durable_unchanged` and `verify_clean_baseline`
+   now read the **authoritative** store via `durable_*`. Under redis authority these are byte-identical
+   to the old Redis reads — **verified: `run-all` = 10/10 under default authority** (regression gate for
+   the ops.py offload + observable changes).
+6. **Integration smoke:** `s07` (drives the offloaded `force_active_provider` → CAS reject → demote)
+   passes end-to-end on the live 3-node stack.
+
+### NEW IMMEDIATE NEXT TASK — the etcd-authority soak (needs live `authority=etcd` iteration)
+
+The cutover **dissolves** the bug classes s04/s07 were built to catch, so those scenarios need new
+*meaning* under `authority=etcd`, not re-pointing. **etcd-reframe design findings (resolve these first):**
+
+- **s07 semantics change.** Post-cutover etcd is the *single* term store, so bumping it advances the
+  election term too; the sitting primary's campaign re-marks primary at the new term and its next
+  persist **succeeds** — the demote is transient, not sustained (the redis version only worked because
+  redis-term and etcd-term were *separate* stores). "Another primary at a higher term" is now just a
+  normal failover. **Open decision:** what should s07 assert post-cutover? (proposed: term perturbation
+  causes no durable clobber + cluster reconverges to single primary). Don't decide this blind.
+- **Reverse-shadow false-divergence trap.** Bumping only one store's term makes the authoritative reject
+  while the shadow accepts → recorded `diverge` → blows the soak's `divergence == 0` gate. Any term
+  perturbation must move **both** etcd and the Redis shadow together to stay faithful.
+- **s04 flips polarity.** Under etcd authority, pausing Redis no longer blocks the durable write (etcd
+  is authoritative; Redis = caches/pubsub/shadow). Rewrite as the positive "durable write survives Redis
+  loss" — but validate how the handler behaves with Redis paused (pubsub `publish_provider_changed` etc.).
+- **s06 can't read the durable store.** It stops 2/3 etcd (quorum lost); a linearizable etcd read needs
+  quorum, so `durable_blob` (→ etcd) can't be read to assert unchanged. The durable-path assertion has to
+  come from the *reject* (mutate fails loudly), not from reading etcd state.
+- **Open question — does 5a flip the DEFAULT?** Store core kept `ops_fence_authority="redis"` default; the
+  soak sets `OPS_FENCE_AUTHORITY=etcd` via env. If the committed default stays redis, the contract-doc
+  claims ("durable writes now the etcd txn-CAS", "unelectable resolved") are only true *under the cutover
+  env*, so word them as the verified opt-in path, not a default change — unless you intend 5a to flip the
+  default to etcd. Decide before writing `MULTI_CLOUD.md` / `CLAUDE.md`.
+
+Then: contract docs (add the **full-coverage mutation-lock invariant** to `CLAUDE.md`; the authority flag +
+whatever the default-flip decision is), live-etcd parity (throwaway etcd), and the soak
+(`OPS_FENCE_AUTHORITY=etcd` + `OPS_FENCE_SHADOW=true`, both in the harness shell; `run-all` 10/10;
+reverse-shadow `diverge == 0`). Commit 5a once all gates are green. **The live HA+obs stack is currently UP**
+(`docker compose … ps` — 3 etcd healthy, webs, redis, worker, otel-collector) under default redis authority.
+
+---
+
 ## Git state (verified at hand-off)
 
 - Branch: `cursor/cp-ha-quorum-fence-store` (tracks `origin/…`).

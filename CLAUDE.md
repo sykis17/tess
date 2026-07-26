@@ -139,9 +139,19 @@ rules must not be violated — they are enforced by `tests/test_ops_fencing.py` 
 split-brain harness:
 
 - **All durable ops writes go through the fence.** `persist_store()` (`app/ops/store.py`)
-  writes via an etcd term check + a Redis Lua CAS on `ops:control_plane:fence_term`
-  (`REDIS_FENCE_TERM_KEY`). Never write the `ops:control_plane` blob
-  (`REDIS_CONTROL_PLANE_KEY`) directly.
+  writes through the authoritative `FenceStore` selected by `ops_fence_authority`
+  (**default `etcd`** post-cutover: one linearizable etcd txn-CAS over the fence term +
+  durable blob; `redis` is the legacy Lua-CAS backend, still used as the reverse-shadow and
+  when opted back in). Never write the durable blob (`REDIS_CONTROL_PLANE_KEY` / the etcd
+  blob key) directly.
+- **Every mutating `/ops/*` durable write goes through one serialized offload.** All durable
+  writes in `app/api/ops.py` route through `_fenced_commit` / the process-wide
+  `_mutation_lock` (`asyncio.to_thread` so the CAS / etcd-failover ladder never stalls the
+  event loop; the lock so two writers can't race a lost update under one fence term — CAS
+  fences terms, not writers within a term). **Full coverage is required** — the async-helper
+  handlers (`compare`, `byo`) hold the same lock directly (a coroutine can't be
+  `to_thread`-ed). Partial coverage reopens a cross-path lost-update race. Enforced by
+  `tests/test_ops_mutation_lock.py` (two-writer serialization, proven non-vacuous).
 - **A CAS rejection is as severe as an etcd rejection: demote + raise.** `FenceCasError`
   is never downgraded to a warning.
 - **Celery ops tasks use `check_fence_live()` only** (`app/ops/fencing.py`) — a fresh etcd
@@ -155,21 +165,27 @@ split-brain harness:
 - **Split-brain harness:** `python -m scripts.ops_cp_splitbrain run-all`. Assertions target
   artifacts (Redis term/blob, pubsub, HTTP bodies), never log strings. A harness failure is a
   product bug until proven otherwise — fix the product, don't soften the assertion.
-- **Verified baseline:** commit `84b81f5` (CP HA v1). The Quorum Fence Store arc extends it
-  on `cursor/cp-ha-quorum-fence-store` — Step 1 (`6331b00`) introduced the `FenceStore` seam
-  in `store.py` (`RedisFenceStore`; `persist_store`/`promote_redis_fence`/`restore_store`
-  delegate to `get_fence_store()`), Step 2 added `EtcdFenceStore` + a parity suite. Any change
-  to `app/ops/consensus.py`, `app/ops/fencing.py`, or the `store.py` CAS path (the `FenceStore`
-  backends) requires re-running, before commit: the split-brain harness,
-  `tests/test_ops_fencing.py`, **and** the live-etcd parity suite
+- **Verified baseline:** the Quorum Fence Store arc (`cursor/cp-ha-quorum-fence-store`) built
+  the etcd cutover on CP HA v1 (`84b81f5`): Step 1 (`6331b00`) `FenceStore` seam, Step 2
+  (`315b044`) `EtcdFenceStore` + parity, Step 3 (`3a3444a`) 3-node etcd quorum, Step 4
+  (`3e72fbe`) bounded shadow dual-write, **Step 5a** flipped the default to **etcd authority**
+  (`ops_fence_authority="etcd"`, `ops_fence_shadow=true` reverse shadow) with the ops.py
+  mutation-lock offload and an authority-aware harness. Any change to `app/ops/consensus.py`,
+  `app/ops/fencing.py`, `app/api/ops.py`, or the `store.py` `FenceStore` path requires
+  re-running, before commit: the split-brain harness (**now defaults to `authority=etcd`** — a
+  plain `run-all` is the etcd cutover; `OPS_FENCE_AUTHORITY=redis run-all` exercises the legacy
+  backend), `tests/test_ops_fencing.py`, the live-etcd parity suite
   (`tests/test_fence_store_parity.py` against a real etcd — a plain `pytest tests/` **skips**
-  the etcd contract, so green alone does not prove the etcd backend). See
+  the etcd contract, so green alone does not prove the etcd backend), **and** confirming the
+  reverse-shadow `tess_ops_fence_shadow_total{outcome="diverge"}` stays **0**. See
   `docs/archive/ops/CP_HA_QUORUM_OPENER.md` § Verification.
-- **Known limitation (don't "fix" casually):** after an external fence bump in Redis the
-  cluster is unelectable until Redis state is reset — `promote_redis_fence()` requires etcd
-  term >= stored Redis term (idempotent install; a bump to a *higher* term still locks it out).
-  This is the Redis backend's limitation and persists until the etcd cutover collapses the two
-  term stores into one. Deliberate recovery design is future work.
+- **Unelectable limitation — resolved by the etcd cutover (Step 5a).** The old "external Redis
+  fence bump → cluster unelectable until Redis reset" trap is **gone under the default `etcd`
+  authority**: the fence term and durable blob are one linearizable store, so a term
+  perturbation just re-syncs the primary (proven by split-brain `s07`/`s08` under etcd — no
+  split-brain, monotonic term, no durable corruption). It still applies to the **legacy
+  `redis` backend** (`ops_fence_authority=redis`), where the two term stores can diverge — so
+  don't "fix" the redis path casually; it is retained only as the shadow / opt-in.
 - **Observability cardinality discipline (`app/ops/metrics.py`).** Metrics/traces are
   self-hosted, opt-in, OFF by default (`OPS_METRICS_ENABLED` / `OPS_TRACING_ENABLED`). Every
   metric label value must be a **fixed code enum or per-process constant** — `provider_id`

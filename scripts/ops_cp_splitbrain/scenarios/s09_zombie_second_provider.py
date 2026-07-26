@@ -69,9 +69,11 @@ def run(ctx: ScenarioContext) -> None:
     )
     zombie_base = zombie_ha.get("_zombie_base") or old_primary_base
 
-    fence_before = obs.redis_fence_term(cfg)
-    blob_before = obs.redis_blob(cfg)
-    active_snap = obs.active_provider_id(cfg) or active_before
+    # Capture the AUTHORITATIVE before-state so assert_durable_unchanged (which reads the
+    # authoritative store) compares like-for-like under either authority.
+    fence_before = obs.durable_fence_term(cfg)
+    blob_before = obs.durable_blob(cfg)
+    active_snap = obs.durable_active_provider_id(cfg) or active_before
 
     # Unauthed — must be 503 fence body (fence-before-auth), not 401.
     code_u, body_u = obs.mutate_set_active(zombie_base, other_id, token=None)

@@ -18,9 +18,9 @@ def run(ctx: ScenarioContext) -> None:
     standby_base = topo.standby_base
     old_primary_base = topo.primary_base
 
-    fence_before = obs.redis_fence_term(cfg)
-    active_before = obs.active_provider_id(cfg)
-    blob_before = obs.redis_blob(cfg)
+    fence_before = obs.durable_fence_term(cfg)
+    active_before = obs.durable_active_provider_id(cfg)
+    blob_before = obs.durable_blob(cfg)
 
     dk.docker_stop(primary_name)
 
@@ -100,5 +100,5 @@ def run(ctx: ScenarioContext) -> None:
         blob_before=blob_before,
     )
     # Term must have advanced from pre-fault.
-    if obs.redis_fence_term(cfg) <= old_term:
+    if obs.durable_fence_term(cfg) <= old_term:
         raise obs.AssertionError_("fence term did not advance after kill/promote")

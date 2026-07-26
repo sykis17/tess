@@ -22,8 +22,8 @@ def run(ctx: ScenarioContext) -> None:
     other_id = ctx.other_provider_id
     assert other_id
 
-    fence_before_pause = obs.redis_fence_term(cfg)
-    active_before = obs.active_provider_id(cfg)
+    fence_before_pause = obs.durable_fence_term(cfg)
+    active_before = obs.durable_active_provider_id(cfg)
 
     dk.docker_pause(primary_name)
 
@@ -46,9 +46,9 @@ def run(ctx: ScenarioContext) -> None:
         label="standby promote while primary paused",
     )
 
-    fence_after_promote = obs.redis_fence_term(cfg)
-    blob_after_promote = obs.redis_blob(cfg)
-    active_after_promote = obs.active_provider_id(cfg)
+    fence_after_promote = obs.durable_fence_term(cfg)
+    blob_after_promote = obs.durable_blob(cfg)
+    active_after_promote = obs.durable_active_provider_id(cfg)
 
     # Strongest assert: mutate immediately after unpause — may still have cached
     # primary role, so status may be 503 OR fence-error 5xx; artifacts must not move.

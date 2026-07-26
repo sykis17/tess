@@ -1,4 +1,14 @@
-"""s08 — Empty-blob restore / first persist and stale wrong-term writer."""
+"""s08 — Empty-blob restore / first persist, and a stale wrong-term writer.
+
+Part (a) is authority-agnostic once it reads the AUTHORITATIVE store: delete the durable
+blob, mutate, and the primary's first persist recreates it.
+
+Part (b) tests the stale wrong-term writer. Under Redis authority the bumped Redis term
+strands the primary and the CAS reject keeps it from creating a wrong-active blob. Under
+etcd authority the term store is unified, so the primary re-syncs at the bumped term (this
+bug class is dissolved) — bump BOTH stores together (else the shadow diverges) and assert
+the surviving invariant: no split-brain, monotonic term, no durable corruption.
+"""
 
 from __future__ import annotations
 
@@ -17,10 +27,10 @@ def run(ctx: ScenarioContext) -> None:
     assert other_id
 
     # --- (a) blob absent, matching term: primary first persist recreates blob ---
-    term = obs.redis_fence_term(cfg)
-    obs.redis_del(cfg, obs.REDIS_BLOB_KEY)
-    if obs.redis_blob(cfg) is not None:
-        raise obs.AssertionError_("blob still present after DEL")
+    term = obs.durable_fence_term(cfg)
+    obs.durable_del_blob(cfg)
+    if obs.durable_blob(cfg) is not None:
+        raise obs.AssertionError_("durable blob still present after DEL")
 
     code, body = obs.mutate_probe(topo.primary_base, token=cfg.admin_token)
     if not (200 <= code < 300):
@@ -28,27 +38,38 @@ def run(ctx: ScenarioContext) -> None:
             f"(a) primary first persist mutate failed status={code} body={body}"
         )
 
-    def _blob_back():
-        blob = obs.redis_blob(cfg)
-        return blob if blob is not None else None
-
-    blob = obs.wait_until(
-        _blob_back,
+    obs.wait_until(
+        lambda: obs.durable_blob(cfg),
         timeout=cfg.convergence_timeout,
         poll=cfg.poll_interval,
-        label="blob recreated after empty-blob persist",
+        label="durable blob recreated after empty-blob persist",
     )
-    if obs.redis_fence_term(cfg) != term and obs.redis_fence_term(cfg) < term:
+    if obs.durable_fence_term(cfg) < term:
         raise obs.AssertionError_("fence term decreased on empty-blob persist")
-    _ = blob
 
-    # --- (b) stale wrong-term writer cannot create/clobber blob ---
-    active_before = obs.active_provider_id(cfg)
-    blob_before = obs.redis_blob(cfg)
-    term_now = obs.redis_fence_term(cfg)
-    # Delete blob again and bump term so primary's cached term is stale.
+    # --- (b) stale wrong-term writer cannot clobber the durable active ---
+    active_before = obs.durable_active_provider_id(cfg)
+    blob_before = obs.durable_blob(cfg)
+    term_now = obs.durable_fence_term(cfg)
+
+    if cfg.fence_authority == "etcd":
+        _run_b_etcd(ctx, active_before, term_now + 7)
+    else:
+        _run_b_redis(ctx, active_before, blob_before, term_now + 7)
+
+    # Part (b) leaves the durable term ahead of nothing electable in some paths; the
+    # (a)/(b) artifact checks are the pass criteria. Heal containers only.
+    dk.heal_all(cfg)
+
+
+def _run_b_redis(ctx, active_before, blob_before, bumped: int) -> None:
+    cfg = ctx.cfg
+    topo = ctx.topo
+    other_id = ctx.other_provider_id
+
+    # Delete blob again and bump term so the primary's cached term is stale.
     obs.redis_del(cfg, obs.REDIS_BLOB_KEY)
-    obs.redis_set(cfg, obs.REDIS_FENCE_KEY, str(term_now + 7))
+    obs.redis_set(cfg, obs.REDIS_FENCE_KEY, str(bumped))
 
     code2, body2 = obs.mutate_set_active(
         topo.primary_base, other_id, token=cfg.admin_token
@@ -59,8 +80,6 @@ def run(ctx: ScenarioContext) -> None:
                 f"(b) stale writer created wrong active status={code2} body={body2}"
             )
 
-    # Restore blob from standby/new primary path via heal+wait, but first assert
-    # active wasn't flipped if blob reappeared from stale writer.
     active_after = obs.active_provider_id(cfg)
     if active_after is not None and active_before is not None:
         if active_after != active_before:
@@ -69,7 +88,6 @@ def run(ctx: ScenarioContext) -> None:
                 f"{active_before} -> {active_after}"
             )
 
-    # If a blob exists, it must not carry the wrong active id.
     blob_after = obs.redis_blob(cfg)
     if blob_after is not None and blob_before is not None:
         ba = (blob_after.get("routing") or {}).get("active_provider_id")
@@ -77,8 +95,42 @@ def run(ctx: ScenarioContext) -> None:
         if ba != bb and ba != active_before:
             raise obs.AssertionError_(f"(b) blob clobber active {bb} -> {ba}")
 
-    # Part (b) deliberately sets Redis fence ahead of etcd. promote_redis_fence
-    # requires etcd_term > redis_term, so the cluster may not re-elect until the
-    # next scenario's reset wipes Redis keys. Do not require single-primary here;
-    # (a)/(b) artifact checks are the pass criteria. Heal containers only.
-    dk.heal_all(cfg)
+
+def _run_b_etcd(ctx, active_before, bumped: int) -> None:
+    cfg = ctx.cfg
+    topo = ctx.topo
+    other_id = ctx.other_provider_id
+
+    # Unified term store: perturb etcd (authoritative) AND the Redis shadow together so the
+    # shadow does not falsely diverge. The primary re-syncs at the bumped term.
+    obs.etcd_put_fence_term(cfg, bumped)
+    obs.redis_set(cfg, obs.REDIS_FENCE_KEY, str(bumped))
+
+    obs.mutate_set_active(topo.primary_base, other_id, token=cfg.admin_token)
+
+    # Invariant: no split-brain, monotonic term, no durable corruption. (The stale-writer
+    # "wrong blob" bug is dissolved; the mutate may reject-then-recover or succeed.)
+    def _single_primary():
+        try:
+            n, a, b = obs.count_primaries(cfg)
+        except Exception:
+            return None
+        return (a, b) if n == 1 else None
+
+    obs.wait_until(
+        _single_primary,
+        timeout=cfg.convergence_timeout,
+        poll=cfg.poll_interval,
+        label="single primary reconverges after empty-blob term perturbation",
+    )
+    now = obs.durable_fence_term(cfg)
+    if now < bumped:
+        raise obs.AssertionError_(
+            f"etcd term lowered below external bump: bumped={bumped} now={now}"
+        )
+    active_after = obs.durable_active_provider_id(cfg)
+    if active_after not in (active_before, other_id):
+        raise obs.AssertionError_(
+            f"durable active corrupted after term perturbation: {active_after!r} "
+            f"not in {{{active_before!r}, {other_id!r}}}"
+        )

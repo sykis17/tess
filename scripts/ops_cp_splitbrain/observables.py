@@ -159,6 +159,48 @@ def etcd_del_blob(cfg: HarnessConfig) -> None:
     _etcdctl(cfg, "del", ETCD_BLOB_KEY)
 
 
+def etcd_put_fence_term(cfg: HarnessConfig, term: int) -> None:
+    """Externally set the etcd fence term key (scenario term-perturbation).
+
+    Monotonic-increase only in the harness (never lowers it). Used by s07 to perturb the
+    authoritative term under etcd authority.
+    """
+    _etcdctl(cfg, "put", ETCD_FENCE_KEY, str(int(term)))
+
+
+# ---------------------------------------------------------------------------
+# Authority-aware durable observables — read whichever backend actually holds the
+# truth (``cfg.fence_authority``). These are what baseline/assert/scenarios must
+# use post-cutover; reading Redis under etcd authority would be vacuous (the Redis
+# shadow can lag or, in 5b, vanish). Under redis authority they are exactly the
+# historical Redis reads, so the default run is unchanged.
+# ---------------------------------------------------------------------------
+def durable_fence_term(cfg: HarnessConfig) -> int:
+    if cfg.fence_authority == "etcd":
+        return etcd_fence_term(cfg)
+    return redis_fence_term(cfg)
+
+
+def durable_blob(cfg: HarnessConfig) -> dict[str, Any] | None:
+    if cfg.fence_authority == "etcd":
+        return etcd_blob(cfg)
+    return redis_blob(cfg)
+
+
+def durable_active_provider_id(cfg: HarnessConfig) -> str | None:
+    if cfg.fence_authority == "etcd":
+        return etcd_active_provider_id(cfg)
+    return active_provider_id(cfg)
+
+
+def durable_del_blob(cfg: HarnessConfig) -> None:
+    """Delete the authoritative durable blob (scenario empty-blob setup)."""
+    if cfg.fence_authority == "etcd":
+        etcd_del_blob(cfg)
+    else:
+        redis_del(cfg, REDIS_BLOB_KEY)
+
+
 def wait_until(
     predicate,
     *,
@@ -318,17 +360,26 @@ def assert_durable_unchanged(
     active_before: str | None,
     blob_before: dict[str, Any] | None,
 ) -> None:
-    fence_after = redis_fence_term(cfg)
-    active_after = active_provider_id(cfg)
-    blob_after = redis_blob(cfg)
+    """Assert the AUTHORITATIVE durable store did not move under a rejected writer.
+
+    Reads via the authority-aware observables, so post-cutover it compares the etcd
+    term/blob (the store that actually holds the truth) rather than a stale Redis
+    mirror — which is what makes it non-vacuous: a real durable change is caught, and
+    it would not falsely pass by watching an unchanging shadow. Capture the ``*_before``
+    values with the matching ``durable_*`` helpers.
+    """
+    fence_after = durable_fence_term(cfg)
+    active_after = durable_active_provider_id(cfg)
+    blob_after = durable_blob(cfg)
     if fence_after != fence_before:
         raise AssertionError_(
-            f"Redis fence_term changed by rejected writer: "
+            f"durable[{cfg.fence_authority}] fence_term changed by rejected writer: "
             f"{fence_before} -> {fence_after}"
         )
     if active_after != active_before:
         raise AssertionError_(
-            f"active_provider_id changed: {active_before!r} -> {active_after!r}"
+            f"durable[{cfg.fence_authority}] active_provider_id changed: "
+            f"{active_before!r} -> {active_after!r}"
         )
     # Blob may be absent in empty-blob scenarios; only compare when both present
     # for active id (already checked). saved_at may move only on successful persist.

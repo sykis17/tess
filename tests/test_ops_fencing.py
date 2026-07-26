@@ -31,6 +31,7 @@ from app.ops.store import (
     get_store,
     persist_store,
     promote_redis_fence,
+    reset_fence_store,
     reset_store,
 )
 from tests.fence_fakes import _FakeRedis
@@ -54,7 +55,11 @@ def _enable_ha(monkeypatch: pytest.MonkeyPatch, backend: InMemoryConsensus) -> N
     monkeypatch.setattr(settings, "ops_ha_enabled", True)
     monkeypatch.setattr(settings, "ops_etcd_endpoints", "http://etcd:2379")
     monkeypatch.setattr(settings, "ops_persist_enabled", True)
+    # These tests exercise the Redis CAS backend explicitly (via _FakeRedis); pin the
+    # authority so they don't depend on the default (now "etcd") or on build-order caching.
+    monkeypatch.setattr(settings, "ops_fence_authority", "redis")
     set_consensus_backend(backend)
+    reset_fence_store()
 
 
 def _seed_two_providers() -> None:

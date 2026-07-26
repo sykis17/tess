@@ -39,9 +39,18 @@ ops.py full-coverage mutation-lock offload, the authority-aware harness, and all
 - Contract docs updated (`CLAUDE.md`, `deploy/MULTI_CLOUD.md`): etcd authoritative by default,
   unelectable limitation resolved, boot restore needs etcd, full-coverage lock invariant.
 
-**Next session = 5b:** remove the dual-write + `_shadow_compare` + `get_shadow_fence_store` +
-`ops_fence_shadow` + the `restore_store` Redis read-only fallback; make `/ops/ha` term display
-key off `ops_fence_authority`; harness 10/10; update contract + opener; PR #10 → "steps 1-5".
+**Next = Step 6, THEN 5b** (arc decision: run Step 6 *before* 5b so the reverse shadow is still
+watching during the harshest workload — divergence 0 under a leader-kill storm is the strongest
+justification for removing the safety net):
+
+- **Step 6** — kill the etcd leader mid-mutation-storm with the reverse shadow **ON**: assert 0
+  fence violations, mutations continue on the surviving 2/3, terms strictly monotonic across
+  failover, and reverse-shadow `diverge == 0` throughout the storm.
+- **Step 5b** (closes the arc) — remove the dual-write + `_shadow_compare` +
+  `get_shadow_fence_store` + `ops_fence_shadow` + the `restore_store` Redis read-only fallback;
+  make `/ops/ha` term display key off `ops_fence_authority`; harness 10/10; update contract +
+  opener; PR #10 → "steps 1-6".
+
 The design findings and reframe rationale below are the record of *why* the etcd scenarios are
 shaped as they are — keep them when editing the harness.
 

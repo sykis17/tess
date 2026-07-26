@@ -121,6 +121,10 @@ touches the bundle.
 
 ## W1.5 — Offline-verifier topology re-sync  ·  *prioritized follow-up, do right after W1*
 
+> **Opener written:** [W1_5_OFFLINE_VERIFIER_OPENER.md](W1_5_OFFLINE_VERIFIER_OPENER.md) —
+> the cold-start execution doc (measured diagnosis inlined, per-step gates, exact runner
+> commands, laptop timing profile). This section is the filing; start sessions there.
+
 **Why this exists.** Running W1's Commit 2 offline gate surfaced that the offline verifier's
 split-brain step has been **broken on `main` since the Step-3 3-node-etcd cutover** — the
 arc's own recurring failure mode (a non-default verification path silently rotting) biting

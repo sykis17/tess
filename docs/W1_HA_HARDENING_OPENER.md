@@ -61,13 +61,23 @@ Authority-agnostic post-cutover, so the old name is now a misnomer.
 - **Dev-time:** `pip-compile --generate-hashes` from `requirements.txt` →
   `requirements.lock.txt` (keep `requirements.txt` as the human-edited top-level; the lock is
   generated). *(Decision settled — see the plan.)*
-- **Install path:** `Dockerfile` + `deploy/offline/install-offline.sh` switch to
-  `pip install --require-hashes -r requirements.lock.txt`. **No new binary enters the
-  zero-network bundle** — the install stays plain pip.
-- **Gate:** unit suite green (identical versions → no behavior change); **offline
-  `build-bundle.sh` → `install-offline.sh` → `verify-egress-blocked.sh` all green** (the lock
-  installs under egress block with hash verification). Split-brain harness **not required**
-  (no consensus/store/api change), but rebuild the stack so images use the lock.
+- **Install path:** the **`Dockerfile`** switches to
+  `pip install --require-hashes -r requirements.lock.txt` (COPY the lock before the pip
+  layer). `install-offline.sh` runs **no pip** (docker load + `up --no-build`), so the
+  zero-network deploy path is untouched — **no new binary enters the bundle**; only the
+  connected-machine build changes. *(Opener correction: the original wording said
+  install-offline.sh also switches, but it has no pip step.)*
+- **Gate:** unit suite green (the lock was pinned to the running image's `pip freeze` and
+  verified `lock==freeze`, 103/103 zero drift, so this is truly behavior-preserving). Offline
+  chain **green through build + deploy + egress + smoke** (app image built with
+  `--require-hashes`, freeze-dump cross-check, MANIFEST + commit-binding verified,
+  health/role/worker-metrics smoke, internal-only networks + egress probes blocked).
+  **Caveat — the verifier's split-brain `run-all` step is pre-broken** (single-`etcd` offline
+  stack vs the harness's 3-node `etcd-1/2/3` default; needs `OPS_HA_ETCD_SERVICES=etcd`): with
+  the override the applicable subset **s01–s10 passes 10/10**, `s11` is quorum-only. Tracked as
+  the **offline-verifier topology re-sync** follow-up in [NEXT_STEPS_PLAN.md](NEXT_STEPS_PLAN.md).
+  Dev-stack split-brain **not required** for the lockfile (no consensus/store/api change), but
+  rebuild so images use the lock.
 - **Non-vacuity:** `--require-hashes` fails the build on any hash/version mismatch — that is
   the proof it's a real gate. Sanity-verify by confirming an intentional bad hash aborts.
 
@@ -81,9 +91,11 @@ Authority-agnostic post-cutover, so the old name is now a misnomer.
   container name** (offline stack) — it must still work non-root; etcd/redis official images
   carry their own users, so the concern is the `web`/`worker` images.
 - **Gate:** rebuild stack; `docker exec tess-engine-web-1 whoami` **≠ root**; stack healthy;
-  split-brain `run-all` **11/11** (proves non-root didn't break etcd perms or the runner);
-  offline `build → install → verify-egress-blocked` green (non-root holds in the offline stack
-  too).
+  dev split-brain `run-all` **11/11** (proves non-root didn't break etcd perms or the runner);
+  offline `build → install → verify-egress` green through build/deploy/egress/smoke + the
+  **partial-but-honest** split-brain subset (`OPS_HA_ETCD_SERVICES=etcd`, **s01–s10 = 10/10**;
+  `s11` excluded as quorum-only) — proves non-root holds in the offline stack. Full offline
+  failover certification is the tracked follow-up, not a W1 blocker.
 - **Non-vacuity:** the `whoami ≠ root` check proves non-root actually took effect (not a
   no-op `USER` after `CMD`).
 

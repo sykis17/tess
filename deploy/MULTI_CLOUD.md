@@ -200,7 +200,7 @@ Every metric label value is a fixed code enum or a per-process constant. `provid
 
 Spans on the mutation path (`ops.http.mutation` → `ops.fence_gate` → `ops.persist_cas` →
 `ops.publish_provider_changed`) and the promotion path (`ops.promotion` →
-`ops.promote_redis_fence` / `ops.initial_persist`). **Failover trace-continuity:** the client
+`ops.promote_fence` / `ops.initial_persist`). **Failover trace-continuity:** the client
 sends a W3C `traceparent` + `X-Ops-Request-Id`; a mutation rejected on the standby (503) and
 retried on the new primary share one `trace_id` + `ops.request_id`, so the failover is one
 correlatable trace.
@@ -237,9 +237,26 @@ is deferred (WSL2 multi-network flakiness, per the s04/s08 adaptations).
 ## Offline / sovereign packaging (Step 4)
 
 The full HA + observability stack deploys and runs **fully offline** — zero required
-outbound network at deploy or runtime. This is proven, not asserted: the packaged
-bundle is deployed with egress blocked and the split-brain harness `run-all` passes
-**10/10** in that environment. "Offline" scopes to the **platform**; the LLM upstream
+outbound network at deploy or runtime. This is proven by artifacts, not asserted: the
+packaged bundle deploys with egress blocked and passes the structural check
+(internal-only networks), the active egress probes (web/web-standby/worker all blocked),
+local reachability, and install smoke (health on both CP nodes, `/ops/ha` role, worker
+Prometheus).
+
+> **Known gap — offline failover certification (since the Step-3 3-node-etcd cutover).**
+> The offline verifier's split-brain `run-all` step is currently **broken on `main`**: the
+> offline stack ships a **single** `etcd` service, but the harness defaults to the 3-node
+> `etcd-1,etcd-2,etcd-3` and `verify-egress-blocked.sh` never sets `OPS_HA_ETCD_SERVICES`,
+> so every scenario dies at setup on `docker compose ps -q etcd-1`. With
+> `OPS_HA_ETCD_SERVICES=etcd` the single-node-applicable subset **s01–s10 passes 10/10**;
+> only `s11` (kill a Raft leader among a quorum) is inapplicable to single-node. So the
+> sovereign bundle is **deploy- and egress-certified but not failover-certified** today.
+> The stale "10/10" hint text still printed by `install-offline.sh` predates the cutover.
+> Fix tracked as a prioritized follow-up (**offline-verifier topology re-sync**) in
+> [../docs/NEXT_STEPS_PLAN.md](../docs/NEXT_STEPS_PLAN.md); it also joins nightly CI in W2
+> so this path can't rot invisibly again.
+
+"Offline" scopes to the **platform**; the LLM upstream
 is the deliberate exception (the offline profile uses Ollama-only, local).
 
 ### Sovereignty Audit — egress inventory
@@ -249,7 +266,7 @@ Every outbound vector, enumerated by grep+read, and how the offline path resolve
 | # | Egress point | Where | Phase | Offline resolution |
 |---|---|---|---|---|
 | 1 | Base image pulls (`python:3.11-slim`, `node:20-alpine`, `alpine:3.20`, `redis:7-alpine`, `caddy:2-alpine`, `quay.io/coreos/etcd:v3.5.16`, `otel/...collector-contrib:0.111.0`, `ollama/ollama`) | Dockerfiles + compose files | build/deploy | Pre-pulled + `docker save` into the bundle; offline `up --no-build` + `pull_policy: never` |
-| 2 | `pip install -r requirements.txt` (unpinned) | `Dockerfile` | build | Baked into the image on the connected machine; **no pip at deploy**; `pip freeze` → `requirements.lock.txt` for provenance |
+| 2 | `pip install --require-hashes -r requirements.lock.txt` (hash-pinned) | `Dockerfile` | build | Baked into the image on the connected machine; **no pip at deploy**; `pip freeze` → `requirements.freeze.txt` as a built-image cross-check |
 | 3 | `npm ci && npm run build` | `deploy/deploy.sh`, `frontend/Dockerfile` | build | Built on the connected machine; `dist/` ships in the bundle; no npm at deploy |
 | 4 | **Google Fonts CDN** (`fonts.googleapis.com`/`gstatic.com`) — the one runtime egress in the shipped SPA | `frontend/index.html`, `frontend/architecture/index.html` | runtime (browser) | **Self-hosted**: vendored woff2 + `@font-face` under `frontend/public/fonts/` (OFL, see `OFL.txt`); CDN `<link>`s removed |
 | 5 | `ollama pull <model>` (GB weights) | `deploy/deploy.sh` | deploy | Out of the acceptance path (harness never calls the LLM); model pre-seed is a documented, optional step |
@@ -290,7 +307,7 @@ deploy/offline/build-bundle.sh            # clean tree required
 sha256sum -c tess-offline-bundle-<commit>.tar.gz.sha256   # verify in transit
 mkdir tess-offline && tar -C tess-offline -xzf tess-offline-bundle-<commit>.tar.gz && cd tess-offline
 ./install-offline.sh --target /opt/tess-engine   # verify manifest, load, guards, up --no-build, smoke
-./verify-egress-blocked.sh --target /opt/tess-engine   # egress self-check + harness run-all 10/10
+./verify-egress-blocked.sh --target /opt/tess-engine   # egress self-check + install smoke; split-brain step needs OPS_HA_ETCD_SERVICES=etcd (s01-s10 pass; s11 quorum-only) — see §Offline Known gap
 ```
 
 `install-offline.sh --prod` additionally refuses to start unless a strong
@@ -334,19 +351,25 @@ openssl rand -hex 32     # never print/commit the real value
 The compose fallback `ha-harness-token` is for the local harness only; `--prod` install
 rejects it.
 
-### Deferred hardening (documented, not silent)
+### Deferred hardening — DONE (closed by W1, `ops/w1-ha-hardening`)
 
-1. **Non-root containers.** The app image still runs as root. Deferred from this step
-   because it is orthogonal to packaging and risks the 10/10 gate — the dev base bind-mounts
-   `.:/app`, so a non-root uid writing `__pycache__` / the Prometheus multiproc dir can hit
-   permission failures. Planned change (dedicated PR, re-running the full harness + pytest):
-   `useradd app; USER app; PYTHONDONTWRITEBYTECODE=1`; worker metrics bind on `9109` is fine
-   (>1024); `otel-collector` keeps `user: "0:0"` (distroless UID 10001 cannot write the
-   `ops_spans` volume). The offline stack itself has **no** `.:/app` bind mount (image-only),
-   so this is lower-risk there.
-2. **Reproducible rebuild.** `requirements.txt` is unpinned. This step captures `pip freeze`
-   → `requirements.lock.txt` for provenance (the deployed artifact is the saved image, not a
-   rebuild). A hash-pinned lockfile (`--require-hashes`) is the follow-up.
+1. **Non-root containers — done.** The app image runs as `appuser` (uid 1000): user created
+   after the dep layers (pip cache preserved), `chown -R appuser /app`,
+   `PYTHONDONTWRITEBYTECODE=1` (a non-root uid never writes `__pycache__` under the dev
+   `.:/app` bind mount), `USER appuser` before `CMD` — one image change covers web,
+   web-standby, and worker (compose `command:` overrides inherit `USER`). Ports 8000/9109
+   are >1024. Deliberately still root: `otel-collector` (`user: "0:0"` to write the
+   `ops_spans` volume) and the harness-runner (drives the Docker socket). The
+   `frontend/Dockerfile` is a build-artifact image with no runtime process — N/A.
+   Verified: `whoami == appuser` / `uid=1000` in the running containers; dev split-brain
+   `run-all` 11/11 on the non-root stack; offline chain green with non-root (see §Offline
+   packaging for the harness-step caveat tracked as W1.5).
+2. **Reproducible rebuild — done.** `requirements.lock.txt` (103 pkgs, hash-pinned,
+   generated by `pip-compile --generate-hashes` in a linux/amd64 `python:3.11-slim`
+   container, constrained to the verified image's `pip freeze` — lock≡freeze identity, zero
+   drift). The `Dockerfile` installs with `pip install --require-hashes`; a wrong hash
+   aborts the build. `requirements.txt` stays the human-edited top-level input; the bundle's
+   built-image `pip freeze` cross-check is `requirements.freeze.txt`.
 
 ### otel-collector pin
 

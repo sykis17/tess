@@ -27,7 +27,7 @@ from app.ops.fencing import (
     write_fence,
 )
 from app.ops.prober import probe_all_providers
-from app.ops.store import promote_redis_fence, restore_store
+from app.ops.store import promote_fence, restore_store
 
 logger = logging.getLogger(__name__)
 
@@ -91,8 +91,8 @@ async def _on_become_primary(fence_term: int, lease_id: int) -> None:
         _sp.set_attribute("ops.lease_id", int(lease_id))
         mark_primary(fence_term, lease_id)
         try:
-            with metrics.get_tracer().start_as_current_span("ops.promote_redis_fence"):
-                promote_redis_fence(fence_term)
+            with metrics.get_tracer().start_as_current_span("ops.promote_fence"):
+                promote_fence(fence_term)
         except FenceError as exc:
             metrics.record_fence_reject(metrics.fence_error_kind(exc), "campaign")
             demote("redis_promote_fence_failed")

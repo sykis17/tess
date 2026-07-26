@@ -117,10 +117,15 @@ Makes the ops control plane itself HA. Separate from the multi-cloud demo
   scenario (6) → dual-write/shadow retired (5b). etcd is now the sole durable store;
   Redis is caches + pub/sub, with `ops_fence_authority=redis` as the opt-in rollback
   backend. See [CP_HA_QUORUM_OPENER.md](docs/archive/ops/CP_HA_QUORUM_OPENER.md).
-- **Next-steps program** (planned): HA hardening → chain instrumentation + eval harness →
+- **Next-steps program** (active): HA hardening → chain instrumentation + eval harness →
   run checkpointing → seamless migration ∥ escalation-based chains, converging on
   performance-routed infrastructure *and* intelligence. See
   [NEXT_STEPS_PLAN.md](docs/NEXT_STEPS_PLAN.md).
+  - **W1 — HA hardening (done):** `promote_fence` rename (authority-agnostic),
+    hash-pinned `requirements.lock.txt` (`--require-hashes` install), non-root app
+    containers (`appuser`, uid 1000). Full gate ladder re-run per commit. Surfaced +
+    filed **W1.5**: the offline verifier's split-brain step had been broken since the
+    Step-3 3-node cutover (single-node subset s01–s10 measured green; `s11` quorum-only).
 
 ---
 

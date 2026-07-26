@@ -45,8 +45,14 @@ def reset_stack(cfg: HarnessConfig) -> None:
             cfg.web_service,
             cfg.standby_service,
         )
+        # A --no-deps recreate SUCCEEDS from a fully torn-down project while creating
+        # only the CP+etcd services — worker/otel-collector then don't exist and s10
+        # fails on worker-metrics reachability. Worker is the sentinel (it exists in
+        # every compose file set and is never recreated above): no container -> fall
+        # through to the full up.
+        dk.container_name(cfg, cfg.worker_service)
     except dk.DockerError:
-        # Stack may not be up yet.
+        # Stack may not be up yet (or only partially, from a torn-down start).
         dk.compose_up(cfg)
 
     # Ensure redis is up and wipe fencing keys (scenario isolation).

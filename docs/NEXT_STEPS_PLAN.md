@@ -119,11 +119,32 @@ touches the bundle.
 
 ---
 
-## W1.5 — Offline-verifier topology re-sync  ·  *prioritized follow-up, do right after W1*
+## W1.5 — Offline-verifier topology re-sync  ·  *prioritized follow-up, do right after W1*  ·  ✅ **DONE**
 
 > **Opener written:** [W1_5_OFFLINE_VERIFIER_OPENER.md](W1_5_OFFLINE_VERIFIER_OPENER.md) —
 > the cold-start execution doc (measured diagnosis inlined, per-step gates, exact runner
 > commands, laptop timing profile). This section is the filing; start sessions there.
+
+> **DONE (2026-07-26, branch `ops/w1.5-offline-verifier`).** Three gated commits: (1) env
+> plumbing — the verifier's runner sets `OPS_HA_ETCD_SERVICES=etcd` + a 6×lease-TTL
+> convergence budget (TTL passed through so harness deadlines derive from the same value) —
+> plus topology-keyed `s11` gating (`skip_reason(cfg)`: <3 etcd members → explicit
+> SKIP-with-reason before any docker call; 3-node executes unchanged, unit-proven); (2) the
+> expected tally enforced **in-harness** as an exit-code artifact (`run-all --expect-pass 10
+> --expect-skip 1` offline / `--expect-pass 11 --expect-skip 0` dev), every live stale
+> "10/10" site killed (both verifier hints, the **attestation**, and `CLAUDE.md`'s offline
+> paragraph), and the MULTI_CLOUD **Known gap** block replaced by the restored
+> failover-certification claim; (3) `reset_stack` falls through to a full `compose up` when
+> a torn-down project leaves `worker`/`otel-collector` uncreated. Verified: offline chain
+> `build-bundle → install-offline → verify-egress-blocked` exit 0 end-to-end (10 PASS +
+> 1 topology-SKIP); env-line-removed repro still 0-at-setup (non-vacuity); dev `run-all`
+> 11/11 with `s11` executed from a torn-down start (proving both the dev regression gate and
+> the reset_stack fix).
+
+> **W2-era follow-ups filed by W1.5:** (1) **s11 single-node variant** — turn the topology
+> skip into an assertion (sole etcd down → sustained 503s, durable writes resume after etcd
+> restart); (2) archive `CP_HA_ENGINEERING_REPORT.md` under `docs/archive/ops/` (dated arc
+> snapshot whose pre-s11 "10/10" prose predates the 11-scenario suite).
 
 **Why this exists.** Running W1's Commit 2 offline gate surfaced that the offline verifier's
 split-brain step has been **broken on `main` since the Step-3 3-node-etcd cutover** — the
@@ -181,6 +202,11 @@ for its four manual gates.
 ---
 
 ## W2 — Chain instrumentation + eval harness  ·  *the measurement foundation*
+
+> **Handoff notes written:** [W2_HANDOFF_NOTES.md](W2_HANDOFF_NOTES.md) — session-local
+> environment profile, measured gate runtimes, and the W1.5 tooling CI will lean on
+> (`--expect` tally flags, cold-start `run-all`, size ceiling). Fold into the W2 opener at
+> session start, after settling the open decisions below.
 
 **Goal.** Give the graph what the ops plane already has: per-node observability + a
 repeatable eval gate. Nothing downstream (W5, W6) is verifiable without this.
@@ -355,9 +381,10 @@ doc-links). As part of W2, bring them into CI and add the **eval gate**:
 - Unit + doc-links: cheap, every push.
 - Parity: CI service container (throwaway etcd) + `OPS_TEST_ETCD_ENDPOINT`.
 - Split-brain harness + eval: Docker-in-CI, nightly or on ops/graph-path changes.
-- **Offline verifier** (`build-bundle → install-offline → verify-egress-blocked`): nightly,
-  once **W1.5** re-syncs it — it rotted invisibly precisely because it was never in the gate
-  ladder. Nightly CI is the durable cure for that failure mode.
+- **Offline verifier** (`build-bundle → install-offline → verify-egress-blocked`): nightly —
+  **W1.5** re-synced it (topology-keyed s11 skip + in-harness expected tally) after it rotted
+  invisibly precisely because it was never in the gate ladder. Nightly CI is the durable cure
+  for that failure mode.
 - **Eval judge budget:** the LLM-judge leg spends real tokens on every nightly run — pin a
   cheap, fixed judge model and cap the golden-set size so nightly cost stays bounded and
   predictable. Deterministic rubric checks carry the cheap per-push signal; the judge runs

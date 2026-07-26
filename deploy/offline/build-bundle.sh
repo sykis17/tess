@@ -80,6 +80,18 @@ done
 # --- 3. Build the offline images (names must match docker-compose.offline.yml) --
 say "build tess-engine-app:offline"
 docker build -t tess-engine-app:offline --build-arg GIT_COMMIT="$GIT_COMMIT" . >/dev/null
+
+# App-image size ceiling: context-bloat regressions produce no failing check anywhere —
+# the image just grows quietly (measured 17.6GB, vs ~1.1GB real, when repo-root bundles
+# leaked into the COPY layer and the non-root chown -R duplicated it). The ceiling
+# converts "someone happened to look at a number" into "the build refuses". Generous by
+# design; raise via MAX_APP_IMAGE_GB only for legitimate growth.
+MAX_APP_IMAGE_GB="${MAX_APP_IMAGE_GB:-3}"
+app_bytes="$(docker image inspect -f '{{.Size}}' tess-engine-app:offline)"
+if (( app_bytes > MAX_APP_IMAGE_GB * 1024 * 1024 * 1024 )); then
+  die "tess-engine-app:offline is $(( app_bytes / 1024 / 1024 ))MB — over the ${MAX_APP_IMAGE_GB}GB ceiling. Build-context bloat? (compare .dockerignore against repo-root artifacts)"
+fi
+say "app image size OK: $(( app_bytes / 1024 / 1024 ))MB (ceiling ${MAX_APP_IMAGE_GB}GB)"
 say "build tess-engine-otel:offline (deploy/ context — repo-root .dockerignore hides deploy/)"
 docker build -f deploy/offline/otel/Dockerfile -t tess-engine-otel:offline deploy >/dev/null
 say "build tess-engine-harness-runner:offline"
@@ -150,4 +162,4 @@ echo "Transfer both files to the offline host, then:"
 echo "  sha256sum -c $BUNDLE.sha256   # verify in transit"
 echo "  mkdir tess-offline && tar -C tess-offline -xzf $BUNDLE && cd tess-offline"
 echo "  ./install-offline.sh --target /opt/tess-engine"
-echo "  ./verify-egress-blocked.sh --target /opt/tess-engine   # harness run-all 10/10"
+echo "  ./verify-egress-blocked.sh --target /opt/tess-engine   # harness 10 PASS + 1 topology-SKIP (s11 quorum-only)"

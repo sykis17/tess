@@ -33,7 +33,24 @@ intentional isolation, not a silent pass.
 ## Timeouts
 
 `CONVERGENCE_TIMEOUT = 3 × OPS_ETCD_LEASE_TTL_SECONDS` (default 30s). Override with
-`OPS_HA_CONVERGENCE_TIMEOUT`.
+`OPS_HA_CONVERGENCE_TIMEOUT` (the offline verifier passes 6×TTL — single-node etcd-fault
+recovery on small hosts measures ~35–60s).
+
+## Topology skips
+
+A scenario module may declare `skip_reason(cfg) -> str | None`. `s11` requires a surviving
+quorum after the leader kill (≥3 members in `OPS_HA_ETCD_SERVICES`); on smaller topologies
+(e.g. the offline stack's single `etcd`) it reports an explicit `[SKIP]` with its reason —
+decided before any docker call, never silently absent. The summary tally separates skips:
+
+```
+10/10 PASS, 1 SKIPPED: s11_kill_etcd_leader_storm (topology: quorum-only scenario — ...)
+```
+
+Skips do not affect the exit code. To pin the expected tally as an exit-code artifact,
+`run-all` takes `--expect-pass N` / `--expect-skip N` — the offline verifier passes
+`--expect-pass 10 --expect-skip 1` (its certification baseline); the dev gate is
+`--expect-pass 11 --expect-skip 0`, which proves s11 executes on the 3-node topology.
 
 ## Pass rule
 

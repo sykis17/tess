@@ -120,4 +120,4 @@ worker_metrics_ok || die "worker /metrics scrape failed"
 say "INSTALL OK."
 echo
 echo "  target:  $TARGET"
-echo "  next:    ./verify-egress-blocked.sh --target $TARGET   # egress self-check + harness run-all 10/10"
+echo "  next:    ./verify-egress-blocked.sh --target $TARGET   # egress self-check + harness 10 PASS + 1 topology-SKIP"

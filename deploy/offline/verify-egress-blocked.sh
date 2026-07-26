@@ -5,7 +5,9 @@
 #   1. structural: every project container is on internal networks only
 #   2. active egress probes from each interpreter-capable service MUST FAIL
 #   3. local reachability (redis/etcd) MUST succeed (don't over-block)
-#   4. split-brain harness run-all == 10/10, run from an in-container runner
+#   4. split-brain harness run-all: 10 applicable PASS + 1 SKIP (s11 is quorum-only;
+#      the offline stack runs single-node etcd), enforced in-harness via --expect
+#      flags and run from an in-container runner
 #   5. no image pull occurred during the run
 #
 # The egress block is the engine-enforced `internal: true` networks (correct for
@@ -97,6 +99,19 @@ case "$(uname -s 2>/dev/null || echo unknown)" in
   MINGW*|MSYS*|CYGWIN*) export MSYS_NO_PATHCONV=1; mount_src="$(cygpath -w "$TARGET" 2>/dev/null || echo "$TARGET")" ;;
 esac
 
+# Topology: the offline stack runs a SINGLE `etcd` service (docker-compose.offline.yml),
+# not the dev 3-node etcd-1..3 the harness defaults to — without OPS_HA_ETCD_SERVICES the
+# whole suite dies at setup on `compose ps -q etcd-1`. Convergence budget is derived from
+# the lease TTL (6x, vs the dev default 3x) because single-node etcd-fault recovery on
+# small hosts measures ~35-60s. The TTL is passed into the runner so the harness's own
+# TTL-derived deadlines stay coupled to the same value; docker-compose.offline.yml pins
+# the stack's OPS_ETCD_LEASE_TTL_SECONDS to "10".
+#
+# The `--expect-pass 10 --expect-skip 1` tally below is a DELIBERATE certification
+# baseline, enforced in-harness as an exit code: 10 applicable scenarios PASS and s11
+# reports an explicit topology SKIP (quorum-only; single-node etcd). Adding or removing
+# harness scenarios is SUPPOSED to break this chain until the expectation here is
+# consciously re-baselined — tallies drifted silently when they lived in prose only.
 say "running split-brain harness run-all (in-container; internal network)"
 set +e
 docker run --rm --network "${PROJECT}_default" \
@@ -108,9 +123,12 @@ docker run --rm --network "${PROJECT}_default" \
   -e OPS_HA_COMPOSE_BASE="$COMPOSE_FILE" \
   -e OPS_HA_COMPOSE_OVERLAY= \
   -e OPS_HA_COMPOSE_OBS= \
+  -e OPS_HA_ETCD_SERVICES=etcd \
+  -e OPS_ETCD_LEASE_TTL_SECONDS="${OPS_ETCD_LEASE_TTL_SECONDS:-10}" \
+  -e OPS_HA_CONVERGENCE_TIMEOUT=$(( ${OPS_ETCD_LEASE_TTL_SECONDS:-10} * 6 )) \
   -e OPS_ADMIN_TOKEN="${OPS_ADMIN_TOKEN:-ha-harness-token}" \
   "$RUNNER_IMAGE" \
-  python3 -m scripts.ops_cp_splitbrain run-all
+  python3 -m scripts.ops_cp_splitbrain run-all --expect-pass 10 --expect-skip 1
 RC=$?
 set -e
 
@@ -133,7 +151,8 @@ ATTESTATION="$(cat <<'EOF'
    - web / web-standby / worker cannot reach 1.1.1.1:443 or pypi.org
    - redis / etcd reachable locally (stack fully functional)
    - no image pull/build occurred during the run
-   - split-brain harness run-all: 10/10 PASS, egress blocked
+   - split-brain harness run-all: 10 applicable PASS + 1 SKIP
+     (s11 topology: quorum-only; single-node etcd), egress blocked
 ===============================================================================
 EOF
 )"

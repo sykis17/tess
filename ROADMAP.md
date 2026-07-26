@@ -126,6 +126,12 @@ Makes the ops control plane itself HA. Separate from the multi-cloud demo
     containers (`appuser`, uid 1000). Full gate ladder re-run per commit. Surfaced +
     filed **W1.5**: the offline verifier's split-brain step had been broken since the
     Step-3 3-node cutover (single-node subset s01–s10 measured green; `s11` quorum-only).
+  - **W1.5 — offline-verifier topology re-sync (done):** runner env plumbing
+    (`OPS_HA_ETCD_SERVICES=etcd`, 6×TTL convergence budget), topology-keyed `s11` skip
+    (explicit SKIP-with-reason on <3 etcd members; 3-node still executes), expected tally
+    enforced in-harness (`--expect-pass/--expect-skip`), `reset_stack` torn-down-start
+    fall-through. Offline bundle **failover-certified again**: 10 PASS + 1 topology-SKIP
+    under egress block.
 
 ---
 

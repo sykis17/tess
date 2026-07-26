@@ -11,6 +11,13 @@
 frontend/
 deploy/
 
+# Offline bundles land in the repo root (build-bundle.sh step 10). Without this
+# exclusion every docker build COPYs all prior bundles into the app image — and the
+# non-root chown -R layer then duplicates them — compounding per build (observed:
+# 17.6GB app image carrying 2x ~4.3GB of stale tarballs).
+tess-offline-bundle-*.tar.gz
+tess-offline-bundle-*.tar.gz.sha256
+
 __pycache__/
 *.py[cod]
 *.egg-info/

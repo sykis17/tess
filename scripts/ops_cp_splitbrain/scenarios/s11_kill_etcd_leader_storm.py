@@ -23,12 +23,29 @@ import time
 
 from .. import docker_util as dk
 from .. import observables as obs
+from ..config import HarnessConfig
 from ..harness import ScenarioContext
 
 ID = "s11_kill_etcd_leader_storm"
 TITLE = "Kill etcd leader mid-mutation-storm; durable writes resume"
 
 _PRE_KILL_MUTATIONS = 4
+
+
+def skip_reason(cfg: HarnessConfig) -> str | None:
+    """Topology gate: killing the leader must leave a surviving quorum (>=3 members).
+
+    On fewer members there is no survivor to resume durable writes, so sustained 503s
+    are the *correct* behavior and this scenario's resume expectation cannot apply
+    (the offline stack ships a single `etcd`). Keyed on the configured topology so a
+    3-node run always executes — never a blanket skip.
+    """
+    if len(cfg.etcd_services) < 3:
+        return (
+            "topology: quorum-only scenario — needs >=3 etcd members, "
+            f"{len(cfg.etcd_services)} configured keeps no surviving quorum after a leader kill"
+        )
+    return None
 
 
 def run(ctx: ScenarioContext) -> None:

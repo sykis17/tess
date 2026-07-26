@@ -59,10 +59,21 @@ intelligence by measured performance**.
 
 ---
 
-## W1 — HA hardening (seam 3)  ·  *quick, do first, still gated*
+## W1 — HA hardening (seam 3)  ·  *quick, do first, still gated*  ·  ✅ **DONE**
 
 > **Opener written:** [W1_HA_HARDENING_OPENER.md](W1_HA_HARDENING_OPENER.md) — the
 > cold-start execution doc (per-commit gates + verification). This section is the summary.
+
+> **DONE (2026-07-26, branch `ops/w1-ha-hardening`).** Three gated commits: rename
+> `promote_redis_fence` → `promote_fence` (+ span; unit 279/2, fencing 8/8, live-etcd parity
+> 4/4, dev split-brain 11/11 @etcd + s11 @redis); hash-pinned `requirements.lock.txt`
+> (pinned to the verified image's freeze — lock≡freeze 103/103, zero drift;
+> `--require-hashes` in the Dockerfile, bad-hash aborts proven); non-root containers
+> (`USER appuser` uid 1000; `whoami ≠ root` verified; harness gates re-run non-root).
+> **Found along the way:** the offline verifier's split-brain step has been broken since the
+> Step-3 topology change → diagnosed (s01–s10 pass 10/10 single-node; s11 quorum-only) and
+> filed as **W1.5** below — the one W1 acceptance item it displaces (offline *failover*
+> certification) rides on W1.5, not W1.
 
 **Goal.** Clear the two deferred hardening items + the cosmetic rename so the deploy
 surface is clean before migration work (W4) touches it.
@@ -142,6 +153,20 @@ down" = total loss = the sitting primary correctly demotes.
 (structural + egress + smoke + the gated split-brain subset). The gating must be
 **topology-keyed** — a real 3-node run still runs `s11` — not a blanket skip that would make
 `s11` vacuous everywhere.
+
+**Two more findings from W1's Commit-3 run (fold into this fix):**
+- **Convergence budget is VM-sized.** On a memory-capped WSL2 VM (~4 GB), the etcd-fault
+  recovery scenarios (s03/s06/s07/s09) converge in ~35–60 s — past the harness default
+  `3 × lease_TTL = 30 s` — and time out with `durable[etcd] fence+blob after election`
+  (they pass cleanly at `OPS_HA_CONVERGENCE_TIMEOUT=60`; same runs, no permission errors,
+  s08's identical durable path green at 30 s — measured non-root, 2026-07-26). The offline
+  verifier should set/document a realistic convergence budget rather than inherit the
+  dev-tuned default.
+- **`reset_stack` assumes a pre-existing full stack.** It recreates only CP + etcd (+ redis
+  start) with `--no-deps`; from a torn-down project it silently yields a stack with **no
+  worker / otel-collector**, and `s10` then fails on worker-metrics reachability. Either
+  `reset_stack` grows a first-run full `compose up`, or the runbooks state "bring the full
+  stack up once before `run-all`."
 
 **Durable cure (W2).** The offline chain joins the **nightly CI tier** (see Cross-cutting —
 CI) so this non-default path can't rot invisibly again — the exact discipline the arc used

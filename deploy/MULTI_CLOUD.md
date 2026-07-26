@@ -8,6 +8,8 @@ and probe `/health` to drive failover, share, and balance policies.
 - Each provider runs its **own** Caddy + web + worker + Redis stack (same as
   [`docker-compose.prod.yml`](../docker-compose.prod.yml)).
 - One host runs the **ops control plane** (this repo’s `/ops/*` API + background prober).
+  Production default remains a **single** CP process (`OPS_HA_ENABLED=false`).
+  Optional **CP HA** (etcd lease + Redis CAS fencing) is documented below.
 - **Failover v1 does not migrate in-flight sessions.** On switchover, routing
   assignments are cleared and `active_provider_id` flips. The control plane
   publishes `type: "provider_changed"` on Redis channel `ops:provider_changed`;
@@ -24,6 +26,335 @@ Client ──► active provider (WS)  [or Dual: sticky assign across two homes]
 Control plane ──probe──► Hetzner / AWS / GCP /customer /health
               ──failover──► update active_provider_id
 ```
+
+## Control-plane HA v1 (etcd + Redis CAS)
+
+Opt-in overlay — does **not** change the live single-CP Hetzner deploy until you
+enable it deliberately.
+
+### What is fenced
+
+Only the etcd lease holder (primary) may mutate durable CP authority. Every durable
+write goes through the fence — **post-cutover (default) a single linearizable
+etcd transaction-CAS** over the fence term + durable blob; the legacy `redis` backend
+uses a **Lua CAS** on `ops:control_plane:fence_term` and is retained only as the opt-in
+rollback backend (`ops_fence_authority=redis`). Celery ops tasks fresh-read etcd
+leader+term on each invocation and pass that live term into the CAS — they must not use
+cached web role state. (See “Quorum Fence Store: etcd cutover” below.)
+
+| Fenced surface | Risk if a zombie CP writes |
+|---|---|
+| `active_provider_id` / `dual_peer_id` / routing policy | Wrong traffic home |
+| Failure/success counters, Performance streak | Spurious failover |
+| Session assignments | Wrong Dual/share sticky home |
+| Provider registry / chaos flags / base URLs | False failovers, bad reconnect URLs |
+| Auto-wake locks + Celery wake/sleep | Duplicate cloud cost |
+| `ops:provider_changed` publish | Clients reconnect on false signal |
+| `SET ops:control_plane` | Last-write-wins clobber |
+
+Ephemeral: event trail, comparison reports, decision strings (still restored on
+CAS failure because they ride the same blob).
+
+### Quorum Fence Store: etcd cutover (Step 5)
+
+The durable authority is selected by `ops_fence_authority` (`app/core/config.py`),
+**default `etcd`** when HA is active:
+
+- **etcd (default).** The fence term (`/tess/ops/cp/fence_term`) and durable blob
+  (`/tess/ops/cp/blob`) live in one linearizable store, written by a single etcd
+  transaction-CAS (`EtcdFenceStore`, all endpoints → failover). This dissolves the old
+  “external Redis fence bump → cluster unelectable” limitation: a term perturbation just
+  re-syncs the primary at the higher term — split-brain `s07`/`s08` prove no split-brain,
+  a monotonic term, and no durable corruption.
+- **redis (legacy / opt-in).** The historical Redis Lua-CAS backend, selected only by
+  `ops_fence_authority=redis`. It is the rollback escape hatch, not part of the default
+  durable path — under etcd authority Redis is caches + pub/sub only. (During the cutover
+  a bounded reverse shadow mirrored each etcd write to Redis and alarmed on divergence; the
+  leader-kill storm soak (`s11`) held `diverge==0`, and the dual-write was retired once that
+  evidence was banked.)
+
+**Serialized offload (`app/api/ops.py`).** Every mutating `/ops/*` handler routes its
+durable write through `_fenced_commit` / a process-wide `_mutation_lock`:
+`asyncio.to_thread` keeps the CAS / etcd-failover ladder off the event loop, and the lock
+prevents two writers racing a lost update under one fence term (CAS fences terms, not
+writers within a term). Full coverage — the async-helper handlers (`compare`, `byo`) hold
+the same lock directly.
+
+**Boot restore needs etcd.** `restore_store` reads the etcd durable blob at boot. There
+is **no Redis fallback**: an absent etcd blob is either a fresh cluster (the primary
+re-persists on its first election) or a data-loss event, so the boot logs a loud warning
+directing explicit recovery rather than silently resurrecting a stale Redis blob. etcd
+warms at the first fenced persist on election.
+
+**Harness defaults to `authority=etcd`.** A plain
+`python -m scripts.ops_cp_splitbrain run-all` exercises the etcd cutover (durable
+observables read etcd; `s04` is the positive “durable write survives Redis loss” test;
+`s07`/`s08` assert the term-perturbation invariant; `s11` kills the etcd Raft leader
+mid-mutation-storm and asserts bounded block-and-resume). The suite is **11 scenarios**;
+a plain `run-all` is **11/11** under the default etcd authority, and the legacy backend is
+re-verified via `OPS_FENCE_AUTHORITY=redis`.
+
+### Run the overlay
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.ops-ha.yml up --build
+# CP-A :8000 (instance cp-a), CP-B :8001 (instance cp-b), etcd, redis
+curl -s http://127.0.0.1:8000/ops/ha
+curl -s http://127.0.0.1:8001/ops/ha
+python scripts/ops_cp_ha_smoke.py
+```
+
+Env knobs: `OPS_HA_ENABLED`, `OPS_ETCD_ENDPOINTS`, `OPS_CP_INSTANCE_ID`,
+`OPS_ETCD_LEASE_TTL_SECONDS`. When HA is off, behavior stays single-writer
+(unconditional Redis `SET`).
+
+Standby mutating `/ops/*` returns **503** with `{role, fence_term, ...}`. GETs
+remain available (memory may lag until promote + restore).
+
+**Fence-before-auth:** the HA mutate gate (`_gate_ops_mutations`) runs before
+admin auth. Unauthenticated mutate against a standby therefore returns **503**
+with fence detail — not **401**. Authed standby mutate is also **503**. The
+split-brain harness treats standby **401** as a failure (gate not exercised).
+
+When etcd is unreachable, the sitting primary **demotes** after lease keepalive
+fails (authority is the lease — it must not serve forever on a cached
+`primary` role).
+
+### Split-brain harness (Step 2)
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.ops-ha.yml -p tess-engine up --build -d
+python -m scripts.ops_cp_splitbrain run-all
+# or: python -m scripts.ops_cp_splitbrain run s02_pause_primary
+```
+
+Each scenario resets to a clean baseline (recreate webs/etcd, wipe Redis fence
+keys) so CAS-bump / empty-blob scenarios cannot contaminate later runs.
+Convergence waits use **3× lease TTL** (default 30s). Assertions are on Redis /
+`GET /ops/ha` / HTTP artifacts — not log strings. See
+[`scripts/ops_cp_splitbrain/README.md`](../scripts/ops_cp_splitbrain/README.md).
+
+### Unit tests
+
+`pytest tests/test_ops_fencing.py` — includes the TOCTOU case (etcd yes / Redis
+CAS no) asserting hard demote + no `provider_changed`, and Celery live-term
+guards.
+
+## Observability (Prometheus + OpenTelemetry) — Step 3
+
+Self-hosted, **opt-in, OFF by default**. Metrics are Prometheus **pull**; traces are
+OTLP/HTTP to a **self-hosted** collector. No hosted/SaaS backend is required or contacted.
+The default deploy (`docker-compose.prod.yml`) is unchanged.
+
+### Toggles (`app/core/config.py`; env is the UPPERCASE form)
+
+| Setting | Env | Default | Purpose |
+|---|---|---|---|
+| `ops_metrics_enabled` | `OPS_METRICS_ENABLED` | `false` | Mount web `/metrics`; start worker exposition |
+| `ops_metrics_worker_port` | `OPS_METRICS_WORKER_PORT` | `9109` | Worker Prometheus HTTP port |
+| `ops_tracing_enabled` | `OPS_TRACING_ENABLED` | `false` | Install the OTLP tracer |
+| `otel_exporter_otlp_endpoint` | `OTEL_EXPORTER_OTLP_ENDPOINT` | `None` | Collector base URL (`/v1/traces` appended) |
+| `otel_traces_sampler_ratio` | `OTEL_TRACES_SAMPLER_RATIO` | `1.0` | Parent-based ratio (ops path is low-volume) |
+| `otel_service_name` | `OTEL_SERVICE_NAME` | `tess-ops` | Trace resource `service.name` |
+
+When both toggles are off, no middleware/endpoint/exporter is installed — `/health`, `/ws`,
+and the product path are byte-for-byte unchanged. The product (LangGraph/panel) path is
+**not** instrumented; scope is the ops/HA path only.
+
+### Two scrape targets (don't miss half the system)
+
+A Prometheus `scrape_configs` for a Tess control plane needs **both**:
+
+1. **Web** `/metrics` on each web process — `:8000` (cp-a) and `:8001` (cp-b) in the HA
+   overlay. Serves role/lease/CAS/mutation/probe/failover metrics + the `is_primary` /
+   `fence_term` gauges.
+2. **Worker** on `ops_metrics_worker_port` (`9109`) — serves worker-task + worker-side probe
+   metrics. In the obs overlay it is published **localhost-bound** (`127.0.0.1:9109`,
+   zero-egress).
+
+**Prefork assumption (matters):** the worker exposition assumes the worker runs
+**`--concurrency=1`** (prod sets it; the obs overlay overrides the command to set it). Under
+prefork with concurrency>1, plain per-child `start_http_server` would race the port and split
+counters across child registries — the "metrics silently never increment" trap. To scale the
+worker, either route ops tasks to a dedicated `--concurrency=1`/`--pool=solo` worker, or
+enable `prometheus_client` multiprocess mode (`PROMETHEUS_MULTIPROC_DIR`) with a single
+aggregating exposition — never plain per-child servers. The same caveat applies to running
+**web with `--workers>1`** for the `is_primary`/`fence_term` gauges.
+
+### Cardinality discipline (enforced in CI)
+
+Every metric label value is a fixed code enum or a per-process constant. `provider_id` is
+**unbounded** (`prov_<uuid12>` + BYO) and is **banned** as a label — metrics use
+`provider_type` (4 values); per-provider health stays in `GET /ops/health-logs`.
+`tests/test_ops_metrics.py` asserts the label allowlist (fails CI if a banned label appears).
+
+### Metrics (exposed names)
+
+`tess_ops_role_transitions_total`, `tess_ops_is_primary`, `tess_ops_fence_term`,
+`tess_ops_fence_rejects_total`, `tess_ops_lease_keepalive_total`, `tess_ops_lease_ttl_seconds`,
+`tess_ops_cas_total`, `tess_ops_mutations_total`, `tess_ops_mutation_duration_seconds`,
+`tess_ops_probes_total`, `tess_ops_probe_duration_seconds`, `tess_ops_failovers_total`,
+`tess_ops_worker_task_total`.
+
+### Traces
+
+Spans on the mutation path (`ops.http.mutation` → `ops.fence_gate` → `ops.persist_cas` →
+`ops.publish_provider_changed`) and the promotion path (`ops.promotion` →
+`ops.promote_redis_fence` / `ops.initial_persist`). **Failover trace-continuity:** the client
+sends a W3C `traceparent` + `X-Ops-Request-Id`; a mutation rejected on the standby (503) and
+retried on the new primary share one `trace_id` + `ops.request_id`, so the failover is one
+correlatable trace.
+
+### Example queries (PromQL)
+
+```promql
+tess_ops_is_primary == 1                                              # who is primary
+rate(tess_ops_role_transitions_total{transition="promote"}[5m])       # promotion rate
+rate(tess_ops_fence_rejects_total[5m])                                # fence rejects by kind/surface
+sum(rate(tess_ops_cas_total{result="reject"}[5m]))
+  / sum(rate(tess_ops_cas_total[5m]))                                 # CAS reject ratio
+rate(tess_ops_mutations_total{outcome="fenced_503"}[5m])              # standby refusals
+sum by (provider_type) (rate(tess_ops_probes_total{result="unhealthy"}[5m]))
+rate(tess_ops_lease_keepalive_total{result="failed"}[5m])            # lease health
+```
+
+### Verification (opt-in overlay)
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.ops-ha.yml \
+               -f docker-compose.ops-obs.yml -p tess-engine up --build -d
+OPS_HA_COMPOSE_OBS=docker-compose.ops-obs.yml python -m scripts.ops_cp_splitbrain run s10_failover_visible
+```
+
+`s10_failover_visible` proves a failover end-to-end: it rejects a mutation on the standby,
+kills the primary, retries on the promoted node, then asserts the promoted node's `/metrics`
+(promote counter, `is_primary=1`, `fence_term` bump, `fenced_503`+`success` mutations), the
+worker `:9109` exposition, and one exported trace spanning the reject+success. It needs the
+obs overlay (it errors clearly otherwise). The reject+success land on the same box (the
+standby that became the new primary); true cross-node correlation via an etcd-only partition
+is deferred (WSL2 multi-network flakiness, per the s04/s08 adaptations).
+
+## Offline / sovereign packaging (Step 4)
+
+The full HA + observability stack deploys and runs **fully offline** — zero required
+outbound network at deploy or runtime. This is proven, not asserted: the packaged
+bundle is deployed with egress blocked and the split-brain harness `run-all` passes
+**10/10** in that environment. "Offline" scopes to the **platform**; the LLM upstream
+is the deliberate exception (the offline profile uses Ollama-only, local).
+
+### Sovereignty Audit — egress inventory
+
+Every outbound vector, enumerated by grep+read, and how the offline path resolves it.
+
+| # | Egress point | Where | Phase | Offline resolution |
+|---|---|---|---|---|
+| 1 | Base image pulls (`python:3.11-slim`, `node:20-alpine`, `alpine:3.20`, `redis:7-alpine`, `caddy:2-alpine`, `quay.io/coreos/etcd:v3.5.16`, `otel/...collector-contrib:0.111.0`, `ollama/ollama`) | Dockerfiles + compose files | build/deploy | Pre-pulled + `docker save` into the bundle; offline `up --no-build` + `pull_policy: never` |
+| 2 | `pip install -r requirements.txt` (unpinned) | `Dockerfile` | build | Baked into the image on the connected machine; **no pip at deploy**; `pip freeze` → `requirements.lock.txt` for provenance |
+| 3 | `npm ci && npm run build` | `deploy/deploy.sh`, `frontend/Dockerfile` | build | Built on the connected machine; `dist/` ships in the bundle; no npm at deploy |
+| 4 | **Google Fonts CDN** (`fonts.googleapis.com`/`gstatic.com`) — the one runtime egress in the shipped SPA | `frontend/index.html`, `frontend/architecture/index.html` | runtime (browser) | **Self-hosted**: vendored woff2 + `@font-face` under `frontend/public/fonts/` (OFL, see `OFL.txt`); CDN `<link>`s removed |
+| 5 | `ollama pull <model>` (GB weights) | `deploy/deploy.sh` | deploy | Out of the acceptance path (harness never calls the LLM); model pre-seed is a documented, optional step |
+| 6 | Let's Encrypt ACME (domain mode) | `deploy/Caddyfile` | deploy | IP/offline mode uses `Caddyfile.ip` (`:80`, no ACME); Caddy is not in the harness stack |
+| 7 | `git pull` / `git clone` | `deploy/DEPLOY.md`, `server-bootstrap.sh` | deploy | Replaced by the bundle's `git archive` repo snapshot |
+| 8 | Docker/Node install from `download.docker.com` / `deb.nodesource.com` | `server-bootstrap.sh` | host bootstrap | Documented host pre-req (out of bundle scope) |
+| 9 | Gemini API | `app/llm/gemini.py` | runtime | **Deliberate online exception**; unreachable when `DEFAULT_LLM_PROVIDER=ollama` |
+| 10 | Search: Tavily / DDGS / page fetch | `app/search/` | runtime | Gated by chain profile (`allows_search`=L3/L4) + no `TAVILY_API_KEY`; off in the offline profile |
+| 11 | AWS/GCP standby APIs, `checkip.amazonaws.com` | `scripts/aws_standby.py`, `scripts/gcp_standby.py` | operator-only | Not in the app/runtime path; never invoked during offline deploy |
+| 12 | OTLP export | `app/ops/metrics.py` (`OTEL_EXPORTER_OTLP_ENDPOINT`) | runtime | Self-hosted collector only; env-driven, points at the in-stack `otel-collector` — no SaaS |
+
+In the Ollama-only, search-off, HA+obs config, app egress is limited to *local/loopback*
+endpoints (Ollama, Redis, etcd, the in-stack otel-collector, a `127.0.0.1:8000/health`
+probe) — zero public internet. One code-default caveat: `default_llm_provider` ships
+`"gemini"`; the offline env sets it to `ollama`.
+
+### Packaging mechanism
+
+A single `docker save` **tarball** (`tess-offline-bundle-<commit>.tar.gz`) carries all
+images (one `all-images.tar` for layer dedup), the exact-commit repo snapshot, the built
+CDN-free `frontend/dist`, the installer/verifier scripts, and a `MANIFEST.sha256`.
+Integrity is loud at every gate: the outer `.sha256`, `sha256sum -c MANIFEST.sha256`, a
+post-`docker load` image-ID check, and a **commit-binding** guard — the app image's
+`org.tess.commit` label must equal the repo snapshot commit and the bundle-lock commit
+(closes the "bind-mounted code vs. baked image" gap; `build-bundle.sh` requires a clean
+tree so all three agree).
+
+### Build the bundle (connected machine)
+
+```bash
+deploy/offline/build-bundle.sh            # clean tree required
+#   → tess-offline-bundle-<commit>.tar.gz (+ .sha256)
+```
+
+### Deploy on the air-gapped host
+
+```bash
+sha256sum -c tess-offline-bundle-<commit>.tar.gz.sha256   # verify in transit
+mkdir tess-offline && tar -C tess-offline -xzf tess-offline-bundle-<commit>.tar.gz && cd tess-offline
+./install-offline.sh --target /opt/tess-engine   # verify manifest, load, guards, up --no-build, smoke
+./verify-egress-blocked.sh --target /opt/tess-engine   # egress self-check + harness run-all 10/10
+```
+
+`install-offline.sh --prod` additionally refuses to start unless a strong
+`OPS_ADMIN_TOKEN` is set (fail-closed).
+
+### Egress-block mechanism, and why the harness runs in a container
+
+The block is **engine-enforced `internal: true` networks** in `docker-compose.offline.yml`
+(both `default` and `ops-ha-redis`). This is the correct mechanism on Docker Desktop /
+WSL2: the engine runs in the `docker-desktop` utility VM, so iptables in the WSL2 distro
+would not touch container networking, whereas the `internal` flag is enforced by the engine
+wherever it runs. **Verified:** a container on an internal network cannot reach
+`1.1.1.1:443` (IP layer, not just DNS).
+
+An internal network *also* removes host-loopback published-port reachability, so the
+split-brain harness cannot run from the host. It runs from a small **in-container runner**
+(`deploy/offline/harness-runner`, `docker:cli` + `python3`) attached to
+`tess-engine_default`, mounting the docker socket, reaching the CP nodes by name.
+`verify-egress-blocked.sh` addresses them by **container name** (`tess-engine-web-1`, …),
+not compose service alias: a manual `docker network connect` during s03/s05 restores the
+container name but **not** the service alias, so `http://web:8000` stops resolving after a
+partition heal while `http://tess-engine-web-1:8000` keeps working. (From the host-based
+run this never surfaced because nodes were reached via published ports.)
+
+**Linux VPS alternative.** On a real Linux host you may instead use
+`deploy/offline/firewall-egress-block.sh` (a `DOCKER-USER` chain default-drop with an
+RFC1918 allowlist), which blocks container→internet while *keeping* host-published ports —
+so the harness can run from the host there. It is **not** for Docker Desktop. Revert with
+`deploy/offline/firewall-restore.sh`.
+
+### Admin token requirements
+
+Gated `/ops/*` mutations are fail-closed (503 with no token). For a real deploy, generate a
+strong secret and set `OPS_ADMIN_TOKEN` (or the multi-operator `OPS_ADMIN_TOKENS` JSON map)
+in `.env.offline`:
+
+```bash
+openssl rand -hex 32     # never print/commit the real value
+```
+
+The compose fallback `ha-harness-token` is for the local harness only; `--prod` install
+rejects it.
+
+### Deferred hardening (documented, not silent)
+
+1. **Non-root containers.** The app image still runs as root. Deferred from this step
+   because it is orthogonal to packaging and risks the 10/10 gate — the dev base bind-mounts
+   `.:/app`, so a non-root uid writing `__pycache__` / the Prometheus multiproc dir can hit
+   permission failures. Planned change (dedicated PR, re-running the full harness + pytest):
+   `useradd app; USER app; PYTHONDONTWRITEBYTECODE=1`; worker metrics bind on `9109` is fine
+   (>1024); `otel-collector` keeps `user: "0:0"` (distroless UID 10001 cannot write the
+   `ops_spans` volume). The offline stack itself has **no** `.:/app` bind mount (image-only),
+   so this is lower-risk there.
+2. **Reproducible rebuild.** `requirements.txt` is unpinned. This step captures `pip freeze`
+   → `requirements.lock.txt` for provenance (the deployed artifact is the saved image, not a
+   rebuild). A hash-pinned lockfile (`--require-hashes`) is the follow-up.
+
+### otel-collector pin
+
+Pinned to `0.111.0` because during Step 3, `0.116.0`'s distroless binary would not exec on
+this Docker Desktop / WSL2 engine. The offline stack bakes the same version into
+`tess-engine-otel:offline` (config baked in, so there is no host-path config mount). **TODO
+on a Linux VPS:** re-test the newer image and either unpin or keep the pin with a verified
+reason. (`0.116.0` images are present locally but not yet validated end-to-end here.)
 
 ## Session 8 locked decisions (Dual XOR Performance)
 
@@ -170,6 +501,13 @@ On startup the API bootstraps:
 | AWS | When `OPS_AWS_BASE_URL` is set |
 | GCP | When `OPS_GCP_BASE_URL` is set |
 | Customer | `POST /ops/byo` after health gate |
+
+_Note: the `http://web:8000` default is a compose service alias — fine in normal
+operation and in prod (which runs no partition-heal fault injection), but it would
+not resolve after a split-brain harness `docker network connect` heal, which
+restores the container name but not the alias (see §Offline packaging). The
+shipped HA/offline stacks therefore leave `OPS_LOCAL_BASE_URL` at its
+`http://127.0.0.1:8000` loopback default rather than `web:8000`._
 
 Env keys: see [`.env.example`](../.env.example).
 

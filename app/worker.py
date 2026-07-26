@@ -8,8 +8,10 @@ from typing import Any
 import httpx
 from celery import Celery
 from celery.exceptions import SoftTimeLimitExceeded
+from celery.signals import worker_process_init
 
 from app.core.config import settings
+from app.ops import metrics
 from app.core.conversation import append_conversation_turn, load_conversation_history
 from app.core.redis import create_sync_redis, session_channel
 from app.core.session_control import (
@@ -36,17 +38,38 @@ celery_app = Celery(
 )
 
 
+@worker_process_init.connect
+def _init_worker_observability(**_kwargs: object) -> None:
+    """Start the worker's Prometheus exposition + tracing once, post-fork.
+
+    See §3a: relies on ``--concurrency=1`` so this binds exactly once in the single
+    worker child — the same process that runs the ops tasks and increments counters.
+    Both calls are guarded internally and no-op unless observability is enabled.
+    """
+    metrics.start_worker_metrics_server()
+    metrics.init_tracing("worker")
+
+
 @celery_app.task(name="ops_probe_providers")
+@metrics.ops_task_observed("probe")
 def ops_probe_providers() -> dict[str, object]:
-    """Celery entry for scheduled multi-cloud health probes + failover."""
+    """Celery entry for scheduled multi-cloud health probes + failover.
+
+    Uses a fresh etcd leader/term check only — never cached web role state.
+    """
     from app.ops.failover import evaluate_failover
+    from app.ops.fencing import check_fence_live, write_fence
     from app.ops.prober import probe_all_providers
 
-    snapshots = asyncio.run(probe_all_providers())
-    failover_msg = evaluate_failover(snapshots)
+    live = check_fence_live()
+    snapshots = asyncio.run(probe_all_providers(source="worker_task"))
+    with write_fence(live.fence_term):
+        failover_msg = evaluate_failover(snapshots)
     return {
         "probed": len(snapshots),
         "failover": failover_msg.model_dump(mode="json") if failover_msg else None,
+        "fence_term": live.fence_term,
+        "leader": live.leader,
     }
 
 
@@ -55,16 +78,23 @@ def ops_probe_providers() -> dict[str, object]:
     soft_time_limit=700,
     time_limit=720,
 )
+@metrics.ops_task_observed("wake")
 def ops_standby_wake(
     provider_id: str,
     operator_id: str | None = None,
 ) -> dict[str, object]:
     """Wake an AWS/GCP standby via scripts/*_standby.py (long-running)."""
+    from app.ops.fencing import check_fence_live, write_fence
     from app.ops.standby_power import power_action_for_provider
 
-    return power_action_for_provider(
-        provider_id, "wake", operator_id=operator_id
-    )
+    live = check_fence_live()
+    with write_fence(live.fence_term):
+        result = power_action_for_provider(
+            provider_id, "wake", operator_id=operator_id
+        )
+    result["fence_term"] = live.fence_term
+    result["leader"] = live.leader
+    return result
 
 
 @celery_app.task(
@@ -72,16 +102,24 @@ def ops_standby_wake(
     soft_time_limit=400,
     time_limit=420,
 )
+@metrics.ops_task_observed("sleep")
 def ops_standby_sleep(
     provider_id: str,
     operator_id: str | None = None,
 ) -> dict[str, object]:
     """Stop an AWS/GCP standby via scripts/*_standby.py."""
+    from app.ops.fencing import check_fence_live, write_fence
     from app.ops.standby_power import power_action_for_provider
 
-    return power_action_for_provider(
-        provider_id, "sleep", operator_id=operator_id
-    )
+    live = check_fence_live()
+    with write_fence(live.fence_term):
+        result = power_action_for_provider(
+            provider_id, "sleep", operator_id=operator_id
+        )
+    result["fence_term"] = live.fence_term
+    result["leader"] = live.leader
+    return result
+
 
 
 _REDUCER_KEYS = frozenset({

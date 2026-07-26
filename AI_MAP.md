@@ -258,7 +258,7 @@ Gate logic lives in `app/graph/chain_gates.py`. L0 entry via `direct_responder` 
 | Search utilities | `app/search/provider.py`, `app/search/fetcher.py`, `app/search/extractor.py` |
 | Specialist nodes | `app/graph/nodes/<name>.py` |
 | Agent registry | `app/agents/registry.py`, `app/agents/subjects/registry.py` |
-| Phase 15B brief | `PHASE_15B_OPENER.md` |
+| Phase 15B brief | `docs/archive/phases/PHASE_15B_OPENER.md` |
 | Shared specialist runner | `app/agents/base.py` |
 | Presenter | `app/graph/nodes/presenter.py` |
 | Panel schema | `app/graph/schemas.py`, `SCHEMA.md` |

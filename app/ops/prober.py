@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 
+from app.ops import metrics
 from app.ops.models import ChaosKind, CloudProvider, HealthSnapshot, OpsEvent
 from app.ops.scoring import compute_health_score
 from app.ops.store import OpsStore, get_store, persist_store
@@ -193,18 +194,33 @@ async def probe_all_providers(
     *,
     store: OpsStore | None = None,
     timeout_seconds: float = 5.0,
+    source: str = "web_loop",
 ) -> list[HealthSnapshot]:
+    """Probe every enabled provider. ``source`` ∈ {web_loop, worker_task, manual}
+    labels the metric (bounded); per-provider granularity stays in the health-log store,
+    so the metric uses ``provider_type`` — never the unbounded ``provider_id``."""
     ops = store or get_store()
     results: list[HealthSnapshot] = []
     for provider in ops.list_providers():
         if not provider.enabled:
             continue
+        provider_type = provider.type.value
+        started = time.perf_counter()
         try:
             snap = await probe_provider(
                 provider, timeout_seconds=timeout_seconds, store=ops
             )
             results.append(snap)
+            metrics.record_probe(
+                provider_type,
+                "healthy" if snap.healthy else "unhealthy",
+                source,
+                time.perf_counter() - started,
+            )
         except Exception:
+            metrics.record_probe(
+                provider_type, "error", source, time.perf_counter() - started
+            )
             logger.exception("probe failed for %s", provider.id)
             ops.append_event(
                 OpsEvent(

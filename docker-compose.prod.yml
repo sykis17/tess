@@ -51,7 +51,10 @@ services:
 
   ollama:
     profiles: ["ollama"]
-    image: ollama/ollama:latest
+    # Pinned by digest for reproducibility (was the floating `:latest` tag). Resolved
+    # from ollama/ollama:latest on 2026-07-25; re-resolve + bump deliberately. A
+    # floating tag is a sovereign-bundle reproducibility risk.
+    image: ollama/ollama@sha256:f040603c11a11f125660eaf848170780e43b68973fc270e26f168536031ac258
     restart: unless-stopped
     volumes:
       - ollama_data:/root/.ollama

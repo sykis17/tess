@@ -89,7 +89,7 @@ The script will:
 1. Build the frontend
 2. Start all Docker containers (including **Ollama inside Docker**)
 3. Pull the Ollama model automatically
-4. Check `http://5.78.186.223/health` (expect `cpu_percent` / `mem_percent` after host-metrics rollout — see [HOST_METRICS_ROLLOUT.md](HOST_METRICS_ROLLOUT.md))
+4. Check `http://5.78.186.223/health` — it self-reports `cpu_percent` / `mem_percent` automatically (`psutil` ships in `requirements.txt`), so **any newly added server** reports them too once `deploy.sh` builds its image. Troubleshooting: [HOST_METRICS_ROLLOUT.md](../docs/archive/ops/HOST_METRICS_ROLLOUT.md)
 
 ---
 
@@ -122,7 +122,7 @@ First response may take 30–60 seconds while the model loads.
 SKIP_LLM_FOLLOW_UPS=true
 ```
 
-Presenter finishes in seconds after defense with static/topic-fallback chips. Also auto-enabled when `OLLAMA_MODEL` contains `:1b` unless you set `SKIP_LLM_FOLLOW_UPS=false` explicitly.
+Presenter finishes in seconds after defense with static/topic-fallback chips. Also auto-enabled whenever `OLLAMA_MODEL` contains `:1b` (hard floor — `SKIP_LLM_FOLLOW_UPS=false` cannot re-enable LLM chips on `:1b`). On larger models, set `SKIP_LLM_FOLLOW_UPS=true` to force the fast path.
 
 ---
 

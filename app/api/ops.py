@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 
+from app.core.config import settings
 from app.ops.admin_auth import require_admin
 from app.ops.balancer import (
     assign_session,
@@ -18,6 +21,12 @@ from app.ops.byo import register_customer_server
 from app.ops.chaos import clear_chaos, set_chaos
 from app.ops.comparison import run_comparison
 from app.ops.failover import evaluate_failover, force_active_provider
+from app.ops.fencing import (
+    NotPrimaryError,
+    get_role_state,
+    require_primary_cached,
+)
+from app.ops import metrics
 from app.ops.health_logs import combined_health_logs
 from app.ops.models import (
     ActiveRoutingResponse,
@@ -45,12 +54,134 @@ from app.providers.cloud import get_adapter
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/ops", tags=["ops"])
+
+# Every durable /ops/* write is serialized + offloaded through this lock so the
+# blocking CAS / etcd-failover ladder never runs on the event loop AND no two
+# writers race under one fence term. See _fenced_commit.
+_mutation_lock = asyncio.Lock()
+
+
+async def _fenced_commit(fn=persist_store, /, *args, **kwargs):
+    """Serialize + offload a durable ops write off the event loop.
+
+    Post-cutover the authoritative durable write is ``EtcdFenceStore`` with a
+    bounded try-in-order failover ladder (up to ~6s under a node loss); running it
+    inline would stall the loop — the same class the step-3 ``/ops/ha`` fix cured
+    once. ``asyncio.to_thread`` moves it to a worker thread *and* copies the context,
+    so the ``write_fence`` ContextVar that ``resolve_write_fence_term`` reads still
+    resolves (a raw ``run_in_executor`` would drop it; the HTTP path also has the
+    thread-safe cached-role fallback, so both term sources survive the hop).
+
+    The lock is load-bearing, not incidental. Offloading restores true handler
+    concurrency (the blocking sync-in-async calls had been *accidentally*
+    serializing mutations), so without it two read-modify-write cycles under the
+    same valid fence term could both be CAS-accepted — CAS fences terms, not writers
+    within a term — and the later stale full-blob snapshot would clobber the first, a
+    lost update. Serializing the offloaded commits makes the last writer always
+    persist the latest in-memory state. This is the single serialization point for
+    *all* durable /ops/* writes: the async-helper handlers (compare, byo) hold the
+    same lock directly rather than route through here, so a thread-borne persist can
+    never run in parallel with a loop-borne one.
+
+    ``restore -> demote -> raise`` on a CAS reject happens inside the offloaded call
+    (it is all inside ``persist_store`` / the offloaded helper); ``FenceError``
+    propagates out of here unchanged, so handler error mapping (500/503) is preserved.
+    """
+    async with _mutation_lock:
+        return await asyncio.to_thread(fn, *args, **kwargs)
+
+
+async def _gate_ops_mutations(request: Request) -> None:
+    """Standby CP refuses mutating /ops/* with 503 (reads stay available)."""
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return
+    if not settings.ops_ha_active():
+        return
+    path = request.url.path.rstrip("/")
+    if path.endswith("/ops/ha"):
+        return
+    with metrics.get_tracer().start_as_current_span("ops.fence_gate") as _sp:
+        try:
+            require_primary_cached()
+            _sp.set_attribute("ops.gate", "pass")
+        except NotPrimaryError as exc:
+            # Flag for the observability middleware (→ outcome=fenced_503) + count the reject.
+            request.state.ops_fenced = True
+            metrics.mark_fenced()
+            metrics.record_fence_reject("not_primary", "http_gate")
+            role = get_role_state()
+            _sp.set_attribute("ops.gate", "fenced")
+            _sp.set_attribute("ops.role", role.role)
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "not_primary",
+                    "role": role.role,
+                    "fence_term": role.fence_term,
+                    "primary_instance_id": role.primary_instance_id,
+                    "instance_id": settings.ops_cp_instance_id,
+                    "message": str(exc),
+                },
+            ) from exc
+
+
+router = APIRouter(
+    prefix="/ops",
+    tags=["ops"],
+    dependencies=[Depends(_gate_ops_mutations)],
+)
 
 # Re-export for tests that import _check_admin from this module.
 from app.ops.admin_auth import _check_admin  # noqa: E402
 
 AdminOperator = Annotated[str, Depends(require_admin)]
+
+
+@router.get("/ha")
+async def get_ha_status() -> dict[str, Any]:
+    """Control-plane HA role / fence diagnostics (admin not required for liveness).
+
+    The fresh etcd read is offloaded to a thread and time-bounded: a role/liveness
+    endpoint must stay responsive when etcd is degraded (e.g. quorum lost, where a
+    reachable-but-non-serving member makes a linearizable read hang for the full
+    client timeout). On timeout it falls back to the cached role — which the campaign
+    loop keeps current, including the demotion — so operators (and the split-brain
+    harness) can still read the role promptly instead of blocking on the coordinator
+    being diagnosed.
+    """
+    role = get_role_state()
+    live_leader = None
+    live_term = None
+    if settings.ops_ha_active():
+        try:
+            from app.ops.consensus import get_consensus_backend
+
+            backend = get_consensus_backend()
+            live = await asyncio.wait_for(
+                run_in_threadpool(backend.read_election),
+                timeout=2.5,
+            )
+            live_leader = live.leader
+            live_term = live.fence_term
+        except Exception as exc:
+            logger.warning("etcd read for /ops/ha unavailable (%s); reporting cached role", exc)
+            return {
+                "ha_enabled": True,
+                "role": role.role,
+                "fence_term": role.fence_term,
+                "instance_id": settings.ops_cp_instance_id,
+                "primary_instance_id": role.primary_instance_id,
+                "etcd_error": str(exc),
+            }
+    return {
+        "ha_enabled": settings.ops_ha_active(),
+        "role": role.role if settings.ops_ha_active() else "ha_disabled",
+        "fence_term": role.fence_term,
+        "instance_id": settings.ops_cp_instance_id,
+        "primary_instance_id": role.primary_instance_id or live_leader,
+        "etcd_leader": live_leader,
+        "etcd_fence_term": live_term,
+    }
 
 
 @router.get("/providers")
@@ -91,7 +222,7 @@ async def create_provider(
             },
         )
     )
-    persist_store()
+    await _fenced_commit()
     return provider
 
 
@@ -126,7 +257,7 @@ async def update_provider(
             details={"fields": sorted(data.keys()), "operator_id": operator_id},
         )
     )
-    persist_store()
+    await _fenced_commit()
     return updated
 
 
@@ -145,7 +276,7 @@ async def delete_provider(
             details={"operator_id": operator_id},
         )
     )
-    persist_store()
+    await _fenced_commit()
 
 
 @router.post("/providers/{provider_id}/connect")
@@ -170,7 +301,7 @@ async def connect_provider(
             },
         )
     )
-    persist_store()
+    await _fenced_commit()
     return {
         "validation": validation,
         "snapshot": snapshot,
@@ -182,7 +313,7 @@ async def connect_provider(
 async def probe_now(
     operator_id: AdminOperator,
 ) -> dict[str, Any]:
-    snapshots = await probe_all_providers()
+    snapshots = await probe_all_providers(source="manual")
     failover_msg = evaluate_failover(snapshots)
     get_store().append_event(
         OpsEvent(
@@ -190,7 +321,7 @@ async def probe_now(
             details={"operator_id": operator_id, "failover": bool(failover_msg)},
         )
     )
-    persist_store()
+    await _fenced_commit()
     return {
         "snapshots": snapshots,
         "failover": failover_msg,
@@ -243,9 +374,11 @@ async def get_routing(_operator_id: AdminOperator) -> dict[str, Any]:
     )
 
     store = get_store()
-    # Soft-timeout stuck wakes so UI never sits forever on enqueue-only
-    clear_stale_auto_wake_inflight(store)
-    expire_stale_power_actions(store)
+    # Soft-timeouts mutate routing — primary only when HA is on.
+    can_mutate = (not settings.ops_ha_active()) or get_role_state().role == "primary"
+    if can_mutate:
+        clear_stale_auto_wake_inflight(store)
+        expire_stale_power_actions(store)
     routing = store.get_routing()
     policy = store.get_policy()
     active = (
@@ -306,7 +439,7 @@ async def put_routing_policy(
             details=details,
         )
     )
-    persist_store()
+    await _fenced_commit()
     return body
 
 
@@ -317,7 +450,9 @@ async def post_routing_dual(
 ) -> dict[str, Any]:
     """Enable Dual mode (two concurrent chat homes). Clears Performance."""
     try:
-        routing = enable_dual(operator_id=operator_id, peer_id=peer_id)
+        routing = await _fenced_commit(
+            enable_dual, operator_id=operator_id, peer_id=peer_id
+        )
     except ValueError as exc:
         detail = str(exc)
         if "≥2 healthy" in detail or "not healthy" in detail:
@@ -337,7 +472,7 @@ async def post_routing_dual(
 @router.delete("/routing/dual")
 async def delete_routing_dual(operator_id: AdminOperator) -> dict[str, Any]:
     """Exit Dual → active_only on current active."""
-    routing = disable_dual(operator_id=operator_id)
+    routing = await _fenced_commit(disable_dual, operator_id=operator_id)
     return {"routing": routing, "policy": get_store().get_policy()}
 
 
@@ -353,7 +488,9 @@ async def post_routing_performance(
     ``auto_wake=true``: may enqueue Celery wake for offline AWS/GCP whose last
     known score would beat the incumbent (requires cloud creds on the worker).
     """
-    routing = enable_performance(operator_id=operator_id, auto_wake=auto_wake)
+    routing = await _fenced_commit(
+        enable_performance, operator_id=operator_id, auto_wake=auto_wake
+    )
     policy = get_store().get_policy()
     return {
         "routing": routing,
@@ -365,7 +502,7 @@ async def post_routing_performance(
 @router.delete("/routing/performance")
 async def delete_routing_performance(operator_id: AdminOperator) -> dict[str, Any]:
     """Exit Performance → active_only frozen on current active; clears auto_wake."""
-    routing = disable_performance(operator_id=operator_id)
+    routing = await _fenced_commit(disable_performance, operator_id=operator_id)
     return {"routing": routing, "policy": get_store().get_policy()}
 
 
@@ -401,7 +538,7 @@ async def wake_provider(
                 details={"task_id": task_id, "operator_id": operator_id},
             )
         )
-        persist_store()
+        await _fenced_commit()
     power = store.get_routing().power_by_provider.get(provider_id)
     return {
         "status": "enqueued" if task_id else "completed_inline",
@@ -449,7 +586,7 @@ async def sleep_provider(
                 details={"task_id": task_id, "operator_id": operator_id},
             )
         )
-        persist_store()
+        await _fenced_commit()
     power = store.get_routing().power_by_provider.get(provider_id)
     return {
         "status": "enqueued" if task_id else "completed_inline",
@@ -473,18 +610,39 @@ async def sleep_all_standbys(operator_id: AdminOperator) -> dict[str, Any]:
     """
     from app.ops.standby_power import enqueue_sleep_all_standbys
 
-    return enqueue_sleep_all_standbys(operator_id=operator_id)
+    return await _fenced_commit(enqueue_sleep_all_standbys, operator_id=operator_id)
 
 
 @router.post("/routing/active/{provider_id}")
 async def set_active(
     provider_id: str,
     operator_id: AdminOperator,
+    request: Request,
 ) -> dict[str, Any]:
+    from app.ops.fencing import FenceError
+
     try:
-        msg = force_active_provider(provider_id, operator_id=operator_id)
+        msg = await _fenced_commit(
+            force_active_provider, provider_id, operator_id=operator_id
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except FenceError as exc:
+        # Durable CAS reject at the endpoint (passed the cached gate, lost the fence
+        # at persist). Flag for the middleware (→ fenced_503) + count at this surface.
+        request.state.ops_fenced = True
+        metrics.mark_fenced()
+        metrics.record_fence_reject(metrics.fence_error_kind(exc), "http_endpoint")
+        role = get_role_state()
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "fence_rejected",
+                "role": role.role,
+                "fence_term": role.fence_term,
+                "message": str(exc),
+            },
+        ) from exc
     return {"failover": msg, "routing": get_store().get_routing()}
 
 
@@ -495,8 +653,8 @@ async def assign_session_route(
     org_id: str | None = None,
 ) -> dict[str, Any]:
     try:
-        assignment = assign_session(
-            session_id, org_id=org_id, operator_id=operator_id
+        assignment = await _fenced_commit(
+            assign_session, session_id, org_id=org_id, operator_id=operator_id
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -522,8 +680,8 @@ async def inject_chaos(
     latency_ms: float = 2500.0,
 ) -> dict[str, Any]:
     try:
-        chaos = set_chaos(
-            provider_id, kind, latency_ms=latency_ms, operator_id=operator_id
+        chaos = await _fenced_commit(
+            set_chaos, provider_id, kind, latency_ms=latency_ms, operator_id=operator_id
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -536,7 +694,7 @@ async def remove_chaos(
     operator_id: AdminOperator,
 ) -> dict[str, str]:
     try:
-        clear_chaos(provider_id, operator_id=operator_id)
+        await _fenced_commit(clear_chaos, provider_id, operator_id=operator_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"status": "cleared"}
@@ -553,14 +711,17 @@ async def simulate_unhealthy(
     if provider is None:
         raise HTTPException(status_code=404, detail="provider not found")
     if enabled:
-        set_chaos(
+        await _fenced_commit(
+            set_chaos,
             provider_id,
             ChaosKind.MARK_UNHEALTHY,
             store=store,
             operator_id=operator_id,
         )
     else:
-        clear_chaos(provider_id, store=store, operator_id=operator_id)
+        await _fenced_commit(
+            clear_chaos, provider_id, store=store, operator_id=operator_id
+        )
     updated = store.get_provider(provider_id)
     assert updated is not None
     return updated
@@ -571,7 +732,10 @@ async def compare_providers(
     body: ComparisonRunRequest,
     operator_id: AdminOperator,
 ) -> ComparisonReport:
-    return await run_comparison(body, operator_id=operator_id)
+    # Async helper persists internally, so it holds the shared mutation lock directly
+    # (can't be offloaded via to_thread) — same serialization as _fenced_commit.
+    async with _mutation_lock:
+        return await run_comparison(body, operator_id=operator_id)
 
 
 @router.get("/compare")
@@ -584,7 +748,9 @@ async def register_byo(
     body: ByoRegisterRequest,
     operator_id: AdminOperator,
 ) -> CloudProvider:
-    try:
-        return await register_customer_server(body, operator_id=operator_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Async helper persists internally → holds the shared mutation lock directly.
+    async with _mutation_lock:
+        try:
+            return await register_customer_server(body, operator_id=operator_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc

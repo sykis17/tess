@@ -25,18 +25,13 @@
 - [x] **Phase 18:** Pipeline status wall & results wall — `pipeline_stage` on streamed Panels; sticky status bar; virtual folder tree from agent `folder_path`; results wall filter; structured `pov_segments` on completed Panels; `tests/test_pipeline_stages.py`, `tests/test_pov_segments.py`.
 - [x] **Phase 19:** Interactive learning UX — clickable POV segment drill-down; LLM-generated `follow_up_options` with `follow_up_kinds`; structured `ranked_list` content format; WR list-intent and drill-down routing hints; `tests/test_follow_up_options.py`, `tests/test_list_format.py`.
 - [x] **Phase 20:** Streaming & polish — token streaming for L0 direct responder and POV specialists (`is_streaming` Panel deltas); mid-chain steer via send-while-processing (`session_control` + Celery revoke); CPX11 stream throttle; `tests/test_stream_utils.py`, `tests/test_session_control.py`, `tests/test_interruption.py`.
+- [x] **Phase 21:** Presenter gap fix — two-phase presenter (answer first, chips second); `review_passed` → Presenting status-wall mapping; skip-LLM follow-up fast path (`:1b` hard floor + `SKIP_LLM_FOLLOW_UPS`); `tests/test_presenter_delivery.py`. Phase B LLM chip refresh is unit-tested only — not prod-verified on CPX11 (`:1b` hard-floor skip).
 
 ---
 
 ## Next — Full AI Chain
 
 Phases below map to the [target architecture](AI_MAP.md#target-ai-chain-full-vision). Each phase should keep backward-compatible Panels and deployable increments.
-
-### Phase 21 — Presenter gap & final-answer delivery
-
-Production issue (2026-07-12): after defense passes, UI freezes on *"Quality checks passed — formatting final answer…"* for many minutes. Root cause: presenter blocks on **`generate_follow_up_options` LLM** with no progress Panel; status wall stays on **Defense** because `review_passed` Panel sets `pipeline_stage=defense`.
-
-See [PHASE_21_OPENER.md](PHASE_21_OPENER.md) for full brief, deliverables (two-phase presenter recommended), and test matrix.
 
 ### Future (post–Phase 21)
 
@@ -83,20 +78,45 @@ Post–Session 7 decisions:
 
 **Session 8 (merged):** Dual two-home XOR Performance (anti-flap + optional
 auto-wake), Sleep-all resting cost, power trail. See
-[MULTI_CLOUD_HARDENING_S8_OPENER.md](MULTI_CLOUD_HARDENING_S8_OPENER.md).
+[MULTI_CLOUD_HARDENING_S8_OPENER.md](docs/archive/ops/MULTI_CLOUD_HARDENING_S8_OPENER.md).
 
 **Next — Session 9 (in progress):** Wake observability/reliability (enqueue ≠
 done), Dual demo path (≥2 healthy gate + UX). Shared Redis / seamless is
 **Track C → Session 10** (deferred until A+B pass on Hetzner).
-See [MULTI_CLOUD_HARDENING_S9_OPENER.md](MULTI_CLOUD_HARDENING_S9_OPENER.md).
+See [MULTI_CLOUD_HARDENING_S9_OPENER.md](docs/archive/ops/MULTI_CLOUD_HARDENING_S9_OPENER.md).
 
-See [MULTI_CLOUD_HARDENING_S7_OPENER.md](MULTI_CLOUD_HARDENING_S7_OPENER.md)
-(prior: [MULTI_CLOUD_HARDENING_S6_OPENER.md](MULTI_CLOUD_HARDENING_S6_OPENER.md),
-[MULTI_CLOUD_HARDENING_S5_OPENER.md](MULTI_CLOUD_HARDENING_S5_OPENER.md),
-[MULTI_CLOUD_HARDENING_S4_OPENER.md](MULTI_CLOUD_HARDENING_S4_OPENER.md),
-[MULTI_CLOUD_HARDENING_S3_OPENER.md](MULTI_CLOUD_HARDENING_S3_OPENER.md),
-[MULTI_CLOUD_HARDENING_S2_OPENER.md](MULTI_CLOUD_HARDENING_S2_OPENER.md),
-[MULTI_CLOUD_HARDENING_OPENER.md](MULTI_CLOUD_HARDENING_OPENER.md)).
+See [MULTI_CLOUD_HARDENING_S7_OPENER.md](docs/archive/ops/MULTI_CLOUD_HARDENING_S7_OPENER.md)
+(prior: [MULTI_CLOUD_HARDENING_S6_OPENER.md](docs/archive/ops/MULTI_CLOUD_HARDENING_S6_OPENER.md),
+[MULTI_CLOUD_HARDENING_S5_OPENER.md](docs/archive/ops/MULTI_CLOUD_HARDENING_S5_OPENER.md),
+[MULTI_CLOUD_HARDENING_S4_OPENER.md](docs/archive/ops/MULTI_CLOUD_HARDENING_S4_OPENER.md),
+[MULTI_CLOUD_HARDENING_S3_OPENER.md](docs/archive/ops/MULTI_CLOUD_HARDENING_S3_OPENER.md),
+[MULTI_CLOUD_HARDENING_S2_OPENER.md](docs/archive/ops/MULTI_CLOUD_HARDENING_S2_OPENER.md),
+[MULTI_CLOUD_HARDENING_OPENER.md](docs/archive/ops/MULTI_CLOUD_HARDENING_OPENER.md)).
+
+**Session 10 (multi-cloud track) is reserved for Track C — Shared Redis /
+seamless** (shared session store reachable from both homes; honest
+`/ops/seamless-migration`). Not yet started; distinct from the CP-HA hardening
+lineage below.
+
+### Control-plane HA hardening (distinct lineage)
+
+Makes the ops control plane itself HA. Separate from the multi-cloud demo
+`Session N` numbering above — do not conflate the two.
+
+- **CP HA v1** (`84b81f5`): etcd lease election + fence-term CAS.
+- **Step 2**: split-brain harness (`scripts/ops_cp_splitbrain`, `run-all`).
+- **Step 3**: Prometheus metrics + OpenTelemetry tracing (opt-in, off by default).
+- **Step 4**: offline / sovereign packaging (10/10 harness under egress block).
+- **Step 5**: CP-HA engineering report (`docs/CP_HA_ENGINEERING_REPORT.md`).
+- **Quorum Fence Store** (complete): moved the durable control-plane blob + its
+  CAS guard from Redis into etcd so the fence-guarded durable write is
+  linearizable end-to-end (etcd already owns leader election + the authoritative
+  term; durable persistence was the last Redis SPOF). Landed as a 7-commit arc
+  (Steps 1–6 + 5b): `FenceStore` seam → `EtcdFenceStore` + parity → 3-node quorum →
+  bounded shadow dual-write → etcd-authority cutover (5a) → leader-kill storm
+  scenario (6) → dual-write/shadow retired (5b). etcd is now the sole durable store;
+  Redis is caches + pub/sub, with `ops_fence_authority=redis` as the opt-in rollback
+  backend. See [CP_HA_QUORUM_OPENER.md](docs/archive/ops/CP_HA_QUORUM_OPENER.md).
 
 ---
 

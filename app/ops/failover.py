@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from app.ops import metrics
 from app.ops.models import (
     HealthSnapshot,
     OpsEvent,
@@ -13,7 +14,7 @@ from app.ops.models import (
     utc_now,
 )
 from app.ops.notify import publish_provider_changed
-from app.ops.store import OpsStore, get_store, persist_store
+from app.ops.store import OpsStore, get_store
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,7 @@ def evaluate_failover(
         dual_msg = evaluate_dual_homes(snapshots, store=ops)
         if dual_msg is not None:
             return dual_msg
-        persist_store()
+        _commit_counters(ops)
         return None
 
     # Performance: score chase with anti-flap (also covers unhealthy incumbent)
@@ -102,7 +103,7 @@ def evaluate_failover(
             if pref_ok >= policy.recovery_threshold:
                 return _switch(ops, routing, active_id, preferred)
         ops.set_routing(routing)
-        persist_store()
+        _commit_counters(ops)
         return None
 
     candidates = []
@@ -126,7 +127,7 @@ def evaluate_failover(
 
     if not candidates:
         ops.set_routing(routing)
-        persist_store()
+        _commit_counters(ops)
         ops.append_event(
             OpsEvent(
                 event_type="failover_blocked",
@@ -134,11 +135,22 @@ def evaluate_failover(
                 details={"reason": "no_healthy_standby"},
             )
         )
+        metrics.record_failover("blocked", ops.get_policy().policy.value)
         return None
 
     candidates.sort(reverse=True)
     target_id = candidates[0][1]
     return _switch(ops, routing, active_id, target_id)
+
+
+def _commit_counters(ops: OpsStore) -> None:
+    """Persist counter updates; identical fence severity to switch path."""
+    from app.ops.fencing import FenceError, commit_fenced
+
+    try:
+        commit_fenced()
+    except FenceError:
+        raise
 
 
 def _switch(
@@ -150,48 +162,64 @@ def _switch(
     operator_id: str | None = None,
     event_type: str = "failover",
 ) -> ProviderChangedMessage:
-    dropped = ops.clear_assignments()
+    from app.ops.fencing import FenceError, commit_fenced, resolve_write_fence_term
 
-    routing.last_failover_from = from_id
-    routing.last_failover_to = to_id
-    routing.active_provider_id = to_id
-    routing.sessions_dropped_last = dropped
-    routing.last_failover_at = utc_now()
-    # Leaving Dual peer stale on full switch is wrong — clear unless Dual recompute
-    if ops.get_policy().policy != RoutingPolicy.DUAL:
-        routing.dual_peer_id = None
-    routing.performance_challenger_id = None
-    routing.performance_challenger_streak = 0
-    ops.set_routing(routing)
+    # ops.failover span re-raises on FenceError; the metric records only on success.
+    with metrics.get_tracer().start_as_current_span("ops.failover") as _sp:
+        _sp.set_attribute("ops.event_type", event_type)
+        _sp.set_attribute("ops.to_provider_id", to_id)
+        _sp.set_attribute("ops.from_provider_id", from_id or "")
 
-    target = ops.get_provider(to_id)
-    msg = ProviderChangedMessage(
-        from_provider_id=from_id,
-        to_provider_id=to_id,
-        sessions_dropped=dropped,
-        ws_base_url=target.effective_ws_base_url() if target else None,
-    )
-    details: dict = {
-        "from": from_id,
-        "to": to_id,
-        "sessions_dropped": dropped,
-        "message": msg.message,
-    }
-    if operator_id:
-        details["operator_id"] = operator_id
-    ops.append_event(
-        OpsEvent(
-            event_type=event_type,
-            provider_id=to_id,
-            details=details,
+        # etcd/cache prefilter — Redis CAS in commit_fenced is the real durable fence.
+        term = resolve_write_fence_term()
+
+        dropped = ops.clear_assignments()
+
+        routing.last_failover_from = from_id
+        routing.last_failover_to = to_id
+        routing.active_provider_id = to_id
+        routing.sessions_dropped_last = dropped
+        routing.last_failover_at = utc_now()
+        # Leaving Dual peer stale on full switch is wrong — clear unless Dual recompute
+        if ops.get_policy().policy != RoutingPolicy.DUAL:
+            routing.dual_peer_id = None
+        routing.performance_challenger_id = None
+        routing.performance_challenger_streak = 0
+        ops.set_routing(routing)
+
+        target = ops.get_provider(to_id)
+        msg = ProviderChangedMessage(
+            from_provider_id=from_id,
+            to_provider_id=to_id,
+            sessions_dropped=dropped,
+            ws_base_url=target.effective_ws_base_url() if target else None,
         )
-    )
-    persist_store()
-    publish_provider_changed(msg)
-    logger.warning(
-        "Failover %s -> %s (dropped %s sessions)", from_id, to_id, dropped
-    )
-    return msg
+        details: dict = {
+            "from": from_id,
+            "to": to_id,
+            "sessions_dropped": dropped,
+            "message": msg.message,
+        }
+        if operator_id:
+            details["operator_id"] = operator_id
+        ops.append_event(
+            OpsEvent(
+                event_type=event_type,
+                provider_id=to_id,
+                details=details,
+            )
+        )
+        try:
+            commit_fenced(fence_term=term)
+        except FenceError:
+            # commit_fenced already restored + demoted; do not publish.
+            raise
+        publish_provider_changed(msg)
+        metrics.record_failover("switched", ops.get_policy().policy.value)
+        logger.warning(
+            "Failover %s -> %s (dropped %s sessions)", from_id, to_id, dropped
+        )
+        return msg
 
 
 def force_active_provider(
@@ -233,5 +261,7 @@ def force_active_provider(
                     details={"reason": "force_active_no_peer"},
                 )
             )
-        persist_store()
+        from app.ops.fencing import commit_fenced
+
+        commit_fenced()
     return msg

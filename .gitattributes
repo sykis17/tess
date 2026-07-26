@@ -1,0 +1,14 @@
+# Deploy-critical files must ship with LF: the offline bundle runs these on Linux
+# hosts, and CRLF would break bash shebangs / heredocs and compose parsing.
+*.sh         text eol=lf
+Dockerfile   text eol=lf
+*.yml        text eol=lf
+*.yaml       text eol=lf
+*.css        text eol=lf
+
+# Binary assets — never apply EOL conversion.
+*.woff2      binary
+*.woff       binary
+*.ttf        binary
+*.otf        binary
+*.svg        text

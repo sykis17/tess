@@ -54,7 +54,18 @@ harness + `tests/test_ops_fencing.py` before each commit).
   to a thread with a 2.5s bound and falls back to the cached role
   ([app/api/ops.py](../../../app/api/ops.py)). Verified: 273 unit + 4/4 live-etcd
   parity; **split-brain harness run-all 10/10 on the 3-node cluster**.
-- **Steps 4–6 — pending**, one landing each (see Migration plan).
+- **Step 4 — LANDED.** Shadow dual-write behind `ops_fence_shadow` (default off):
+  after the authoritative Redis persist CAS, a **bounded** etcd shadow write compares
+  outcomes and records `tess_ops_fence_shadow_total{op,outcome}` (outcome ∈
+  match/diverge/unavailable — [app/ops/metrics.py](../../../app/ops/metrics.py)). The
+  shadow uses `EtcdFenceStore` (single endpoint, 0.5s, **not** the failover ladder), so
+  it can never pay the multi-endpoint retry cost on the authoritative path; it never
+  raises and never changes the authoritative outcome
+  ([app/ops/store.py](../../../app/ops/store.py)::`_shadow_compare_persist`). Verified:
+  277 unit ([tests/test_fence_shadow.py](../../../tests/test_fence_shadow.py));
+  divergence **0** against real etcd (28 matches across a shadow-on harness run + a
+  dedicated mutation burst); split-brain harness run-all **10/10 with shadow on**.
+- **Steps 5–6 — pending**, one landing each (see Migration plan).
 
 ---
 
@@ -172,9 +183,18 @@ mirrors `get_consensus_backend()`.
    recreate — wiping it to 0 would mask monotonicity regressions). Acceptance:
    10/10 with a 3-member coordinator (durable store still Redis-authoritative
    here). Add the etcd ops runbook (automated compaction, defrag, snapshots).
-4. **Shadow mode** — dual-write behind `ops_fence_shadow`; etcd shadows every CAS;
-   `tess_ops_fence_shadow_divergence_total{op,result}` (allowlisted labels only).
-   Acceptance: full harness cycle with divergence 0.
+4. **Shadow mode** — dual-write behind `ops_fence_shadow` (default off). After the
+   authoritative Redis persist CAS returns, a **bounded** etcd shadow write runs and
+   the outcomes are compared: `tess_ops_fence_shadow_total{op,outcome}` with
+   `outcome ∈ {match, diverge, unavailable}` (allowlisted label names). *Bounded
+   latency:* the shadow goes through `EtcdFenceStore` (single endpoint via `etcd_post`,
+   **not** the failover ladder) with a 0.5s timeout — single attempt, so it can never
+   pay the ~6s multi-endpoint retry cost on the authoritative path. Divergence (both
+   reachable, outcomes differ) is the alarm and must stay 0; unreachable etcd is
+   `unavailable`, never divergence; the shadow never raises. Only the persist CAS is
+   shadowed — the fence term is already etcd-authoritative (minted by the election),
+   so a promote shadow would be a trivial always-match. Acceptance: harness run-all
+   green with shadow on **and** a divergence check reading 0.
 5. **Cutover** — `ops_fence_authority=etcd`; remove the dual-write path; switch
    harness observables to the authoritative backend; update MULTI_CLOUD.md +
    CLAUDE.md ("durable writes go through the fence" now = etcd txn-CAS); note
@@ -231,11 +251,15 @@ Run **all three** on every step that touches the store / consensus / CAS path
    docker rm -f tess-parity-etcd
    ```
 3. **Split-brain harness:** bring up base + ops-ha (+ ops-obs for `s10`), then
-   `python -m scripts.ops_cp_splitbrain run-all` = 10/10. Two environment gotchas:
+   `python -m scripts.ops_cp_splitbrain run-all` = 10/10. Environment gotchas:
    the harness reads the admin token from `OPS_ADMIN_TOKEN` and must match the value
    the web container took from `.env` (compose interpolates `${OPS_ADMIN_TOKEN}`);
-   and export `OPS_HA_COMPOSE_OBS=docker-compose.ops-obs.yml` so `s10` can scrape
-   `/metrics`.
+   export `OPS_HA_COMPOSE_OBS=docker-compose.ops-obs.yml` so `s10` can scrape
+   `/metrics`; and **to exercise shadow mode, set `OPS_FENCE_SHADOW=true` in the
+   harness shell, not just the initial `up`** — `reset_stack` recreates the web
+   containers via a `docker compose` subprocess, and `${OPS_FENCE_SHADOW:-false}`
+   interpolates from *that* process's env, so a flag set only on the first `up`
+   silently turns off after the first scenario.
 
 ## etcd operations (3-node cluster)
 

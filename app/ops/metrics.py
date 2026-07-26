@@ -109,6 +109,12 @@ if _PROM_AVAILABLE:
         "Redis Lua compare-and-set outcomes on the fence term.",
         ["instance_id", "op", "result"],
     )
+    FENCE_SHADOW = Counter(
+        "tess_ops_fence_shadow",
+        "Shadow-mode etcd write vs authoritative Redis outcome. "
+        "outcome=match|diverge|unavailable; diverge must stay 0.",
+        ["instance_id", "op", "outcome"],
+    )
     MUTATIONS = Counter(
         "tess_ops_mutations",
         "Mutating /ops/* request outcomes.",
@@ -143,13 +149,13 @@ if _PROM_AVAILABLE:
     )
     ALL_METRICS = [
         ROLE_TRANSITIONS, IS_PRIMARY, FENCE_TERM, FENCE_REJECTS, LEASE_KEEPALIVE,
-        LEASE_TTL, CAS_TOTAL, MUTATIONS, MUTATION_DURATION, PROBES, PROBE_DURATION,
-        FAILOVERS, WORKER_TASK,
+        LEASE_TTL, CAS_TOTAL, FENCE_SHADOW, MUTATIONS, MUTATION_DURATION, PROBES,
+        PROBE_DURATION, FAILOVERS, WORKER_TASK,
     ]
 else:  # pragma: no cover - names must exist for reference even without the lib
     ROLE_TRANSITIONS = IS_PRIMARY = FENCE_TERM = FENCE_REJECTS = None
-    LEASE_KEEPALIVE = LEASE_TTL = CAS_TOTAL = MUTATIONS = MUTATION_DURATION = None
-    PROBES = PROBE_DURATION = FAILOVERS = WORKER_TASK = None
+    LEASE_KEEPALIVE = LEASE_TTL = CAS_TOTAL = FENCE_SHADOW = MUTATIONS = None
+    MUTATION_DURATION = PROBES = PROBE_DURATION = FAILOVERS = WORKER_TASK = None
 
 
 def _safe(fn: Callable[..., None]) -> Callable[..., None]:
@@ -204,6 +210,12 @@ def set_lease_ttl(ttl_seconds: float) -> None:
 @_safe
 def record_cas(op: str, result: str) -> None:
     CAS_TOTAL.labels(INSTANCE_ID, op, result).inc()
+
+
+@_safe
+def record_fence_shadow(op: str, outcome: str) -> None:
+    """Shadow-mode dual-write parity. op=persist|promote; outcome=match|diverge|unavailable."""
+    FENCE_SHADOW.labels(INSTANCE_ID, op, outcome).inc()
 
 
 @_safe

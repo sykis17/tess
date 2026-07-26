@@ -28,6 +28,7 @@ from app.ops.consensus import (
     _b64,
     _unb64,
     etcd_post,
+    first_etcd_endpoint,
 )
 
 # OpsEvent imported above for ensure_default_hetzner.
@@ -602,6 +603,67 @@ def reset_fence_store() -> FenceStore:
         return _fence_store
 
 
+# --- Shadow store (Quorum Fence Store step 4) ---------------------------------
+# A bounded, SINGLE-ENDPOINT etcd store used only for shadow dual-write. Because
+# EtcdFenceStore talks to one endpoint via etcd_post (never the failover ladder) and
+# uses a short timeout, a shadow write is single-attempt and cannot pay the ~6s
+# multi-endpoint retry cost on the authoritative path — the bounded-latency invariant.
+SHADOW_TIMEOUT_SECONDS = 0.5
+_shadow_store: FenceStore | None = None
+_shadow_store_lock = threading.Lock()
+
+
+def get_shadow_fence_store() -> FenceStore | None:
+    """Bounded etcd store for shadow dual-write; None when no etcd endpoint is set."""
+    global _shadow_store
+    with _shadow_store_lock:
+        if _shadow_store is not None:
+            return _shadow_store
+        endpoint = first_etcd_endpoint()
+        if not endpoint:
+            return None
+        _shadow_store = EtcdFenceStore(endpoint, timeout=SHADOW_TIMEOUT_SECONDS)
+        return _shadow_store
+
+
+def set_shadow_fence_store(store: FenceStore | None) -> None:
+    """Override the shadow store (tests / backend selection)."""
+    global _shadow_store
+    with _shadow_store_lock:
+        _shadow_store = store
+
+
+def reset_shadow_fence_store() -> None:
+    global _shadow_store
+    with _shadow_store_lock:
+        _shadow_store = None
+
+
+def _shadow_compare_persist(term: int, payload: str, auth_accept: bool) -> None:
+    """Bounded, best-effort etcd shadow of the durable CAS.
+
+    Records ``match|diverge|unavailable`` and NEVER raises or blocks the
+    authoritative path beyond the single-attempt shadow timeout. Divergence (both
+    backends reachable, outcomes differ) is the alarm that must stay 0; an unreachable
+    etcd is ``unavailable`` — counted separately, never a divergence. Only the persist
+    CAS is shadowed: the fence term is already etcd-authoritative (minted by the
+    election), so a promote shadow would be a trivial always-match.
+    """
+    store = get_shadow_fence_store()
+    if store is None:
+        metrics.record_fence_shadow("persist", "unavailable")
+        return
+    try:
+        shadow_accept = store.cas_persist(term, payload)
+    except Exception:
+        logger.debug("etcd shadow persist unavailable", exc_info=True)
+        metrics.record_fence_shadow("persist", "unavailable")
+        return
+    metrics.record_fence_shadow(
+        "persist", "match" if bool(shadow_accept) == bool(auth_accept) else "diverge"
+    )
+
+
 def promote_redis_fence(fence_term: int) -> None:
     """Install fence term on promote (idempotent CAS: stored term <= fence_term)."""
     from app.ops.fencing import FenceCasError, PersistError
@@ -645,7 +707,10 @@ def persist_store(*, fence_term: int | None = None) -> None:
             with metrics.get_tracer().start_as_current_span("ops.persist_cas") as _sp:
                 _sp.set_attribute("ops.op", "persist")
                 _sp.set_attribute("ops.fence_term", int(term))
-                if not store.cas_persist(term, payload):
+                auth_accept = store.cas_persist(term, payload)
+                if settings.ops_fence_shadow:
+                    _shadow_compare_persist(term, payload, auth_accept)
+                if not auth_accept:
                     # Record before the existing restore/demote/raise; do not alter it.
                     _sp.set_attribute("ops.cas_result", "reject")
                     metrics.record_cas("persist", "reject")

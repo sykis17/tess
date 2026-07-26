@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     ops_cp_instance_id: str = "cp-default"
     ops_etcd_lease_ttl_seconds: int = 10
     ops_etcd_campaign_interval_seconds: float = 2.0
+    # Quorum Fence Store shadow mode: dual-write the durable CAS to etcd (bounded,
+    # best-effort) while Redis stays authoritative, recording divergence. OFF by default.
+    ops_fence_shadow: bool = False
 
     # Observability (self-hosted, opt-in, OFF by default). See deploy/MULTI_CLOUD.md.
     # Metrics = Prometheus pull; traces = OTLP/HTTP → self-hosted collector. No SaaS.

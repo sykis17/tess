@@ -104,10 +104,11 @@ def _run_etcd(
     topo = ctx.topo
     other_id = ctx.other_provider_id
 
-    # Perturb BOTH the etcd term (authoritative) and the Redis shadow term to the same
-    # higher value. Bumping only one makes the authoritative reject while the shadow
-    # accepts -> a false "diverge" that breaks the reverse-shadow soak's divergence==0
-    # gate. After this the sitting primary's cached term is stale (for one campaign tick).
+    # Perturb the etcd term (authoritative) to a higher value; also bump the Redis
+    # fence key so both term stores stay symmetric. Post-cutover Redis is caches +
+    # pub/sub, so under etcd authority only the etcd bump drives the assertion — the
+    # Redis set is inert here (the reverse shadow that once needed both is retired).
+    # After this the sitting primary's cached term is stale (for one campaign tick).
     obs.etcd_put_fence_term(cfg, bumped)
     obs.redis_set(cfg, obs.REDIS_FENCE_KEY, str(bumped))
 

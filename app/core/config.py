@@ -62,10 +62,6 @@ class Settings(BaseSettings):
     ops_cp_instance_id: str = "cp-default"
     ops_etcd_lease_ttl_seconds: int = 10
     ops_etcd_campaign_interval_seconds: float = 2.0
-    # Quorum Fence Store shadow mode: dual-write the durable CAS to the non-authoritative
-    # backend (bounded, best-effort), recording divergence. ON by default post-cutover as
-    # the reverse-shadow divergence alarm (Redis shadows etcd); removed in the next step.
-    ops_fence_shadow: bool = True
     # Which backend is authoritative for durable CP writes. "etcd" is the linearizable
     # cutover default (fence term + durable blob in one store, dissolving the external-bump
     # "unelectable" limitation); "redis" keeps the historical single-store behavior. Only

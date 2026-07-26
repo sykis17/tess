@@ -85,7 +85,6 @@ services:
   web:
     environment:
       OPS_HA_ENABLED: "true"
-      OPS_FENCE_SHADOW: ${OPS_FENCE_SHADOW:-true}
       OPS_FENCE_AUTHORITY: ${OPS_FENCE_AUTHORITY:-etcd}
       OPS_ETCD_ENDPOINTS: http://etcd-1:2379,http://etcd-2:2379,http://etcd-3:2379
       OPS_CP_INSTANCE_ID: cp-a
@@ -116,7 +115,6 @@ services:
     environment:
       REDIS_URL: redis://redis:6379/0
       OPS_HA_ENABLED: "true"
-      OPS_FENCE_SHADOW: ${OPS_FENCE_SHADOW:-true}
       OPS_FENCE_AUTHORITY: ${OPS_FENCE_AUTHORITY:-etcd}
       OPS_ETCD_ENDPOINTS: http://etcd-1:2379,http://etcd-2:2379,http://etcd-3:2379
       OPS_CP_INSTANCE_ID: cp-b
@@ -153,7 +151,6 @@ services:
   worker:
     environment:
       OPS_HA_ENABLED: "true"
-      OPS_FENCE_SHADOW: ${OPS_FENCE_SHADOW:-true}
       OPS_FENCE_AUTHORITY: ${OPS_FENCE_AUTHORITY:-etcd}
       OPS_ETCD_ENDPOINTS: http://etcd-1:2379,http://etcd-2:2379,http://etcd-3:2379
       # Must match the co-located primary web instance id when this worker

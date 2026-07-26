@@ -4,7 +4,7 @@ Redis authority: the durable CAS lives in Redis, so a Redis outage must block th
 durable switch — the mutate must NOT silently succeed, and the durable state must not
 change.
 
-Etcd authority (post-cutover): Redis is caches + pub/sub + shadow; the durable write is
+Etcd authority (post-cutover): Redis is caches + pub/sub; the durable write is
 the etcd txn-CAS. A Redis outage must NOT block a durable write — this is the arc's
 headline capability. So the etcd branch is a POSITIVE test: the switch lands in etcd
 while Redis is paused (the best-effort provider_changed publish is swallowed).

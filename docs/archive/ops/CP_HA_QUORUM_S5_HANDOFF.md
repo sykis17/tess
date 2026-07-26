@@ -39,7 +39,7 @@ ops.py full-coverage mutation-lock offload, the authority-aware harness, and all
 - Contract docs updated (`CLAUDE.md`, `deploy/MULTI_CLOUD.md`): etcd authoritative by default,
   unelectable limitation resolved, boot restore needs etcd, full-coverage lock invariant.
 
-**Step 6 — DONE. Next = 5b (last, closes the arc).**
+**Step 6 — DONE. Step 5b — DONE (arc closed).**
 
 - **Step 6 (DONE)** — `s11_kill_etcd_leader_storm`: SIGKILL the etcd Raft leader mid-storm (an
   ungraceful kill, since SIGTERM lets etcd hand off leadership with near-zero gap = vacuous).

@@ -141,9 +141,9 @@ split-brain harness:
 - **All durable ops writes go through the fence.** `persist_store()` (`app/ops/store.py`)
   writes through the authoritative `FenceStore` selected by `ops_fence_authority`
   (**default `etcd`** post-cutover: one linearizable etcd txn-CAS over the fence term +
-  durable blob; `redis` is the legacy Lua-CAS backend, still used as the reverse-shadow and
-  when opted back in). Never write the durable blob (`REDIS_CONTROL_PLANE_KEY` / the etcd
-  blob key) directly.
+  durable blob; `redis` is the legacy Lua-CAS backend, used only when opted back in via
+  `ops_fence_authority=redis`). Never write the durable blob (`REDIS_CONTROL_PLANE_KEY` /
+  the etcd blob key) directly.
 - **Every mutating `/ops/*` durable write goes through one serialized offload.** All durable
   writes in `app/api/ops.py` route through `_fenced_commit` / the process-wide
   `_mutation_lock` (`asyncio.to_thread` so the CAS / etcd-failover ladder never stalls the
@@ -169,27 +169,31 @@ split-brain harness:
   the etcd cutover on CP HA v1 (`84b81f5`): Step 1 (`6331b00`) `FenceStore` seam, Step 2
   (`315b044`) `EtcdFenceStore` + parity, Step 3 (`3a3444a`) 3-node etcd quorum, Step 4
   (`3e72fbe`) bounded shadow dual-write, **Step 5a** flipped the default to **etcd authority**
-  (`ops_fence_authority="etcd"`, `ops_fence_shadow=true` reverse shadow) with the ops.py
-  mutation-lock offload and an authority-aware harness, **Step 6** added the leader-kill
-  mutation-storm scenario (`s11`: SIGKILL the etcd Raft leader mid-storm — durable writes
-  block-and-resume on the new leader within bound, monotonic term, no split-brain; reverse
-  shadow `diverge==0` with `match` advanced, and a Raft-term-advanced guard proves the
-  re-election gap was real). The harness is now **11 scenarios**. Any change to `app/ops/consensus.py`,
+  (`ops_fence_authority="etcd"`) with a bounded reverse shadow, the ops.py mutation-lock
+  offload, and an authority-aware harness, **Step 6** added the leader-kill mutation-storm
+  scenario (`s11`: SIGKILL the etcd Raft leader mid-storm — durable writes block-and-resume on
+  the new leader within bound, monotonic term, no split-brain; a Raft-term-advanced guard
+  proves the re-election gap was real — and, while the shadow still existed, `diverge==0` with
+  `match` advanced under the storm), and **Step 5b** (arc closer) **retired the dual-write /
+  reverse shadow** — the shadow machinery, the `ops_fence_shadow` config, the shadow metric,
+  and the migration-era read-only Redis restore fallback are gone (an absent etcd blob now
+  triggers loud explicit recovery, never silent Redis adoption). etcd is the sole durable
+  store; Redis is caches + pub/sub, with `ops_fence_authority=redis` as the pure opt-in legacy
+  backend. The harness is **11 scenarios**. Any change to `app/ops/consensus.py`,
   `app/ops/fencing.py`, `app/api/ops.py`, or the `store.py` `FenceStore` path requires
-  re-running, before commit: the split-brain harness (**now defaults to `authority=etcd`** — a
+  re-running, before commit: the split-brain harness (**defaults to `authority=etcd`** — a
   plain `run-all` is the etcd cutover; `OPS_FENCE_AUTHORITY=redis run-all` exercises the legacy
-  backend), `tests/test_ops_fencing.py`, the live-etcd parity suite
+  backend), `tests/test_ops_fencing.py`, and the live-etcd parity suite
   (`tests/test_fence_store_parity.py` against a real etcd — a plain `pytest tests/` **skips**
-  the etcd contract, so green alone does not prove the etcd backend), **and** confirming the
-  reverse-shadow `tess_ops_fence_shadow_total{outcome="diverge"}` stays **0**. See
+  the etcd contract, so green alone does not prove the etcd backend). See
   `docs/archive/ops/CP_HA_QUORUM_OPENER.md` § Verification.
-- **Unelectable limitation — resolved by the etcd cutover (Step 5a).** The old "external Redis
+- **Unelectable limitation — resolved by the etcd cutover.** The old "external Redis
   fence bump → cluster unelectable until Redis reset" trap is **gone under the default `etcd`
   authority**: the fence term and durable blob are one linearizable store, so a term
   perturbation just re-syncs the primary (proven by split-brain `s07`/`s08` under etcd — no
   split-brain, monotonic term, no durable corruption). It still applies to the **legacy
   `redis` backend** (`ops_fence_authority=redis`), where the two term stores can diverge — so
-  don't "fix" the redis path casually; it is retained only as the shadow / opt-in.
+  don't "fix" the redis path casually; it is retained only as the opt-in rollback backend.
 - **Observability cardinality discipline (`app/ops/metrics.py`).** Metrics/traces are
   self-hosted, opt-in, OFF by default (`OPS_METRICS_ENABLED` / `OPS_TRACING_ENABLED`). Every
   metric label value must be a **fixed code enum or per-process constant** — `provider_id`

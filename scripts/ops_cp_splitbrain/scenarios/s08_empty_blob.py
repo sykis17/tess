@@ -6,8 +6,9 @@ blob, mutate, and the primary's first persist recreates it.
 Part (b) tests the stale wrong-term writer. Under Redis authority the bumped Redis term
 strands the primary and the CAS reject keeps it from creating a wrong-active blob. Under
 etcd authority the term store is unified, so the primary re-syncs at the bumped term (this
-bug class is dissolved) — bump BOTH stores together (else the shadow diverges) and assert
-the surviving invariant: no split-brain, monotonic term, no durable corruption.
+bug class is dissolved) — bump both term stores together to keep them symmetric (the etcd
+bump drives re-sync; the Redis set is inert under etcd authority) and assert the surviving
+invariant: no split-brain, monotonic term, no durable corruption.
 """
 
 from __future__ import annotations
@@ -101,8 +102,10 @@ def _run_b_etcd(ctx, active_before, bumped: int) -> None:
     topo = ctx.topo
     other_id = ctx.other_provider_id
 
-    # Unified term store: perturb etcd (authoritative) AND the Redis shadow together so the
-    # shadow does not falsely diverge. The primary re-syncs at the bumped term.
+    # Unified term store: perturb etcd (authoritative); also set the Redis fence key so
+    # both term stores stay symmetric. Under etcd authority the Redis set is inert (Redis
+    # is caches + pub/sub post-cutover) — the etcd bump is what drives re-sync. The primary
+    # re-syncs at the bumped term.
     obs.etcd_put_fence_term(cfg, bumped)
     obs.redis_set(cfg, obs.REDIS_FENCE_KEY, str(bumped))
 

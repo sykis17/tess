@@ -25,7 +25,7 @@ corruption from later scenarios.
 disconnecting the primary also cuts etcd; pause keeps election reachable while
 blocking durable CAS.
 
-**Note:** bumping Redis `fence_term` ahead of etcd (s07/s08b) correctly rejects
+**Note:** under **redis authority**, bumping Redis `fence_term` ahead of etcd (s07/s08b) correctly rejects
 stale writers, but `promote_redis_fence` requires `etcd_term > redis_term`, so
 the next scenario reset (key wipe) is what restores electability. That is
 intentional isolation, not a silent pass.

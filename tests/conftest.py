@@ -3,7 +3,7 @@
 import pytest
 
 from app.core.config import settings
-from app.ops.store import reset_fence_store, reset_shadow_fence_store, reset_store
+from app.ops.store import reset_fence_store, reset_store
 
 
 @pytest.fixture(autouse=True)
@@ -14,7 +14,6 @@ def _disable_ops_redis_persist(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "ops_ha_enabled", False)
     monkeypatch.setattr(settings, "ops_etcd_endpoints", "")
     reset_store()
-    # Rebuild the authoritative/shadow fence stores per (HA-off) settings so an
-    # authority=etcd test can't leak a cached etcd store into the next test.
+    # Rebuild the authoritative fence store per (HA-off) settings so an authority=etcd
+    # test can't leak a cached etcd store into the next test.
     reset_fence_store()
-    reset_shadow_fence_store()

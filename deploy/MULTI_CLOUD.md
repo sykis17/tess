@@ -35,12 +35,12 @@ enable it deliberately.
 ### What is fenced
 
 Only the etcd lease holder (primary) may mutate durable CP authority. Every durable
-write goes through the fence — **post-cutover (Step 5, default) a single linearizable
+write goes through the fence — **post-cutover (default) a single linearizable
 etcd transaction-CAS** over the fence term + durable blob; the legacy `redis` backend
-used a **Lua CAS** on `ops:control_plane:fence_term` and is retained as the reverse
-shadow. Celery ops tasks fresh-read etcd leader+term on each invocation and pass that
-live term into the CAS — they must not use cached web role state. (See “Quorum Fence
-Store: etcd cutover” below.)
+uses a **Lua CAS** on `ops:control_plane:fence_term` and is retained only as the opt-in
+rollback backend (`ops_fence_authority=redis`). Celery ops tasks fresh-read etcd
+leader+term on each invocation and pass that live term into the CAS — they must not use
+cached web role state. (See “Quorum Fence Store: etcd cutover” below.)
 
 | Fenced surface | Risk if a zombie CP writes |
 |---|---|
@@ -66,11 +66,12 @@ The durable authority is selected by `ops_fence_authority` (`app/core/config.py`
   “external Redis fence bump → cluster unelectable” limitation: a term perturbation just
   re-syncs the primary at the higher term — split-brain `s07`/`s08` prove no split-brain,
   a monotonic term, and no durable corruption.
-- **redis (legacy / opt-in).** The historical Redis Lua-CAS backend. Retained as the
-  **reverse shadow** (`ops_fence_shadow=true`, default): every etcd durable write is
-  mirrored best-effort to Redis and compared, incrementing
-  `tess_ops_fence_shadow_total{outcome=match|diverge|unavailable}`. **`diverge` must stay
-  0** — it is the live cutover alarm. The dual-write is removed in the next step.
+- **redis (legacy / opt-in).** The historical Redis Lua-CAS backend, selected only by
+  `ops_fence_authority=redis`. It is the rollback escape hatch, not part of the default
+  durable path — under etcd authority Redis is caches + pub/sub only. (During the cutover
+  a bounded reverse shadow mirrored each etcd write to Redis and alarmed on divergence; the
+  leader-kill storm soak (`s11`) held `diverge==0`, and the dual-write was retired once that
+  evidence was banked.)
 
 **Serialized offload (`app/api/ops.py`).** Every mutating `/ops/*` handler routes its
 durable write through `_fenced_commit` / a process-wide `_mutation_lock`:
@@ -79,18 +80,19 @@ prevents two writers racing a lost update under one fence term (CAS fences terms
 writers within a term). Full coverage — the async-helper handlers (`compare`, `byo`) hold
 the same lock directly.
 
-**Boot restore needs etcd.** `restore_store` reads the etcd durable blob at boot; during
-the migration window it falls back to the Redis blob **read-only** (loud warning) when the
-etcd blob is absent (a deploy that cut over before etcd was ever written). etcd warms at
-the first fenced persist on election. This fallback is removed in the next step.
+**Boot restore needs etcd.** `restore_store` reads the etcd durable blob at boot. There
+is **no Redis fallback**: an absent etcd blob is either a fresh cluster (the primary
+re-persists on its first election) or a data-loss event, so the boot logs a loud warning
+directing explicit recovery rather than silently resurrecting a stale Redis blob. etcd
+warms at the first fenced persist on election.
 
 **Harness defaults to `authority=etcd`.** A plain
-`python -m scripts.ops_cp_splitbrain run-all` now exercises the etcd cutover (durable
+`python -m scripts.ops_cp_splitbrain run-all` exercises the etcd cutover (durable
 observables read etcd; `s04` is the positive “durable write survives Redis loss” test;
-`s07`/`s08` assert the term-perturbation invariant). `OPS_FENCE_AUTHORITY=redis run-all`
-exercises the legacy backend. Both are 10/10, and the reverse-shadow soak
-(`OPS_FENCE_AUTHORITY=etcd OPS_FENCE_SHADOW=true`) holds `diverge == 0` (verified via
-`tess_ops_fence_shadow_total`).
+`s07`/`s08` assert the term-perturbation invariant; `s11` kills the etcd Raft leader
+mid-mutation-storm and asserts bounded block-and-resume). The suite is **11 scenarios**;
+a plain `run-all` is **11/11** under the default etcd authority, and the legacy backend is
+re-verified via `OPS_FENCE_AUTHORITY=redis`.
 
 ### Run the overlay
 

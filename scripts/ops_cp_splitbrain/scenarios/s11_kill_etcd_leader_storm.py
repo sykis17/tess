@@ -11,10 +11,10 @@ the new leader within a bounded window, with:
 - **zero fence violations** — never two CP primaries, and the durable active is never garbage;
 - **a monotonic term** across the failover (never goes backwards).
 
-Reverse-shadow soak evidence (etcd authority): the fault hits etcd; the shadow store is
-Redis, which the kill does not touch — so every shadow write during the storm should be
-`match`, with no `unavailable` noise. The assertion is not just `diverge == 0` but that the
-`match` count **advanced** during the storm (non-vacuous: a silent no-op cannot pass).
+Non-vacuity: an etcd Raft-term-advanced guard proves the kill forced a real re-election (a
+graceful SIGTERM hand-off would be near-zero-gap and vacuous). The reverse-shadow
+`diverge == 0` / `match`-advanced soak evidence this scenario carried while the shadow
+existed was captured in the Step 6 commit; the shadow was retired in the following step.
 """
 
 from __future__ import annotations
@@ -40,15 +40,9 @@ def run(ctx: ScenarioContext) -> None:
     targets = [active_id, other_id]
     term_before = obs.durable_fence_term(cfg)
 
-    # --- Baseline burst: successful mutations establish the pre-storm shadow match count.
+    # --- Baseline burst: a few successful mutations before the fault.
     for i in range(_PRE_KILL_MUTATIONS):
         _storm_once(ctx, targets[i % 2])
-    shadow_before = obs.shadow_totals(cfg)
-    if cfg.fence_authority == "etcd" and shadow_before["match"] <= 0:
-        raise obs.AssertionError_(
-            "s11 needs the observability overlay (OPS_METRICS_ENABLED): no shadow match "
-            f"metric before the storm; totals={shadow_before}. Export OPS_HA_COMPOSE_OBS."
-        )
 
     # --- Identify + kill the etcd RAFT leader (distinct from the CP primary).
     leader_svc = obs.etcd_leader_service(cfg)
@@ -119,21 +113,6 @@ def run(ctx: ScenarioContext) -> None:
         raise obs.AssertionError_(
             f"durable active corrupted by leader-kill storm: {active_after!r}"
         )
-
-    # --- Reverse-shadow soak evidence (etcd authority): diverge 0 AND match advanced.
-    # The fault hit etcd; the shadow (Redis) was untouched, so every storm shadow write is a
-    # real comparison — divergence here would be pure signal, and match must have advanced.
-    if cfg.fence_authority == "etcd":
-        shadow_after = obs.shadow_totals(cfg)
-        if shadow_after["diverge"] > 0:
-            raise obs.AssertionError_(
-                f"reverse-shadow DIVERGED during leader-kill storm: {shadow_after}"
-            )
-        if shadow_after["match"] <= shadow_before["match"]:
-            raise obs.AssertionError_(
-                f"shadow match did not advance during storm (vacuous check): "
-                f"before={shadow_before['match']} after={shadow_after['match']}"
-            )
 
 
 def _storm_once(ctx: ScenarioContext, target_id: str) -> int:

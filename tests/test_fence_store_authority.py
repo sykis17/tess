@@ -1,14 +1,12 @@
-"""Authority selection + first-boot migration fallback (Quorum Fence Store step 5a).
+"""Authority selection + absent-blob restore behavior (post-cutover).
 
-``ops_fence_authority`` picks which backend is authoritative for durable CP writes,
-and the shadow is always the *other* backend so the dual-write direction reverses
-structurally at cutover. HA-off ignores the flag entirely (single-writer Redis).
+``ops_fence_authority`` picks which backend is authoritative for durable CP writes;
+HA-off ignores the flag entirely (single-writer Redis).
 
-``restore_store`` gets a read-only Redis-blob fallback for the migration window: a
-deploy that flips authority to etcd before the etcd blob was ever written must not
-silently lose the pre-cutover control plane. The fallback is READ-ONLY (restore runs
-at boot before election; writing etcd there would be an unfenced durable write) and
-loud. It is removed in the dual-write-removal step.
+After the etcd cutover there is **no Redis fallback** in ``restore_store``: an absent
+etcd durable blob returns empty and logs loudly (fresh cluster -> the primary persists
+on first election; otherwise explicit recovery). The stale Redis blob is never
+resurrected — that fossil is exactly what the dual-write-removal step retired.
 """
 
 from __future__ import annotations
@@ -25,10 +23,8 @@ from app.ops.store import (
     OpsStore,
     RedisFenceStore,
     get_fence_store,
-    get_shadow_fence_store,
     get_store,
     reset_fence_store,
-    reset_shadow_fence_store,
     reset_store,
     restore_store,
     set_fence_store,
@@ -41,11 +37,9 @@ def _authority_cleanup(monkeypatch: pytest.MonkeyPatch):
     # The global conftest defaults HA off + authority redis; this file flips them per test.
     reset_store()
     reset_fence_store()
-    reset_shadow_fence_store()
     yield
     reset_store()
     reset_fence_store()
-    reset_shadow_fence_store()
 
 
 def _activate_ha(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -77,30 +71,10 @@ def test_ha_off_ignores_authority_flag(monkeypatch: pytest.MonkeyPatch) -> None:
     assert isinstance(get_fence_store(), RedisFenceStore)
 
 
-def test_shadow_is_the_non_authoritative_backend(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The shadow reverses structurally at cutover (no second flag)."""
-    _activate_ha(monkeypatch)
-
-    # etcd authoritative -> Redis shadows it.
-    monkeypatch.setattr(settings, "ops_fence_authority", "etcd")
-    reset_fence_store()
-    reset_shadow_fence_store()
-    assert isinstance(get_shadow_fence_store(), RedisFenceStore)
-
-    # redis authoritative -> etcd shadows it.
-    monkeypatch.setattr(settings, "ops_fence_authority", "redis")
-    reset_fence_store()
-    reset_shadow_fence_store()
-    assert isinstance(get_shadow_fence_store(), EtcdFenceStore)
-
-
 class _EtcdAbsentStore:
     """Authoritative-store stand-in whose durable blob is absent (fresh etcd).
 
-    Records any write so the test can prove the migration fallback never wrote to
-    the authoritative backend during restore.
+    Records any write so the test can prove restore never wrote the authoritative backend.
     """
 
     def __init__(self) -> None:
@@ -130,52 +104,53 @@ def _redis_blob_with_one_provider(fence_term: int) -> str:
     tmp = OpsStore()
     tmp.upsert_provider(
         CloudProvider(
-            id="prov_migrated",
+            id="prov_fossil",
             type=ProviderType.HETZNER,
-            name="Migrated",
-            base_url="http://migrated.example",
+            name="Fossil",
+            base_url="http://fossil.example",
         )
     )
     return json.dumps(tmp.to_redis_payload(fence_term=fence_term))
 
 
-def test_restore_adopts_redis_blob_readonly_when_etcd_absent(
+def test_restore_no_redis_fallback_when_etcd_blob_absent(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """Absent etcd blob -> empty restore + loud warning; the stale Redis blob is NOT adopted."""
     _activate_ha(monkeypatch)
     monkeypatch.setattr(settings, "ops_persist_enabled", True)
     monkeypatch.setattr(settings, "ops_fence_authority", "etcd")
 
     absent = _EtcdAbsentStore()
-    set_fence_store(absent)  # authoritative etcd blob is absent
+    set_fence_store(absent)  # authoritative etcd blob absent
 
     fake = _FakeRedis()
-    fake.set(REDIS_CONTROL_PLANE_KEY, _redis_blob_with_one_provider(7))
+    fake.set(REDIS_CONTROL_PLANE_KEY, _redis_blob_with_one_provider(7))  # stale fossil
     monkeypatch.setattr("app.ops.store._redis_client", lambda: fake)
 
-    reset_store()  # in-memory empty before restore
+    reset_store()
     with caplog.at_level("WARNING"):
         ok = restore_store()
 
-    assert ok is True
-    # Pre-cutover state was adopted from Redis rather than lost.
-    assert get_store().get_provider("prov_migrated") is not None
-    # Loud: the migration fallback logged a warning.
+    assert ok is False  # no fallback: empty restore
+    assert get_store().list_providers() == []  # the Redis fossil was NOT resurrected
+    # Loud: the absent-blob path warned about explicit recovery / no fallback.
     assert any(
-        "READ-ONLY" in r.getMessage() or "migration" in r.getMessage().lower()
+        "no Redis fallback" in r.getMessage()
+        or "recover the durable blob" in r.getMessage()
         for r in caplog.records
     )
-    # Read-only: restore must NOT have written the authoritative (etcd) backend.
+    # Never wrote the authoritative etcd backend during a read-only restore.
     assert absent.writes == []
     assert absent.cas == []
     assert absent.promotes == []
 
 
-def test_restore_no_fallback_when_authority_is_redis(
+def test_restore_absent_blob_under_redis_authority(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Under Redis authority the fallback branch is inert — absent blob => no restore."""
+    """Redis authority, no blob => no restore (and no etcd-absent warning path)."""
     _activate_ha(monkeypatch)
     monkeypatch.setattr(settings, "ops_persist_enabled", True)
     monkeypatch.setattr(settings, "ops_fence_authority", "redis")

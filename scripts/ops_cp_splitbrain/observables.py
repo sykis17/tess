@@ -227,31 +227,12 @@ def etcd_raft_term(cfg: HarnessConfig) -> int:
     return 0
 
 
-def shadow_totals(cfg: HarnessConfig) -> dict[str, float]:
-    """Sum ``tess_ops_fence_shadow_total`` by outcome across both CP web ``/metrics``.
-
-    Needs the observability overlay (`OPS_METRICS_ENABLED`). Returns match/diverge/unavailable
-    (0.0 each if the endpoint is unreachable — the caller distinguishes "off" via match==0).
-    """
-    totals = {"match": 0.0, "diverge": 0.0, "unavailable": 0.0}
-    for base in (cfg.cp_a, cfg.cp_b):
-        try:
-            samples = scrape_metrics(base)
-        except Exception:
-            continue
-        for outcome in totals:
-            totals[outcome] += metric_sum(
-                samples, "tess_ops_fence_shadow_total", outcome=outcome
-            )
-    return totals
-
-
 # ---------------------------------------------------------------------------
 # Authority-aware durable observables — read whichever backend actually holds the
 # truth (``cfg.fence_authority``). These are what baseline/assert/scenarios must
-# use post-cutover; reading Redis under etcd authority would be vacuous (the Redis
-# shadow can lag or, in 5b, vanish). Under redis authority they are exactly the
-# historical Redis reads, so the default run is unchanged.
+# use post-cutover; reading Redis under etcd authority would be vacuous (Redis is
+# caches + pub/sub post-cutover and no longer mirrors the durable term/blob). Under
+# redis authority they are exactly the historical Redis reads, so that run is unchanged.
 # ---------------------------------------------------------------------------
 def durable_fence_term(cfg: HarnessConfig) -> int:
     if cfg.fence_authority == "etcd":
@@ -443,7 +424,7 @@ def assert_durable_unchanged(
     Reads via the authority-aware observables, so post-cutover it compares the etcd
     term/blob (the store that actually holds the truth) rather than a stale Redis
     mirror — which is what makes it non-vacuous: a real durable change is caught, and
-    it would not falsely pass by watching an unchanging shadow. Capture the ``*_before``
+    it would not falsely pass by watching an unchanging Redis mirror. Capture the ``*_before``
     values with the matching ``durable_*`` helpers.
     """
     fence_after = durable_fence_term(cfg)

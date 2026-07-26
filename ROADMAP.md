@@ -108,12 +108,15 @@ Makes the ops control plane itself HA. Separate from the multi-cloud demo
 - **Step 3**: Prometheus metrics + OpenTelemetry tracing (opt-in, off by default).
 - **Step 4**: offline / sovereign packaging (10/10 harness under egress block).
 - **Step 5**: CP-HA engineering report (`docs/CP_HA_ENGINEERING_REPORT.md`).
-- **Quorum Fence Store** (in progress): move the durable control-plane blob + its
+- **Quorum Fence Store** (complete): moved the durable control-plane blob + its
   CAS guard from Redis into etcd so the fence-guarded durable write is
   linearizable end-to-end (etcd already owns leader election + the authoritative
-  term; only durable persistence remained a Redis SPOF). 6-step arc, one landing
-  each; **Step 1 (FenceStore seam extraction) landed** with zero behavioral diff.
-  See [CP_HA_QUORUM_OPENER.md](docs/archive/ops/CP_HA_QUORUM_OPENER.md).
+  term; durable persistence was the last Redis SPOF). Landed as a 7-commit arc
+  (Steps 1–6 + 5b): `FenceStore` seam → `EtcdFenceStore` + parity → 3-node quorum →
+  bounded shadow dual-write → etcd-authority cutover (5a) → leader-kill storm
+  scenario (6) → dual-write/shadow retired (5b). etcd is now the sole durable store;
+  Redis is caches + pub/sub, with `ops_fence_authority=redis` as the opt-in rollback
+  backend. See [CP_HA_QUORUM_OPENER.md](docs/archive/ops/CP_HA_QUORUM_OPENER.md).
 
 ---
 

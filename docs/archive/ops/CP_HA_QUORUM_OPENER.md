@@ -62,10 +62,22 @@ harness + `tests/test_ops_fencing.py` before each commit).
   it can never pay the multi-endpoint retry cost on the authoritative path; it never
   raises and never changes the authoritative outcome
   ([app/ops/store.py](../../../app/ops/store.py)::`_shadow_compare_persist`). Verified:
-  277 unit ([tests/test_fence_shadow.py](../../../tests/test_fence_shadow.py));
+  277 unit (`tests/test_fence_shadow.py`, since retired in Step 5b);
   divergence **0** against real etcd (28 matches across a shadow-on harness run + a
   dedicated mutation burst); split-brain harness run-all **10/10 with shadow on**.
-- **Steps 5–6 — pending**, one landing each (see Migration plan).
+- **Step 5a — LANDED.** etcd-authority cutover (`ops_fence_authority="etcd"` default) +
+  the `app/api/ops.py` mutation-lock offload + authority-aware harness; a bounded reverse
+  shadow was kept as the cutover alarm.
+- **Step 6 — LANDED.** `s11` leader-kill mutation-storm scenario — SIGKILL the etcd Raft
+  leader mid-storm: bounded block-and-resume, monotonic term, no split-brain, with a
+  Raft-term-advanced non-vacuity guard; reverse-shadow `diverge==0` with `match` advanced
+  under the storm (evidence banked for 5b).
+- **Step 5b — LANDED (arc closer).** Retired the dual-write / reverse shadow, the
+  `ops_fence_shadow` config + shadow metric, and the migration-era read-only Redis restore
+  fallback (an absent etcd blob now triggers loud explicit recovery). etcd is the sole
+  durable store; Redis = caches + pub/sub, with `ops_fence_authority=redis` as the opt-in
+  rollback backend. Gates: unit 279/2, live-etcd parity 4/4, split-brain `run-all`
+  **11/11 @etcd** + `s11` @redis. **Arc complete.**
 
 ---
 
@@ -251,15 +263,16 @@ Run **all three** on every step that touches the store / consensus / CAS path
    docker rm -f tess-parity-etcd
    ```
 3. **Split-brain harness:** bring up base + ops-ha (+ ops-obs for `s10`), then
-   `python -m scripts.ops_cp_splitbrain run-all` = 10/10. Environment gotchas:
-   the harness reads the admin token from `OPS_ADMIN_TOKEN` and must match the value
-   the web container took from `.env` (compose interpolates `${OPS_ADMIN_TOKEN}`);
-   export `OPS_HA_COMPOSE_OBS=docker-compose.ops-obs.yml` so `s10` can scrape
-   `/metrics`; and **to exercise shadow mode, set `OPS_FENCE_SHADOW=true` in the
+   `python -m scripts.ops_cp_splitbrain run-all` = 11/11 (11 scenarios, default
+   `authority=etcd`). Environment gotchas: the harness reads the admin token from
+   `OPS_ADMIN_TOKEN` and must match the value the web container took from `.env`
+   (compose interpolates `${OPS_ADMIN_TOKEN}`); export
+   `OPS_HA_COMPOSE_OBS=docker-compose.ops-obs.yml` so `s10` can scrape `/metrics`;
+   and **to exercise the legacy backend, set `OPS_FENCE_AUTHORITY=redis` in the
    harness shell, not just the initial `up`** — `reset_stack` recreates the web
-   containers via a `docker compose` subprocess, and `${OPS_FENCE_SHADOW:-false}`
+   containers via a `docker compose` subprocess, and `${OPS_FENCE_AUTHORITY:-etcd}`
    interpolates from *that* process's env, so a flag set only on the first `up`
-   silently turns off after the first scenario.
+   silently reverts after the first scenario.
 
 ## etcd operations (3-node cluster)
 

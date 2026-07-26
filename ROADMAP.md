@@ -107,7 +107,7 @@ Makes the ops control plane itself HA. Separate from the multi-cloud demo
 - **Step 2**: split-brain harness (`scripts/ops_cp_splitbrain`, `run-all`).
 - **Step 3**: Prometheus metrics + OpenTelemetry tracing (opt-in, off by default).
 - **Step 4**: offline / sovereign packaging (10/10 harness under egress block).
-- **Step 5**: CP-HA engineering report (`docs/CP_HA_ENGINEERING_REPORT.md`).
+- **Step 5**: CP-HA engineering report (`docs/archive/ops/CP_HA_ENGINEERING_REPORT.md`).
 - **Quorum Fence Store** (complete): moved the durable control-plane blob + its
   CAS guard from Redis into etcd so the fence-guarded durable write is
   linearizable end-to-end (etcd already owns leader election + the authoritative

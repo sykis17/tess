@@ -78,6 +78,13 @@ class Settings(BaseSettings):
     otel_traces_sampler_ratio: float = 1.0
     otel_service_name: str = "tess-ops"
 
+    # Product-graph observability (W2) — flags separate from ops_* by design, so
+    # enabling one plane never silently starts paying the other's instrumentation
+    # cost. Shares the OTLP endpoint + worker :9109 exposition above.
+    graph_metrics_enabled: bool = False
+    graph_tracing_enabled: bool = False
+    graph_otel_service_name: str = "tess-graph"
+
     def ops_ha_active(self) -> bool:
         """True when CP HA election/fencing is enabled and etcd is configured."""
         if not self.ops_ha_enabled:
@@ -87,6 +94,10 @@ class Settings(BaseSettings):
     def ops_tracing_active(self) -> bool:
         """True when tracing is enabled and an OTLP endpoint is configured."""
         return self.ops_tracing_enabled and bool(self.otel_exporter_otlp_endpoint)
+
+    def graph_tracing_active(self) -> bool:
+        """True when graph tracing is enabled and an OTLP endpoint is configured."""
+        return self.graph_tracing_enabled and bool(self.otel_exporter_otlp_endpoint)
 
 
 settings = Settings()

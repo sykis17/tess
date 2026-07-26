@@ -30,7 +30,7 @@ from app.ops.store import (
     REDIS_FENCE_TERM_KEY,
     get_store,
     persist_store,
-    promote_redis_fence,
+    promote_fence,
     reset_fence_store,
     reset_store,
 )
@@ -96,7 +96,7 @@ def test_promote_and_persist_cas_happy_path(monkeypatch: pytest.MonkeyPatch) -> 
     fake = _FakeRedis(fence_term=0)
     monkeypatch.setattr("app.ops.store._redis_client", lambda: fake)
 
-    promote_redis_fence(3)
+    promote_fence(3)
     assert fake.get(REDIS_FENCE_TERM_KEY) == "3"
 
     mark_primary(3, lease_id=1)

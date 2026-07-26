@@ -627,7 +627,7 @@ def reset_fence_store() -> FenceStore:
         return _fence_store
 
 
-def promote_redis_fence(fence_term: int) -> None:
+def promote_fence(fence_term: int) -> None:
     """Install fence term on promote (idempotent CAS: stored term <= fence_term)."""
     from app.ops.fencing import FenceCasError, PersistError
 

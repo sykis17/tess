@@ -200,7 +200,7 @@ Every metric label value is a fixed code enum or a per-process constant. `provid
 
 Spans on the mutation path (`ops.http.mutation` → `ops.fence_gate` → `ops.persist_cas` →
 `ops.publish_provider_changed`) and the promotion path (`ops.promotion` →
-`ops.promote_redis_fence` / `ops.initial_persist`). **Failover trace-continuity:** the client
+`ops.promote_fence` / `ops.initial_persist`). **Failover trace-continuity:** the client
 sends a W3C `traceparent` + `X-Ops-Request-Id`; a mutation rejected on the standby (503) and
 retried on the new primary share one `trace_id` + `ops.request_id`, so the failover is one
 correlatable trace.

@@ -108,6 +108,49 @@ touches the bundle.
 
 ---
 
+## W1.5 — Offline-verifier topology re-sync  ·  *prioritized follow-up, do right after W1*
+
+**Why this exists.** Running W1's Commit 2 offline gate surfaced that the offline verifier's
+split-brain step has been **broken on `main` since the Step-3 3-node-etcd cutover** — the
+arc's own recurring failure mode (a non-default verification path silently rotting) biting
+the arc itself within a week, because the offline verifier was never added to the per-step
+gate ladder after the topology changed under it. This is a **certification gap on a product
+surface**: since Step 3, no offline bundle has passed its own *full* verifier, so sovereign
+deploys are **deploy- and egress-certified but not failover-certified**, and the Sovereignty
+Audit's "run-all 10/10" claim is stale.
+
+**Diagnosis (measured 2026-07-26, single-node offline stack).** The offline stack ships a
+single `etcd` service; the harness defaults to `etcd-1,etcd-2,etcd-3` and
+`verify-egress-blocked.sh` never sets `OPS_HA_ETCD_SERVICES`, so every scenario dies at setup
+on `docker compose ps -q etcd-1` (0/11). With `OPS_HA_ETCD_SERVICES=etcd` the
+single-node-applicable subset **s01–s10 passes 10/10**; **only `s11`** (kill a Raft leader
+mid-storm, expects re-election on a surviving quorum member) is inapplicable to single-node
+and fails with sustained 503s. `s06_etcd_down` needs **no** gating — on single-node "etcd
+down" = total loss = the sitting primary correctly demotes.
+
+**Scope (the fix is not one line):**
+1. **Env plumbing:** `verify-egress-blocked.sh` passes `OPS_HA_ETCD_SERVICES=etcd` to the
+   in-container runner (matches the offline stack's actual service name).
+2. **Topology-aware scenario gating:** mark `s11` (and any future quorum-only scenario) as
+   requiring ≥3 etcd nodes; the offline single-node run skips it — or a single-node variant
+   asserts the correct "no survivor → writes stay blocked" behavior instead of re-election.
+3. **Re-baseline the verifier's expected tally** (10/10 applicable, `s11` explicitly skipped)
+   and **kill the stale "10/10" hint text** in `install-offline.sh`.
+4. **Refresh the Sovereignty Audit** claim in `deploy/MULTI_CLOUD.md` §Offline once green.
+
+**Gate / non-vacuity.** `verify-egress-blocked.sh` green end-to-end on the offline bundle
+(structural + egress + smoke + the gated split-brain subset). The gating must be
+**topology-keyed** — a real 3-node run still runs `s11` — not a blanket skip that would make
+`s11` vacuous everywhere.
+
+**Durable cure (W2).** The offline chain joins the **nightly CI tier** (see Cross-cutting —
+CI) so this non-default path can't rot invisibly again — the exact discipline the arc used
+for its four manual gates.
+
+**Size.** ~1 short session.
+
+---
+
 ## W2 — Chain instrumentation + eval harness  ·  *the measurement foundation*
 
 **Goal.** Give the graph what the ops plane already has: per-node observability + a
@@ -283,6 +326,9 @@ doc-links). As part of W2, bring them into CI and add the **eval gate**:
 - Unit + doc-links: cheap, every push.
 - Parity: CI service container (throwaway etcd) + `OPS_TEST_ETCD_ENDPOINT`.
 - Split-brain harness + eval: Docker-in-CI, nightly or on ops/graph-path changes.
+- **Offline verifier** (`build-bundle → install-offline → verify-egress-blocked`): nightly,
+  once **W1.5** re-syncs it — it rotted invisibly precisely because it was never in the gate
+  ladder. Nightly CI is the durable cure for that failure mode.
 - **Eval judge budget:** the LLM-judge leg spends real tokens on every nightly run — pin a
   cheap, fixed judge model and cap the golden-set size so nightly cost stays bounded and
   predictable. Deterministic rubric checks carry the cheap per-push signal; the judge runs

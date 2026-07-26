@@ -237,9 +237,26 @@ is deferred (WSL2 multi-network flakiness, per the s04/s08 adaptations).
 ## Offline / sovereign packaging (Step 4)
 
 The full HA + observability stack deploys and runs **fully offline** — zero required
-outbound network at deploy or runtime. This is proven, not asserted: the packaged
-bundle is deployed with egress blocked and the split-brain harness `run-all` passes
-**10/10** in that environment. "Offline" scopes to the **platform**; the LLM upstream
+outbound network at deploy or runtime. This is proven by artifacts, not asserted: the
+packaged bundle deploys with egress blocked and passes the structural check
+(internal-only networks), the active egress probes (web/web-standby/worker all blocked),
+local reachability, and install smoke (health on both CP nodes, `/ops/ha` role, worker
+Prometheus).
+
+> **Known gap — offline failover certification (since the Step-3 3-node-etcd cutover).**
+> The offline verifier's split-brain `run-all` step is currently **broken on `main`**: the
+> offline stack ships a **single** `etcd` service, but the harness defaults to the 3-node
+> `etcd-1,etcd-2,etcd-3` and `verify-egress-blocked.sh` never sets `OPS_HA_ETCD_SERVICES`,
+> so every scenario dies at setup on `docker compose ps -q etcd-1`. With
+> `OPS_HA_ETCD_SERVICES=etcd` the single-node-applicable subset **s01–s10 passes 10/10**;
+> only `s11` (kill a Raft leader among a quorum) is inapplicable to single-node. So the
+> sovereign bundle is **deploy- and egress-certified but not failover-certified** today.
+> The stale "10/10" hint text still printed by `install-offline.sh` predates the cutover.
+> Fix tracked as a prioritized follow-up (**offline-verifier topology re-sync**) in
+> [../docs/NEXT_STEPS_PLAN.md](../docs/NEXT_STEPS_PLAN.md); it also joins nightly CI in W2
+> so this path can't rot invisibly again.
+
+"Offline" scopes to the **platform**; the LLM upstream
 is the deliberate exception (the offline profile uses Ollama-only, local).
 
 ### Sovereignty Audit — egress inventory
@@ -290,7 +307,7 @@ deploy/offline/build-bundle.sh            # clean tree required
 sha256sum -c tess-offline-bundle-<commit>.tar.gz.sha256   # verify in transit
 mkdir tess-offline && tar -C tess-offline -xzf tess-offline-bundle-<commit>.tar.gz && cd tess-offline
 ./install-offline.sh --target /opt/tess-engine   # verify manifest, load, guards, up --no-build, smoke
-./verify-egress-blocked.sh --target /opt/tess-engine   # egress self-check + harness run-all 10/10
+./verify-egress-blocked.sh --target /opt/tess-engine   # egress self-check + install smoke; split-brain step needs OPS_HA_ETCD_SERVICES=etcd (s01-s10 pass; s11 quorum-only) — see §Offline Known gap
 ```
 
 `install-offline.sh --prod` additionally refuses to start unless a strong

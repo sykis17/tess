@@ -13,6 +13,7 @@ from . import (
     s08_empty_blob,
     s09_zombie_second_provider,
     s10_failover_visible,
+    s11_kill_etcd_leader_storm,
 )
 
 SCENARIOS = {
@@ -26,6 +27,7 @@ SCENARIOS = {
     s08_empty_blob.ID: s08_empty_blob,
     s09_zombie_second_provider.ID: s09_zombie_second_provider,
     s10_failover_visible.ID: s10_failover_visible,
+    s11_kill_etcd_leader_storm.ID: s11_kill_etcd_leader_storm,
 }
 
 ORDER = [
@@ -39,4 +41,5 @@ ORDER = [
     s08_empty_blob.ID,
     s09_zombie_second_provider.ID,
     s10_failover_visible.ID,
+    s11_kill_etcd_leader_storm.ID,
 ]

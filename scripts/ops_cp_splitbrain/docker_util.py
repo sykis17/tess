@@ -85,6 +85,14 @@ def docker_stop(name: str) -> None:
     _run(["docker", "stop", name], check=False)
 
 
+def docker_kill(name: str) -> None:
+    """SIGKILL (ungraceful). For etcd, this is deliberately harsher than ``docker_stop``:
+    SIGTERM lets etcd transfer leadership before dying (near-zero gap), so killing the
+    RAFT LEADER ungracefully is what actually forces a re-election gap the survivors must
+    ride through (see s11)."""
+    _run(["docker", "kill", name], check=False)
+
+
 def docker_start(name: str) -> None:
     _run(["docker", "start", name], check=True)
 

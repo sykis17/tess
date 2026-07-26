@@ -170,7 +170,11 @@ split-brain harness:
   (`315b044`) `EtcdFenceStore` + parity, Step 3 (`3a3444a`) 3-node etcd quorum, Step 4
   (`3e72fbe`) bounded shadow dual-write, **Step 5a** flipped the default to **etcd authority**
   (`ops_fence_authority="etcd"`, `ops_fence_shadow=true` reverse shadow) with the ops.py
-  mutation-lock offload and an authority-aware harness. Any change to `app/ops/consensus.py`,
+  mutation-lock offload and an authority-aware harness, **Step 6** added the leader-kill
+  mutation-storm scenario (`s11`: SIGKILL the etcd Raft leader mid-storm — durable writes
+  block-and-resume on the new leader within bound, monotonic term, no split-brain; reverse
+  shadow `diverge==0` with `match` advanced, and a Raft-term-advanced guard proves the
+  re-election gap was real). The harness is now **11 scenarios**. Any change to `app/ops/consensus.py`,
   `app/ops/fencing.py`, `app/api/ops.py`, or the `store.py` `FenceStore` path requires
   re-running, before commit: the split-brain harness (**now defaults to `authority=etcd`** — a
   plain `run-all` is the etcd cutover; `OPS_FENCE_AUTHORITY=redis run-all` exercises the legacy

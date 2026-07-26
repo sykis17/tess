@@ -39,13 +39,18 @@ ops.py full-coverage mutation-lock offload, the authority-aware harness, and all
 - Contract docs updated (`CLAUDE.md`, `deploy/MULTI_CLOUD.md`): etcd authoritative by default,
   unelectable limitation resolved, boot restore needs etcd, full-coverage lock invariant.
 
-**Next = Step 6, THEN 5b** (arc decision: run Step 6 *before* 5b so the reverse shadow is still
-watching during the harshest workload — divergence 0 under a leader-kill storm is the strongest
-justification for removing the safety net):
+**Step 6 — DONE. Next = 5b (last, closes the arc).**
 
-- **Step 6** — kill the etcd leader mid-mutation-storm with the reverse shadow **ON**: assert 0
-  fence violations, mutations continue on the surviving 2/3, terms strictly monotonic across
-  failover, and reverse-shadow `diverge == 0` throughout the storm.
+- **Step 6 (DONE)** — `s11_kill_etcd_leader_storm`: SIGKILL the etcd Raft leader mid-storm (an
+  ungraceful kill, since SIGTERM lets etcd hand off leadership with near-zero gap = vacuous).
+  Durable writes **block-and-resume** on the new leader within bound (~2s ride-through), no
+  split-brain, monotonic CP fence term, no durable corruption. Reverse-shadow `diverge == 0`
+  **and** `match` advanced (the fault hits etcd; the Redis shadow is untouched, so no
+  `unavailable` noise — every comparison is real signal). Non-vacuity: an **etcd Raft-term
+  advanced** guard proves a real re-election happened (and catches accidentally killing a
+  follower). New primitives in `observables.py` (`etcd_leader_service`, `etcd_raft_term`,
+  `shadow_totals`) + `docker_util.docker_kill`. Gates: run-all **11/11 @ etcd** AND s11
+  @ redis opt-in; unit 284/2.
 - **Step 5b** (closes the arc) — remove the dual-write + `_shadow_compare` +
   `get_shadow_fence_store` + `ops_fence_shadow` + the `restore_store` Redis read-only fallback;
   make `/ops/ha` term display key off `ops_fence_authority`; harness 10/10; update contract +

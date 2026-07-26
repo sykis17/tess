@@ -168,6 +168,84 @@ def etcd_put_fence_term(cfg: HarnessConfig, term: int) -> None:
     _etcdctl(cfg, "put", ETCD_FENCE_KEY, str(int(term)))
 
 
+def etcd_leader_service(cfg: HarnessConfig) -> str | None:
+    """Compose service name (``etcd-N``) of the current etcd RAFT leader, or None.
+
+    Distinct from the CP primary (``cp-a``/``cp-b``): this is the Raft leader among the three
+    etcd members. Queries cluster-wide ``endpoint status`` from the first reachable member; the
+    leader is the entry whose own ``member_id`` equals the reported ``leader`` id. Used by the
+    leader-kill storm (s11) to target the Raft leader specifically.
+    """
+    for svc in cfg.etcd_services:
+        try:
+            out = dk.etcdctl(cfg, svc, "endpoint", "status", "--cluster", "-w", "json")
+        except dk.DockerError:
+            continue
+        try:
+            entries = json.loads(out)
+        except json.JSONDecodeError:
+            return None
+        for entry in entries:
+            status = entry.get("Status") or {}
+            header = status.get("header") or {}
+            leader = status.get("leader")
+            member_id = header.get("member_id")
+            if leader and member_id and int(leader) == int(member_id):
+                endpoint = entry.get("Endpoint") or ""
+                host = endpoint.split("//")[-1].split(":")[0]
+                if host in cfg.etcd_services:
+                    return host
+                for s in cfg.etcd_services:
+                    if s in endpoint:
+                        return s
+        return None
+    return None
+
+
+def etcd_raft_term(cfg: HarnessConfig) -> int:
+    """Current etcd **Raft** term (internal leader-election term, NOT the CP fence term).
+
+    Read from the first reachable member's endpoint status. A leader election increments
+    it, so ``after > before`` across a leader kill proves a real re-election happened — the
+    deterministic non-vacuity signal for s11 (the gap was genuinely opened).
+    """
+    for svc in cfg.etcd_services:
+        try:
+            out = dk.etcdctl(cfg, svc, "endpoint", "status", "-w", "json")
+        except dk.DockerError:
+            continue
+        try:
+            entries = json.loads(out)
+        except json.JSONDecodeError:
+            return 0
+        for entry in entries:
+            status = entry.get("Status") or {}
+            term = status.get("raftTerm") or (status.get("header") or {}).get("raft_term")
+            if term:
+                return int(term)
+        return 0
+    return 0
+
+
+def shadow_totals(cfg: HarnessConfig) -> dict[str, float]:
+    """Sum ``tess_ops_fence_shadow_total`` by outcome across both CP web ``/metrics``.
+
+    Needs the observability overlay (`OPS_METRICS_ENABLED`). Returns match/diverge/unavailable
+    (0.0 each if the endpoint is unreachable — the caller distinguishes "off" via match==0).
+    """
+    totals = {"match": 0.0, "diverge": 0.0, "unavailable": 0.0}
+    for base in (cfg.cp_a, cfg.cp_b):
+        try:
+            samples = scrape_metrics(base)
+        except Exception:
+            continue
+        for outcome in totals:
+            totals[outcome] += metric_sum(
+                samples, "tess_ops_fence_shadow_total", outcome=outcome
+            )
+    return totals
+
+
 # ---------------------------------------------------------------------------
 # Authority-aware durable observables — read whichever backend actually holds the
 # truth (``cfg.fence_authority``). These are what baseline/assert/scenarios must

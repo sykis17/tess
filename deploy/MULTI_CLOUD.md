@@ -158,8 +158,18 @@ The default deploy (`docker-compose.prod.yml`) is unchanged.
 | `otel_service_name` | `OTEL_SERVICE_NAME` | `tess-ops` | Trace resource `service.name` |
 
 When both toggles are off, no middleware/endpoint/exporter is installed — `/health`, `/ws`,
-and the product path are byte-for-byte unchanged. The product (LangGraph/panel) path is
-**not** instrumented; scope is the ops/HA path only.
+and the product path are byte-for-byte unchanged.
+
+**Graph observability (W2)** is a separate, separately-gated plane: the product graph
+(`app/graph/observability.py`) has its own `GRAPH_METRICS_ENABLED` / `GRAPH_TRACING_ENABLED`
+toggles (also OFF by default — with all four toggles off the product path stays
+byte-for-byte unchanged), a `tess_graph_` metric prefix, and the same cardinality
+discipline, enforced by `tests/test_graph_metrics.py`. Graph metrics ride the existing
+worker `:9109` exposition — the same `--concurrency=1` prefork assumption below applies —
+and graph spans share the OTLP endpoint settings (riding the ops tracer provider when both
+are on, under instrumentation scope `app.graph`). Verification overlay:
+`docker-compose.graph-obs.yml` (base compose + collector; no HA overlay needed — the graph
+runs in the worker). The ops plane itself never instruments the product path.
 
 ### Two scrape targets (don't miss half the system)
 

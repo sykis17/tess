@@ -1,0 +1,49 @@
+# Opt-in GRAPH observability overlay (W2) — verification scaffolding, NOT part of the
+# default deploy. Layers on the BASE compose alone (no HA overlay needed — the graph
+# runs in the worker):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.graph-obs.yml \
+#                  -p tess-engine up --build -d
+#
+# Deliberately separate from docker-compose.ops-obs.yml: that file configures
+# web-standby (which only exists under the HA overlay) and is consumed by the
+# split-brain harness — this one turns on only the GRAPH_* flags.
+#
+# Prefork note (same as ops-obs): the worker command MUST be overridden to
+# --concurrency=1 so the single worker child binds :9109 exactly once and increments
+# the counters it serves. An env-only overlay would fork per-CPU and the counters
+# would silently never increment.
+
+services:
+  otel-collector:
+    # Same 0.111.0 pin as ops-obs (0.116.0's distroless binary would not exec on this
+    # Docker Desktop / WSL2 engine — see deploy/MULTI_CLOUD.md §Observability).
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    # Verification-only: run as root so the file exporter can write the spans volume.
+    user: "0:0"
+    volumes:
+      - ./deploy/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - graph_spans:/spans
+    expose:
+      - "4318"
+
+  worker:
+    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=1
+    environment:
+      GRAPH_METRICS_ENABLED: "true"
+      GRAPH_TRACING_ENABLED: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_BSP_SCHEDULE_DELAY: "500"
+    ports:
+      # localhost-bound → host-local, zero-egress; the graph series ride the same
+      # :9109 exposition the ops plane uses (shared default registry).
+      - "127.0.0.1:9109:9109"
+    depends_on:
+      otel-collector:
+        condition: service_started
+
+volumes:
+  # Verification-only span sink, read via `docker compose cp` from otel-collector.
+  graph_spans:

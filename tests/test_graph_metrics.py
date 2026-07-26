@@ -363,6 +363,24 @@ def test_llm_call_cost_recorded_for_priced_model(monkeypatch: pytest.MonkeyPatch
 
 
 # ---------------------------------------------------------------------------
+# Static builder guard: an uninstrumented node must fail the suite.
+# ---------------------------------------------------------------------------
+def test_every_builder_add_node_routes_through_instrument_node():
+    import inspect
+
+    import app.graph.builder as builder_module
+
+    lines = [
+        ln for ln in inspect.getsource(builder_module).splitlines() if ".add_node(" in ln
+    ]
+    # 12 named pipeline nodes + the specialist-registry loop — if this shrinks, the
+    # scan itself went vacuous.
+    assert len(lines) >= 13, f"expected >=13 add_node sites, found {len(lines)}"
+    for ln in lines:
+        assert "instrument_node(" in ln, f"uninstrumented add_node: {ln.strip()}"
+
+
+# ---------------------------------------------------------------------------
 # Cost map.
 # ---------------------------------------------------------------------------
 def test_cost_known_model_math():

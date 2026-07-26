@@ -85,9 +85,12 @@ docker build -f deploy/offline/otel/Dockerfile -t tess-engine-otel:offline deplo
 say "build tess-engine-harness-runner:offline"
 docker build -f deploy/offline/harness-runner/Dockerfile -t tess-engine-harness-runner:offline . >/dev/null
 
-# --- 4. Provenance for the unpinned requirements.txt (records what was built) ---
-say "capture requirements.lock.txt (pip freeze from the built image)"
-docker run --rm tess-engine-app:offline pip freeze > "$OUT/requirements.lock.txt"
+# --- 4. Cross-check the committed hash-pinned lock against the built image ------
+# requirements.lock.txt is now the committed, hash-pinned source of truth (installed
+# via --require-hashes in the Dockerfile). This freeze is a provenance cross-check:
+# what actually resolved inside the built image, so lock drift is visible in the bundle.
+say "capture requirements.freeze.txt (pip freeze cross-check of the built image)"
+docker run --rm tess-engine-app:offline pip freeze > "$OUT/requirements.freeze.txt"
 
 # --- 5. Frontend: build CDN-free, guard, tar dist (dist is gitignored) ---------
 say "build frontend (must be CDN-free after font vendoring)"

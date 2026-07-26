@@ -249,7 +249,7 @@ Every outbound vector, enumerated by grep+read, and how the offline path resolve
 | # | Egress point | Where | Phase | Offline resolution |
 |---|---|---|---|---|
 | 1 | Base image pulls (`python:3.11-slim`, `node:20-alpine`, `alpine:3.20`, `redis:7-alpine`, `caddy:2-alpine`, `quay.io/coreos/etcd:v3.5.16`, `otel/...collector-contrib:0.111.0`, `ollama/ollama`) | Dockerfiles + compose files | build/deploy | Pre-pulled + `docker save` into the bundle; offline `up --no-build` + `pull_policy: never` |
-| 2 | `pip install -r requirements.txt` (unpinned) | `Dockerfile` | build | Baked into the image on the connected machine; **no pip at deploy**; `pip freeze` → `requirements.lock.txt` for provenance |
+| 2 | `pip install --require-hashes -r requirements.lock.txt` (hash-pinned) | `Dockerfile` | build | Baked into the image on the connected machine; **no pip at deploy**; `pip freeze` → `requirements.freeze.txt` as a built-image cross-check |
 | 3 | `npm ci && npm run build` | `deploy/deploy.sh`, `frontend/Dockerfile` | build | Built on the connected machine; `dist/` ships in the bundle; no npm at deploy |
 | 4 | **Google Fonts CDN** (`fonts.googleapis.com`/`gstatic.com`) — the one runtime egress in the shipped SPA | `frontend/index.html`, `frontend/architecture/index.html` | runtime (browser) | **Self-hosted**: vendored woff2 + `@font-face` under `frontend/public/fonts/` (OFL, see `OFL.txt`); CDN `<link>`s removed |
 | 5 | `ollama pull <model>` (GB weights) | `deploy/deploy.sh` | deploy | Out of the acceptance path (harness never calls the LLM); model pre-seed is a documented, optional step |

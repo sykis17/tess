@@ -31,6 +31,29 @@ def _print_result(result) -> None:
         print(f"         {result.detail}")
 
 
+def _check_expectations(
+    results: list[ScenarioResult],
+    expect_pass: int | None,
+    expect_skip: int | None,
+) -> int:
+    """Assert the expected tally as an exit-code artifact (never a log-grep).
+
+    The offline verifier passes the topology-aware expectation (--expect-pass 10
+    --expect-skip 1) so a silently shrunken suite or a blanket skip can never
+    exit 0. Returns 0 on match (or no expectation), 1 on any mismatch.
+    """
+    rc = 0
+    n_pass = sum(1 for r in results if r.passed)
+    n_skip = sum(1 for r in results if r.skipped)
+    if expect_pass is not None and n_pass != expect_pass:
+        print(f"EXPECTATION FAILED: {n_pass} scenarios passed, expected {expect_pass}")
+        rc = 1
+    if expect_skip is not None and n_skip != expect_skip:
+        print(f"EXPECTATION FAILED: {n_skip} scenarios skipped, expected {expect_skip}")
+        rc = 1
+    return rc
+
+
 def _skip_result(mod, cfg) -> ScenarioResult | None:
     """Explicit topology skip, decided before any docker call; None = applicable."""
     reason = getattr(mod, "skip_reason", lambda _cfg: None)(cfg)
@@ -53,7 +76,21 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("list", help="List scenarios")
-    sub.add_parser("run-all", help="Reset + run every scenario with clean baseline")
+    run_all_p = sub.add_parser(
+        "run-all", help="Reset + run every scenario with clean baseline"
+    )
+    run_all_p.add_argument(
+        "--expect-pass",
+        type=int,
+        default=None,
+        help="Exit non-zero unless exactly N scenarios PASS (topology-aware tally gate)",
+    )
+    run_all_p.add_argument(
+        "--expect-skip",
+        type=int,
+        default=None,
+        help="Exit non-zero unless exactly N scenarios are SKIPPED",
+    )
     run_p = sub.add_parser("run", help="Run one scenario")
     run_p.add_argument("scenario_id", choices=list(ORDER))
 
@@ -99,7 +136,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         tally += f", {len(skips)} SKIPPED: {reasons}"
     print(tally)
-    return 1 if failed else 0
+    expect_rc = _check_expectations(results, args.expect_pass, args.expect_skip)
+    return 1 if failed else expect_rc
 
 
 if __name__ == "__main__":

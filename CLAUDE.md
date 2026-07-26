@@ -50,14 +50,17 @@ Production server: `5.78.186.223` (Hetzner CPX11). Update via `ssh root@<server>
 
 **Offline / sovereign deploy (Step 4):** the full HA + observability stack packages into a
 single `docker save` bundle that deploys and runs with zero outbound network, proven by the
-split-brain harness `run-all` 10/10 under egress block. See `deploy/MULTI_CLOUD.md` §Offline
+split-brain harness `run-all` under egress block — 10 applicable PASS + an explicit `s11`
+topology-SKIP (quorum-only scenario; the bundle ships single-node etcd — quorum failover is
+certified on the 3-node dev topology). See `deploy/MULTI_CLOUD.md` §Offline
 packaging (the Sovereignty Audit egress table lives there) and `deploy/offline/`
 (`build-bundle.sh` → `install-offline.sh` → `verify-egress-blocked.sh`;
 `docker-compose.offline.yml` is the self-contained, bind-mount-free, `internal:`-network
 stack). Egress is blocked by engine-enforced internal networks, which also drop host
 port-publishing, so the harness runs from an in-container runner reaching nodes by container
-name. Non-root containers and a hash-pinned requirements lockfile are **deliberately
-deferred** (documented in `deploy/MULTI_CLOUD.md` §Deferred hardening).
+name. Containers run non-root (`USER appuser`, uid 1000) on a hash-pinned
+`requirements.lock.txt` (both landed in W1; see `deploy/MULTI_CLOUD.md` §Deferred hardening
+for the resolution record).
 
 ## Architecture
 

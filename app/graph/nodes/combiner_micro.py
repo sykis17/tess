@@ -45,7 +45,12 @@ async def combiner_micro_node(state: GraphState) -> dict[str, Any]:
             task_summary=state.get("current_task") or None,
             output_preview="No micro data to refine.",
         )
-        return {"agent_traces": [trace], "usable_answers": []}
+        result: dict[str, Any] = {"agent_traces": [trace], "usable_answers": []}
+        # A defense retry that lands here must still consume its attempt, or the
+        # retry cap can never engage and the defense loop is unbounded.
+        if (state.get("defense_notes") or "").strip():
+            result["defense_retry_count"] = (state.get("defense_retry_count") or 0) + 1
+        return result
 
     current_task = state.get("current_task") or state["user_input"]
     segment_count = len(micro_data.segments)

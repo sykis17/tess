@@ -1,0 +1,325 @@
+{
+  "set_version": "v1",
+  "notes": "Golden set v1 (W2 S2). Media prompts (photo/video/audio agents) are excluded from v1 — media agents are W6's prune-or-invest candidate; don't build a gate on a surface whose fate is undecided; revisit at the W6 decision. Tag escalation-required marks prompts whose correct handling needs deep-chain treatment (W5's escalation gate depends on these existing; >=3 required). Editing this set is a deliberate re-baseline event: bump set_version and re-baseline the composition tallies in tests/test_graph_eval_golden.py. Expected-agent rubrics are anchored on POV keyword overrides (app/agents/subjects/registry.py) so they hold under WR routing variance; ceilings are generous margins over the Step-0 datum (warm L4 = 71s / ~18.5k tokens) and absorb live-search latency — rubrics never assert on search content.",
+  "prompts": [
+    {
+      "id": "l0_event_loop",
+      "prompt": "Briefly explain what an event loop is in programming.",
+      "chain_profile": "L0",
+      "product_mode": "auto",
+      "tags": [],
+      "sets": ["smoke", "full"],
+      "rubric": {
+        "expect_content_type": "markdown",
+        "min_content_chars": 40,
+        "max_wall_s": 300,
+        "max_total_tokens": 10000
+      }
+    },
+    {
+      "id": "l1_ionic_bonding",
+      "prompt": "Explain ionic bonding in table salt at a high-school level.",
+      "chain_profile": "L1",
+      "product_mode": "auto",
+      "tags": [],
+      "sets": ["smoke", "full"],
+      "rubric": {
+        "expect_agents_all": ["chemistry"],
+        "min_mayor_data": 1,
+        "expect_content_type": "markdown",
+        "min_content_chars": 40,
+        "max_wall_s": 420,
+        "max_total_tokens": 15000
+      }
+    },
+    {
+      "id": "l2_cafe_inflation",
+      "prompt": "Draft a plan for how a small cafe should respond to rising inflation in ingredient prices.",
+      "chain_profile": "L2",
+      "product_mode": "planner",
+      "tags": [],
+      "sets": ["smoke", "full"],
+      "rubric": {
+        "expect_agents_all": ["economics"],
+        "min_mayor_data": 1,
+        "expect_content_type": "markdown",
+        "min_content_chars": 40,
+        "max_wall_s": 600,
+        "max_total_tokens": 30000
+      }
+    },
+    {
+      "id": "l3_coral_reefs",
+      "prompt": "What are current approaches to restoring coral reef ecosystems, and what does recent research say?",
+      "chain_profile": "L3",
+      "product_mode": "research",
+      "tags": [],
+      "sets": ["smoke", "full"],
+      "rubric": {
+        "expect_agents_any": ["biology", "researcher"],
+        "min_mayor_data": 1,
+        "expect_content_type": "markdown",
+        "min_content_chars": 40,
+        "max_wall_s": 900,
+        "max_total_tokens": 40000
+      }
+    },
+    {
+      "id": "l4_ocean_acidification",
+      "prompt": "Our museum wants an interactive exhibit about ocean acidification: explain the chemistry and the biology involved, and how the exhibit's visual design could make the mechanism intuitive.",
+      "chain_profile": "L4",
+      "product_mode": "auto",
+      "tags": ["escalation-required"],
+      "sets": ["smoke", "full"],
+      "rubric": {
+        "expect_agents_any": ["chemistry", "biology"],
+        "min_mayor_data": 2,
+        "min_usable_answers": 1,
+        "expect_content_type": "markdown",
+        "min_content_chars": 200,
+        "max_wall_s": 900,
+        "max_total_tokens": 60000
+      }
+    },
+    {
+      "id": "l0_weather_climate",
+      "prompt": "What's the difference between weather and climate, in two sentences?",
+      "chain_profile": "L0",
+      "product_mode": "research",
+      "tags": [],
+      "sets": ["full"],
+      "rubric": {
+        "expect_content_type": "markdown",
+        "min_content_chars": 40,
+        "max_wall_s": 300,
+        "max_total_tokens": 10000
+      }
+    },
+    {
+      "id": "l0_reverse_string",
+      "prompt": "Write a Python one-liner to reverse a string.",
+      "chain_profile": "L0",
+      "product_mode": "coding",
+      "tags": [],
+      "sets": ["full"],
+      "rubric": {
+        "expect_content_type": "markdown",
+        "min_content_chars": 10,
+        "max_wall_s": 300,
+        "max_total_tokens": 10000
+      }
+    },
+    {
+      "id": "l1_mitosis",
+      "prompt": "What happens during mitosis in a cell?",
+      "chain_profile": "L1",
+      "product_mode": "auto",
+      "tags": [],
+      "sets": ["full"],
+      "rubric": {
+        "expect_agents_all": ["biology"],
+        "min_mayor_data": 1,
+        "expect_content_type": "markdown",
+        "min_content_chars": 40,
+        "max_wall_s": 420,
+        "max_total_tokens": 15000
+      }
+    },
+    {
+      "id": "l1_jazz_poster",
+      "prompt": "Suggest a striking composition and color palette for a jazz festival poster design.",
+      "chain_profile": "L1",
+      "product_mode": "builder",
+      "tags": [],
+      "sets": ["full"],
+      "rubric": {
+        "expect_agents_all": ["art"],
+        "min_mayor_data": 1,
+        "expect_content_type": "markdown",
+        "min_content_chars": 40,
+        "max_wall_s": 420,
+        "max_total_tokens": 15000
+      }
+    },
+    {
+      "id": "l1p_fertilizer",
+      "prompt": "How do fertilizer chemistry and the fertilizer market interact for small farms?",
+      "chain_profile": "L1+",
+      "product_mode": "auto",
+      "tags": [],
+      "sets": ["full"],
+      "rubric": {
+        "expect_agents_all": ["chemistry", "economics"],
+        "min_mayor_data": 2,
+        "expect_content_type": "markdown",
+        "min_content_chars": 80,
+        "max_wall_s": 600,
+        "max_total_tokens": 25000
+      }
+    },
+    {
+      "id": "l1p_recipe_app",
+      "prompt": "Give design direction for a recipe app: the layout and navigation, plus the overall visual style.",
+      "chain_profile": "L1+",
+      "product_mode": "builder",
+      "tags": [],
+      "sets": ["full"],
+      "rubric": {
+        "expect_agents_all": ["ui_design", "art"],
+        "min_mayor_data": 2,
+        "expect_content_type": "markdown",
+        "min_content_chars": 80,
+        "max_wall_s": 600,
+        "max_total_tokens": 25000
+      }
+    },
+    {
+      "id": "l2_accessibility_plan",
+      "prompt": "Plan an accessibility review of our web app's navigation and layout.",
+      "chain_profile": "L2",
+      "product_mode": "planner",
+      "tags": [],
+      "sets": ["full"],
+      "rubric": {
+        "expect_agents_all": ["ui_design"],
+        "min_mayor_data": 1,
+        "expect_content_type": "markdown",
+        "min_content_chars": 40,
+        "max_wall_s": 600,
+        "max_total_tokens": 30000
+      }
+    },
+    {
+      "id": "l2_double_charge",
+      "prompt": "Our checkout service intermittently double-charges customers under load; outline a safe debugging and mitigation approach.",
+      "chain_profile": "L2",
+      "product_mode": "coding",
+      "tags": ["escalation-required"],
+      "sets": ["full"],
+      "rubric": {
+        "expect_agents_any": ["coder", "general_assistant", "researcher"],
+        "min_mayor_data": 1,
+        "expect_content_type": "markdown",
+        "min_content_chars": 80,
+        "max_wall_s": 600,
+        "max_total_tokens": 30000
+      }
+    },
+    {
+      "id": "l2_crispr",
+      "prompt": "Should CRISPR gene editing be used in agriculture? Weigh the biology and the risks.",
+      "chain_profile": "L2",
+      "product_mode": "research",
+      "tags": [],
+      "sets": ["full"],
+      "rubric": {
+        "expect_agents_all": ["biology"],
+        "min_mayor_data": 1,
+        "expect_content_type": "markdown",
+        "min_content_chars": 80,
+        "max_wall_s": 600,
+        "max_total_tokens": 30000
+      }
+    },
+    {
+      "id": "l3_inflation_now",
+      "prompt": "What is the current state of global inflation and how are central banks responding?",
+      "chain_profile": "L3",
+      "product_mode": "research",
+      "tags": [],
+      "sets": ["full"],
+      "rubric": {
+        "expect_agents_any": ["economics", "researcher"],
+        "min_mayor_data": 1,
+        "expect_content_type": "markdown",
+        "min_content_chars": 80,
+        "max_wall_s": 900,
+        "max_total_tokens": 40000
+      }
+    },
+    {
+      "id": "l3_battery_chem",
+      "prompt": "What are promising battery chemistry approaches for grid storage, and what recent developments matter?",
+      "chain_profile": "L3",
+      "product_mode": "auto",
+      "tags": [],
+      "sets": ["full"],
+      "rubric": {
+        "expect_agents_any": ["chemistry", "researcher"],
+        "min_mayor_data": 1,
+        "expect_content_type": "markdown",
+        "min_content_chars": 80,
+        "max_wall_s": 900,
+        "max_total_tokens": 40000
+      }
+    },
+    {
+      "id": "l4_pollinator_decline",
+      "prompt": "Synthesize the biology and economics of pollinator decline: what does the ecosystem evidence show, and what market impacts follow for agriculture?",
+      "chain_profile": "L4",
+      "product_mode": "research",
+      "tags": ["escalation-required"],
+      "sets": ["full"],
+      "rubric": {
+        "expect_agents_any": ["biology", "economics"],
+        "min_mayor_data": 2,
+        "min_usable_answers": 1,
+        "expect_content_type": "markdown",
+        "min_content_chars": 200,
+        "max_wall_s": 900,
+        "max_total_tokens": 60000
+      }
+    },
+    {
+      "id": "l4_science_fair",
+      "prompt": "Create a structured plan for a school science fair exhibit that demonstrates a chemical reaction safely and explains the underlying chemistry.",
+      "chain_profile": "L4",
+      "product_mode": "planner",
+      "tags": [],
+      "sets": ["full"],
+      "rubric": {
+        "expect_agents_all": ["chemistry"],
+        "min_mayor_data": 1,
+        "min_usable_answers": 1,
+        "expect_content_type": "markdown",
+        "min_content_chars": 200,
+        "max_wall_s": 900,
+        "max_total_tokens": 60000
+      }
+    },
+    {
+      "id": "l4_fermentation_kit",
+      "prompt": "We're launching a fermentation kit product: cover the chemistry of fermentation, the target market economics, and the packaging's visual look.",
+      "chain_profile": "L4",
+      "product_mode": "builder",
+      "tags": ["escalation-required"],
+      "sets": ["full"],
+      "rubric": {
+        "expect_agents_any": ["chemistry", "economics"],
+        "min_mayor_data": 2,
+        "min_usable_answers": 1,
+        "expect_content_type": "markdown",
+        "min_content_chars": 200,
+        "max_wall_s": 900,
+        "max_total_tokens": 60000
+      }
+    },
+    {
+      "id": "l4_metrics_dashboard",
+      "prompt": "Design a code architecture for a metrics dashboard web app: data model, API, and the UI layout and usability considerations.",
+      "chain_profile": "L4",
+      "product_mode": "coding",
+      "tags": [],
+      "sets": ["full"],
+      "rubric": {
+        "expect_agents_all": ["coder"],
+        "min_mayor_data": 1,
+        "min_usable_answers": 1,
+        "expect_content_type": "markdown",
+        "min_content_chars": 200,
+        "max_wall_s": 900,
+        "max_total_tokens": 60000
+      }
+    }
+  ]
+}

@@ -14,6 +14,7 @@ frontend/dist/
 # Test / harness output
 *_pytest_*.txt
 harness_run_all.txt
+scripts/graph_eval/history.db
 
 # Offline bundle build output + real offline env (the .example stays tracked)
 deploy/offline/dist/

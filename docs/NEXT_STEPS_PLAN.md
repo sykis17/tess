@@ -220,6 +220,15 @@ for its four manual gates.
 > (`tests/test_defense_routing.py`). Gate doctrine: smoke before any chain change, full
 > before a chain-touching PR — see `scripts/graph_eval/README.md`. LLM-bearing CI legs
 > (nightly tier, runner-fit) are **Session 3 scope**, not delivered here.
+>
+> **Session 3 (nightly CI) is DEFERRED, not dropped — owner: the session after W3.**
+> Resequenced (2026-07-27, with Jesse) because W3 blocks W4 and enriches W5 while nightly
+> blocks nothing. Scope unchanged and still filed at
+> [W2_OPENER.md §Session 3 runway](W2_OPENER.md): split-brain, offline chain, eval judge
+> legs + runner-fit, `s11` single-node stretch. Recorded with an owner **because the
+> offline verifier rotted precisely from a verification step deferred without one** — see
+> §W1.5's durable cure below, which this deferral leaves open. Until S3 lands the eval
+> doctrine is manual discipline, which is the state CI exists to end.
 
 **Goal.** Give the graph what the ops plane already has: per-node observability + a
 repeatable eval gate. Nothing downstream (W5, W6) is verifiable without this.
@@ -265,14 +274,25 @@ deliberately broken chain fails the eval.
 
 ## W3 — LangGraph checkpointing  ·  *shared foundation*
 
+> **Handoff notes written:** [W3_HANDOFF_NOTES.md](W3_HANDOFF_NOTES.md) — folded from the
+> W2-S2 session + an oversight review, verified against the pinned langgraph. Start there,
+> then expand this section into the opener. Two open decisions below already moved:
+> pending-writes/no-double-execution is a **framework guarantee** in the pinned 1.2.9 given
+> a correct saver, and the backend question turns on dependency arithmetic
+> (`langgraph-checkpoint` is already transitive; `-redis` is not). Five traps are named
+> there, three of which corrupt silently.
+
 **Goal.** Make runs **checkpointable/resumable**. Today a live run exists only in a Celery
-worker's memory mid-`astream` ([builder.py:78](../app/graph/builder.py#L78) is a bare
+worker's memory mid-`astream` ([builder.py:81](../app/graph/builder.py#L81) is a bare
 `compile()`), so it can't be migrated, resumed after interrupt, or replayed.
 
 **Scope.**
-- `builder.compile(checkpointer=...)` with a durable checkpointer; thread runs by
-  `session_id` (LangGraph `configurable.thread_id`). Redis is already in the stack — a
-  Redis-backed saver is the low-friction choice.
+- `builder.compile(checkpointer=...)` with a durable checkpointer, behind a **flag-gated
+  seam** (the compiled graph is a module-import singleton that the zero-infra eval harness
+  imports). Thread runs **per TURN, not per session** — `thread_id = session_id:panel_id`;
+  keying on `session_id` alone makes turn 2 inherit turn 1's channels and fires the fan-in
+  join early (see [W3_HANDOFF_NOTES.md](W3_HANDOFF_NOTES.md) trap 1). Redis is already in
+  the stack — a custom saver over the existing dep costs zero new packages.
 - Reconcile with the existing reducer-merge model (`_REDUCER_KEYS` in `app/worker.py`) and
   the fan-in join (`expected_fan_in_branches`) — checkpoints must capture mid-fan-out state.
 - Wire resume into `app/core/session_control.py` (interrupt already revokes the task;
@@ -290,8 +310,12 @@ final Panel; a replay reproduces the same node sequence.
 
 **Size.** ~1–2 sessions.
 
-**Open decisions:** checkpointer backend (Redis saver vs Postgres vs custom-over-Redis);
-serialization boundaries for `GraphState` (Pydantic models + reducer lists).
+**Open decisions:** checkpointer backend (Redis saver vs Postgres vs custom-over-Redis —
+dependency arithmetic in the handoff notes points at custom-over-Redis); serialization
+boundaries for `GraphState` (Pydantic models + reducer lists — the default serializer
+degrades to plain `dict` without raising, so this needs a round-trip guard). Also to
+settle: doctrine classification of checkpoints as recoverable-loss data, `durability` mode,
+Panel delivery guarantee on resume, metrics semantics for resumed runs, and checkpoint TTL.
 
 ---
 

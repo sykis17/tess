@@ -13,6 +13,7 @@ import subprocess
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from importlib.metadata import version as _pkg_version
 from pathlib import Path
 
 _SCHEMA = """
@@ -38,7 +39,9 @@ CREATE TABLE IF NOT EXISTS runs (
     judge_completion_tokens INTEGER,
     judge_cost_usd REAL,
     wall_s REAL NOT NULL,
-    result TEXT NOT NULL
+    result TEXT NOT NULL,
+    langgraph_version TEXT,
+    langchain_core_version TEXT
 );
 CREATE TABLE IF NOT EXISTS prompt_results (
     run_id TEXT NOT NULL REFERENCES runs(run_id),
@@ -87,6 +90,11 @@ class RunRow:
     judge_cost_usd: float | None
     wall_s: float
     result: str
+    # W3: framework identity is part of the measurement identity, same class
+    # as provider/model/judge — the venv drift the W3 handoff found would have
+    # been visible in data with these columns.
+    langgraph_version: str
+    langchain_core_version: str
 
 
 @dataclass(frozen=True)
@@ -110,11 +118,28 @@ class PromptRow:
     attempts: int
 
 
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:
+    columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
 def open_history(db_path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.executescript(_SCHEMA)
+    # The schema above only runs CREATE IF NOT EXISTS — a db created before
+    # the W3 framework-version columns never gains them from it. Add them in
+    # place; historical rows stay NULL, which is honest (their framework
+    # identity was never recorded).
+    _ensure_column(conn, "runs", "langgraph_version", "TEXT")
+    _ensure_column(conn, "runs", "langchain_core_version", "TEXT")
     conn.commit()
     return conn
+
+
+def framework_versions() -> tuple[str, str]:
+    """(langgraph, langchain-core) versions of the environment running the eval."""
+    return _pkg_version("langgraph"), _pkg_version("langchain-core")
 
 
 def new_run_id() -> str:
@@ -146,7 +171,7 @@ def git_identity(repo_root: Path) -> tuple[str, bool]:
 def record_run(conn: sqlite3.Connection, row: RunRow) -> None:
     conn.execute(
         """INSERT INTO runs VALUES
-           (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+           (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             row.run_id,
             row.ts_utc,
@@ -170,6 +195,8 @@ def record_run(conn: sqlite3.Connection, row: RunRow) -> None:
             row.judge_cost_usd,
             row.wall_s,
             row.result,
+            row.langgraph_version,
+            row.langchain_core_version,
         ),
     )
     conn.commit()

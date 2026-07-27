@@ -255,6 +255,7 @@ def _record_history(
 ) -> str:
     run_id = history.new_run_id()
     commit, dirty = history.git_identity(_ROOT)
+    langgraph_version, langchain_core_version = history.framework_versions()
     judged = [o for o in outcomes if o.judge_score is not None]
     conn = history.open_history(cfg.db_path)
     try:
@@ -293,6 +294,8 @@ def _record_history(
                 else None,
                 wall_s=wall_s,
                 result="pass" if all(o.passed for o in outcomes) else "fail",
+                langgraph_version=langgraph_version,
+                langchain_core_version=langchain_core_version,
             ),
         )
         for o in outcomes:

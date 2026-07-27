@@ -197,7 +197,7 @@
       "tags": ["escalation-required"],
       "sets": ["full"],
       "rubric": {
-        "expect_agents_any": ["coder", "general_assistant"],
+        "expect_agents_any": ["coder", "general_assistant", "researcher"],
         "min_mayor_data": 1,
         "expect_content_type": "markdown",
         "min_content_chars": 80,

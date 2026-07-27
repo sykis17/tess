@@ -9,6 +9,7 @@ from app.agents.schemas import RoutingDecision
 from app.agents.subjects.registry import infer_pov_agents_from_keywords, is_pov_agent
 from app.core.product_modes import ProductMode
 from app.graph.chain_gates import (
+    allows_combiners,
     allows_search,
     max_defense_retries,
     max_routed_agents,
@@ -681,7 +682,10 @@ def route_after_defense(state: dict) -> str:
     if all_segments_approved(reviews) or retry_count >= retry_limit:
         return "presenter"
 
-    if state.get("combiners_bypassed"):
+    # Profiles that gate combiners out (everything below L4) can never have
+    # micro_data, so a revise must take the specialist-retry path even when
+    # combiners_bypassed is False (multi-agent + search sets it False on L3).
+    if state.get("combiners_bypassed") or not allows_combiners(chain_profile):
         agent = resolve_retry_specialist(state)
         if agent in AGENT_REGISTRY:
             return agent

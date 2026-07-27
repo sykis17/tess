@@ -85,6 +85,15 @@ class Settings(BaseSettings):
     graph_tracing_enabled: bool = False
     graph_otel_service_name: str = "tess-graph"
 
+    # W3 graph checkpointing (recoverable-loss run scratch; doctrine in
+    # deploy/MULTI_CLOUD.md). OFF by default: the compiled_graph singleton the
+    # zero-infra eval harness imports stays bare; the RedisCheckpointSaver is
+    # constructed lazily at first flag-on use, never at import. TTL sized from
+    # the Step 0 measurement: one L4 run = 19 checkpoints, ~839 KB total, so an
+    # hour-long resume window (~4x the 910 s hard limit) stays MB-scale.
+    graph_checkpointing_enabled: bool = False
+    graph_checkpoint_ttl_seconds: int = 3600
+
     def ops_ha_active(self) -> bool:
         """True when CP HA election/fencing is enabled and etcd is configured."""
         if not self.ops_ha_enabled:

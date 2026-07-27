@@ -381,6 +381,15 @@ class graph_run:
     def set_outcome(self, outcome: str) -> None:
         self._outcome = outcome
 
+    def set_thread_id(self, thread_id: str) -> None:
+        """Span attribute ONLY — thread_id is session-derived (unbounded
+        cardinality) and is banned as a metric label."""
+        if self._span is not None:
+            try:
+                self._span.set_attribute("graph.thread_id", thread_id)
+            except Exception:
+                pass
+
     def __enter__(self) -> "graph_run":
         if not (_METRICS_ON or tracing_on()):
             return self

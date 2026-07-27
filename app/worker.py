@@ -21,7 +21,7 @@ from app.core.session_control import (
     is_session_interrupted,
 )
 from app.core.ws_payload import parse_incoming_payload
-from app.graph import compiled_graph
+from app.graph import compiled_graph, get_checkpoint_saver, get_checkpointed_graph
 from app.graph.combiner_utils import format_usable_answers_markdown
 from app.graph.observability import graph_run, init_graph_observability
 from app.graph.schemas import Panel
@@ -235,43 +235,72 @@ async def _run_graph_with_streaming(
         initial_state.get("chain_profile", ""),
         initial_state.get("product_mode", ""),
     ) as run:
-        async for update in compiled_graph.astream(initial_state, stream_mode="updates"):
-            if is_session_interrupted(session_id):
-                logger.info("Session %s interrupted between graph nodes", session_id)
-                _publish_cancelled(
-                    redis_client,
-                    channel,
-                    "Previous request cancelled — processing your new message.",
-                )
-                run.set_outcome("interrupted")
-                return merged
+        checkpointing = bool(settings.graph_checkpointing_enabled and session_id)
+        if checkpointing:
+            # Thread per TURN: a session-scoped thread would inherit
+            # fan_in_branches_done across turns and fire the fan-in join early.
+            thread_id = f"{session_id}:{initial_state['panel_id']}"
+            run.set_thread_id(thread_id)
+            # durability="sync": checkpoint N is durable before superstep N+1
+            # starts — the invariant the resume gate rests on. "exit" would
+            # silently disable pending-writes; statically guarded by
+            # tests/test_checkpoint_seam.py.
+            stream = get_checkpointed_graph().astream(
+                initial_state,
+                {"configurable": {"thread_id": thread_id}},
+                stream_mode="updates",
+                durability="sync",
+            )
+        else:
+            stream = compiled_graph.astream(initial_state, stream_mode="updates")
+        try:
+            async for update in stream:
+                if is_session_interrupted(session_id):
+                    logger.info("Session %s interrupted between graph nodes", session_id)
+                    _publish_cancelled(
+                        redis_client,
+                        channel,
+                        "Previous request cancelled — processing your new message.",
+                    )
+                    run.set_outcome("interrupted")
+                    return merged
 
-            for node_name, node_output in update.items():
-                if node_output is None:
-                    continue
+                for node_name, node_output in update.items():
+                    if node_output is None:
+                        continue
 
-                node_elapsed = time.monotonic() - node_start
-                cumulative_elapsed = time.monotonic() - pipeline_start
-                logger.info(
-                    "Node %s finished in %.1fs (cumulative %.1fs)",
-                    node_name,
-                    node_elapsed,
-                    cumulative_elapsed,
-                )
-                if node_name == "presenter":
-                    pre_presenter_elapsed = cumulative_elapsed - node_elapsed
-                    if pre_presenter_elapsed > 720:
-                        logger.warning(
-                            "Pipeline exceeded 12 min before presenter (%.1fs pre-presenter)",
-                            pre_presenter_elapsed,
-                        )
-                node_start = time.monotonic()
+                    node_elapsed = time.monotonic() - node_start
+                    cumulative_elapsed = time.monotonic() - pipeline_start
+                    logger.info(
+                        "Node %s finished in %.1fs (cumulative %.1fs)",
+                        node_name,
+                        node_elapsed,
+                        cumulative_elapsed,
+                    )
+                    if node_name == "presenter":
+                        pre_presenter_elapsed = cumulative_elapsed - node_elapsed
+                        if pre_presenter_elapsed > 720:
+                            logger.warning(
+                                "Pipeline exceeded 12 min before presenter (%.1fs pre-presenter)",
+                                pre_presenter_elapsed,
+                            )
+                    node_start = time.monotonic()
 
-                _merge_node_output(merged, node_output)
+                    _merge_node_output(merged, node_output)
 
-                panels = node_output.get("panels", [])
-                if panels:
-                    _publish_panels(redis_client, channel, panels)
+                    panels = node_output.get("panels", [])
+                    if panels:
+                        _publish_panels(redis_client, channel, panels)
+        finally:
+            # Deterministic Pregel unwind BEFORE closing the saver's client: an
+            # abandoned async generator (interrupt early-return) otherwise
+            # finalizes only at asyncio.run's shutdown_asyncgens — after this
+            # function returns — and the exit-stack flush needs a live client.
+            await stream.aclose()
+            if checkpointing:
+                saver = get_checkpoint_saver()
+                if saver is not None:
+                    await saver.aclose()
 
     return merged
 

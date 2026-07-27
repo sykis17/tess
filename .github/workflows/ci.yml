@@ -1,0 +1,151 @@
+# Per-push CI (W2 Session 1). The nightly docker legs (split-brain harness, offline
+# chain, eval judge) land in a separate nightly.yml in W2 Session 3 — see
+# docs/W2_OPENER.md.
+#
+# Job names (unit, doc-links, etcd-parity, frontend) are stable API for branch
+# protection required-checks — renaming one silently drops it from enforcement.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.lock.txt
+      - name: Install from hash-pinned lock
+        run: python -m pip install --require-hashes -r requirements.lock.txt
+      - name: Unit suite
+        run: python -m pytest tests/ -q --junitxml=unit.xml
+      - name: Assert expected skip tally
+        # Deliberate certification baseline, enforced as an exit code (never a
+        # log-grep): exactly 2 skips — the live-etcd parity tests, which run for
+        # real in the etcd-parity job below. Adding a legitimately skipped test is
+        # SUPPOSED to break this until the expectation is consciously re-baselined
+        # here — tallies drift silently when they live in prose only.
+        run: |
+          python - <<'EOF'
+          import xml.etree.ElementTree as ET
+          root = ET.parse("unit.xml").getroot()
+          suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
+          tests = sum(int(s.get("tests", 0)) for s in suites)
+          skipped = sum(int(s.get("skipped", 0)) for s in suites)
+          assert tests > 0, "no tests collected"
+          assert skipped == 2, f"{skipped} skipped, expected exactly 2 (etcd parity)"
+          print(f"tally ok: {tests} tests, {skipped} skipped")
+          EOF
+
+  doc-links:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # stdlib-only script; needs the git checkout it walks
+      - name: Check doc links
+        run: python -m scripts.check_doc_links
+
+  # The non-vacuous leg: a plain `pytest tests/` run skips the live-etcd parity
+  # contract, so a green unit job alone never proves the etcd backend. This job
+  # runs those tests against a throwaway single-node etcd and asserts — from the
+  # junit artifact, not the exit code — that they actually executed.
+  etcd-parity:
+    runs-on: ubuntu-latest
+    services:
+      etcd:
+        # Dev topology pin (docker-compose.ops-ha.yml). Env-driven single-node
+        # config mirrors docker-compose.offline.yml, with advertise URLs adapted
+        # to localhost (etcd refuses to start with listen-client-urls set but no
+        # advertise-client-urls).
+        image: quay.io/coreos/etcd:v3.5.32
+        env:
+          ETCD_NAME: ci-etcd
+          ETCD_DATA_DIR: /etcd-data
+          ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+          ETCD_ADVERTISE_CLIENT_URLS: http://127.0.0.1:2379
+          ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+          ETCD_INITIAL_ADVERTISE_PEER_URLS: http://127.0.0.1:2380
+          ETCD_INITIAL_CLUSTER: ci-etcd=http://127.0.0.1:2380
+          ETCD_INITIAL_CLUSTER_STATE: new
+        ports:
+          - 2379:2379
+        # NO --health-cmd here: GH service-container health options are CMD-SHELL
+        # strings, and the v3.5 etcd image is distroless (no /bin/sh) — the check
+        # can never pass and the job dies at container init (proven on this PR's
+        # first run). Readiness is gated by the explicit wait step below instead.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.lock.txt
+      - name: Install from hash-pinned lock
+        run: python -m pip install --require-hashes -r requirements.lock.txt
+      - name: Wait for etcd
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:2379/health | grep -q 'true'; then
+              echo "etcd healthy"; exit 0
+            fi
+            sleep 2
+          done
+          echo "etcd never became healthy"; exit 1
+      - name: Live-etcd parity suite
+        env:
+          OPS_TEST_ETCD_ENDPOINT: http://127.0.0.1:2379
+        run: python -m pytest tests/test_fence_store_parity.py -v --junitxml=parity.xml
+      - name: Assert parity tests actually ran
+        env:
+          OPS_TEST_ETCD_ENDPOINT: http://127.0.0.1:2379
+        run: |
+          python - <<'EOF'
+          import xml.etree.ElementTree as ET
+          root = ET.parse("parity.xml").getroot()
+          suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
+          tests = sum(int(s.get("tests", 0)) for s in suites)
+          skipped = sum(int(s.get("skipped", 0)) for s in suites)
+          assert tests >= 4, f"only {tests} parity tests collected, expected >= 4"
+          assert skipped == 0, f"{skipped} parity tests skipped — etcd leg is vacuous"
+          # belt and suspenders: the module's import-time endpoint gate is set
+          from tests.test_fence_store_parity import _ETCD_ENDPOINT
+          assert _ETCD_ENDPOINT, "parity module resolved no etcd endpoint"
+          print(f"parity ok: {tests} tests, 0 skipped, endpoint={_ETCD_ENDPOINT}")
+          EOF
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Lint (oxlint)
+        run: npm run lint
+      - name: Type-check + build
+        run: npm run build

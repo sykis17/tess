@@ -1,5 +1,7 @@
 # W2 — Handoff notes from the W1.5 session (2026-07-27)
 
+> **Folded into [W2_OPENER.md](W2_OPENER.md) (2026-07-27) — historical; start there.**
+
 Session-local knowledge for expanding the **W2 opener** (chain instrumentation + eval
 harness + CI; the filing is [NEXT_STEPS_PLAN.md §W2](NEXT_STEPS_PLAN.md) and
 §Cross-cutting — CI). These are **notes to fold in, not the opener itself** — the opener

@@ -143,8 +143,9 @@ touches the bundle.
 
 > **W2-era follow-ups filed by W1.5:** (1) **s11 single-node variant** — turn the topology
 > skip into an assertion (sole etcd down → sustained 503s, durable writes resume after etcd
-> restart); (2) archive `CP_HA_ENGINEERING_REPORT.md` under `docs/archive/ops/` (dated arc
-> snapshot whose pre-s11 "10/10" prose predates the 11-scenario suite).
+> restart) — carried as a W2-S3 stretch item; (2) archive `CP_HA_ENGINEERING_REPORT.md`
+> under `docs/archive/ops/` (dated arc snapshot whose pre-s11 "10/10" prose predates the
+> 11-scenario suite) — ✅ done in W2 Session 1.
 
 **Why this exists.** Running W1's Commit 2 offline gate surfaced that the offline verifier's
 split-brain step has been **broken on `main` since the Step-3 3-node-etcd cutover** — the
@@ -203,10 +204,12 @@ for its four manual gates.
 
 ## W2 — Chain instrumentation + eval harness  ·  *the measurement foundation*
 
-> **Handoff notes written:** [W2_HANDOFF_NOTES.md](W2_HANDOFF_NOTES.md) — session-local
-> environment profile, measured gate runtimes, and the W1.5 tooling CI will lean on
-> (`--expect` tally flags, cold-start `run-all`, size ceiling). Fold into the W2 opener at
-> session start, after settling the open decisions below.
+> **Opener written:** [W2_OPENER.md](W2_OPENER.md) — the cold-start execution doc (settled
+> decisions, invariants, per-session gates, metric inventory, environment profile). This
+> section is the filing; start sessions there. [W2_HANDOFF_NOTES.md](W2_HANDOFF_NOTES.md)
+> is folded in and historical. **Session 1 (graph observability + per-push CI) landed as
+> PR #13**; Session 2 starts at [W2_S2_OPENER.md](W2_S2_OPENER.md) (eval harness —
+> invocation path verified, flake policy, budgets).
 
 **Goal.** Give the graph what the ops plane already has: per-node observability + a
 repeatable eval gate. Nothing downstream (W5, W6) is verifiable without this.
@@ -238,13 +241,15 @@ deliberately broken chain fails the eval.
 
 **Size.** ~2 sessions (spans, then eval harness).
 
-**Open decisions (confirm before starting):**
-- **Trace/metric sink:** OTLP → collector (already present) vs Redis vs sqlite for
-  persisted per-run history.
-- **Eval scoring:** LLM-judge (needs a judge model + cost) vs deterministic rubrics vs
-  both. Recommendation: both — deterministic checks for structure, judge for quality.
-- **Golden-set source/size:** hand-authored seed (~15–25 prompts spanning L0–L4, each
-  product mode, POV vs tool vs media) — enough to be a gate, small enough to run fast.
+**Decisions — ✅ SETTLED (2026-07-27, with Jesse; full statements in
+[W2_OPENER.md](W2_OPENER.md)):**
+- **Trace/metric sink: sqlite** for persisted per-run eval history (gitignored +
+  dockerignored, same commit); live spans/metrics go to the existing otel-collector.
+- **Eval scoring: both** — deterministic rubrics per-push; LLM judge nightly via
+  `create_llm()`, default **Ollama-local (zero spend)**, provider as config knob.
+- **Golden set: ~15–25 hand-authored** prompts spanning L0–L4 × product modes.
+- Also locked at sign-off: **duration histograms record only on outcome=success** (counters
+  carry the outcome split) — keeps interrupted runs from polluting W5's latency evidence.
 
 ---
 
@@ -399,8 +404,10 @@ CI wants to ride along with W2 because that's when the eval gate is born.
 1. **W1 lockfile tool** — ✅ **SETTLED: pip-tools (`pip-compile --generate-hashes`)**;
    install path stays plain `pip --require-hashes` (no new tool inside the zero-network
    bundle). See W1.
-2. **W2 sink** — OTLP collector vs Redis vs sqlite for persisted per-run history.
-3. **W2 eval scoring** — LLM-judge vs deterministic vs both (rec: both).
+2. **W2 sink** — ✅ **SETTLED: sqlite** for per-run eval history (collector keeps live
+   spans/metrics). See W2 / [W2_OPENER.md](W2_OPENER.md).
+3. **W2 eval scoring** — ✅ **SETTLED: both** — deterministic per-push, LLM judge nightly
+   (default Ollama-local, provider a config knob). See W2.
 4. **W3 checkpointer backend** — Redis saver vs Postgres vs custom-over-Redis.
 5. **W4 migration trigger** — manual vs health-driven auto-failover.
 6. **W5 escalation vs product modes** — do explicit modes still pin depth, or set a floor?

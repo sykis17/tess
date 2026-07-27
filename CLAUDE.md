@@ -203,9 +203,16 @@ split-brain harness:
   (unbounded uuid) and session ids / URLs / error strings are **banned** as labels; use
   `provider_type` instead. `tests/test_ops_metrics.py` enforces the label allowlist. Worker
   metric exposition assumes the worker runs `--concurrency=1` (see `deploy/MULTI_CLOUD.md`
-  §Observability). `record_*` helpers never raise. Scope is the ops/HA path only — do **not**
-  instrument the product graph. Verified end-to-end by split-brain scenario
-  `s10_failover_visible` (needs `docker-compose.ops-obs.yml`).
+  §Observability). `record_*` helpers never raise. The ops plane's scope is the ops/HA path
+  only. Since W2 the **product graph has its own separately-gated instrumentation**
+  (`app/graph/observability.py`, flags `GRAPH_METRICS_ENABLED` / `GRAPH_TRACING_ENABLED`,
+  both OFF by default; `tess_graph_` prefix; cost map `app/graph/model_costs.py`) under the
+  same cardinality discipline — `session_id` is a span attribute never a label; unknown
+  chain_profile/product_mode fold to `"other"`; duration histograms record success only —
+  enforced by `tests/test_graph_metrics.py` (which also statically asserts every
+  `builder.add_node` routes through `instrument_node`). **Never cross prefixes** between the
+  planes. Ops verified end-to-end by split-brain scenario `s10_failover_visible` (needs
+  `docker-compose.ops-obs.yml`); graph verified via `docker-compose.graph-obs.yml`.
 
 ## Common file pointers
 
@@ -232,5 +239,9 @@ split-brain harness:
 | Ops observability (metrics/traces) | `app/ops/metrics.py` + `deploy/MULTI_CLOUD.md` §Observability |
 | Ops metrics cardinality guard (tests) | `tests/test_ops_metrics.py` |
 | Observability verification overlay | `docker-compose.ops-obs.yml` + `deploy/otel-collector-config.yaml` |
+| Graph observability (metrics/spans/cost) | `app/graph/observability.py` + `app/graph/model_costs.py` |
+| Graph metrics cardinality guard (tests) | `tests/test_graph_metrics.py` + `tests/test_llm_usage.py` |
+| Graph observability verification overlay | `docker-compose.graph-obs.yml` |
+| Per-push CI | `.github/workflows/ci.yml` |
 | Offline / sovereign stack | `docker-compose.offline.yml` + `deploy/offline/` (`build-bundle.sh`, `install-offline.sh`, `verify-egress-blocked.sh`) |
 | Sovereignty audit + offline runbook | `deploy/MULTI_CLOUD.md` §Offline packaging |

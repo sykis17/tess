@@ -26,6 +26,10 @@ class LLMResponse(BaseModel):
     content: str
     provider: str
     model: str
+    # Token usage when the provider surfaces it (W2): the graph metrics and the eval
+    # harness read these; None means the provider reported nothing.
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
     raw: dict[str, Any] | None = None
 
 

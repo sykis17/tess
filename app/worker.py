@@ -23,6 +23,7 @@ from app.core.session_control import (
 from app.core.ws_payload import parse_incoming_payload
 from app.graph import compiled_graph
 from app.graph.combiner_utils import format_usable_answers_markdown
+from app.graph.observability import graph_run, init_graph_observability
 from app.graph.schemas import Panel
 from app.graph.state import GraphState, build_initial_state
 
@@ -48,6 +49,7 @@ def _init_worker_observability(**_kwargs: object) -> None:
     """
     metrics.start_worker_metrics_server()
     metrics.init_tracing("worker")
+    init_graph_observability()
 
 
 @celery_app.task(name="ops_probe_providers")
@@ -225,42 +227,51 @@ async def _run_graph_with_streaming(
     pipeline_start = time.monotonic()
     node_start = pipeline_start
 
-    async for update in compiled_graph.astream(initial_state, stream_mode="updates"):
-        if is_session_interrupted(session_id):
-            logger.info("Session %s interrupted between graph nodes", session_id)
-            _publish_cancelled(
-                redis_client,
-                channel,
-                "Previous request cancelled — processing your new message.",
-            )
-            return merged
+    # graph_run: root span + run tally (no-op unless GRAPH_* flags are on). Node
+    # durations come from the node wrapper in app/graph/observability.py — the
+    # between-updates timing below stays log-only (inaccurate under fan-out).
+    with graph_run(
+        session_id,
+        initial_state.get("chain_profile", ""),
+        initial_state.get("product_mode", ""),
+    ) as run:
+        async for update in compiled_graph.astream(initial_state, stream_mode="updates"):
+            if is_session_interrupted(session_id):
+                logger.info("Session %s interrupted between graph nodes", session_id)
+                _publish_cancelled(
+                    redis_client,
+                    channel,
+                    "Previous request cancelled — processing your new message.",
+                )
+                run.set_outcome("interrupted")
+                return merged
 
-        for node_name, node_output in update.items():
-            if node_output is None:
-                continue
+            for node_name, node_output in update.items():
+                if node_output is None:
+                    continue
 
-            node_elapsed = time.monotonic() - node_start
-            cumulative_elapsed = time.monotonic() - pipeline_start
-            logger.info(
-                "Node %s finished in %.1fs (cumulative %.1fs)",
-                node_name,
-                node_elapsed,
-                cumulative_elapsed,
-            )
-            if node_name == "presenter":
-                pre_presenter_elapsed = cumulative_elapsed - node_elapsed
-                if pre_presenter_elapsed > 720:
-                    logger.warning(
-                        "Pipeline exceeded 12 min before presenter (%.1fs pre-presenter)",
-                        pre_presenter_elapsed,
-                    )
-            node_start = time.monotonic()
+                node_elapsed = time.monotonic() - node_start
+                cumulative_elapsed = time.monotonic() - pipeline_start
+                logger.info(
+                    "Node %s finished in %.1fs (cumulative %.1fs)",
+                    node_name,
+                    node_elapsed,
+                    cumulative_elapsed,
+                )
+                if node_name == "presenter":
+                    pre_presenter_elapsed = cumulative_elapsed - node_elapsed
+                    if pre_presenter_elapsed > 720:
+                        logger.warning(
+                            "Pipeline exceeded 12 min before presenter (%.1fs pre-presenter)",
+                            pre_presenter_elapsed,
+                        )
+                node_start = time.monotonic()
 
-            _merge_node_output(merged, node_output)
+                _merge_node_output(merged, node_output)
 
-            panels = node_output.get("panels", [])
-            if panels:
-                _publish_panels(redis_client, channel, panels)
+                panels = node_output.get("panels", [])
+                if panels:
+                    _publish_panels(redis_client, channel, panels)
 
     return merged
 

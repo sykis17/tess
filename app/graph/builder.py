@@ -17,6 +17,7 @@ from app.graph.nodes.presenter import presenter_node
 from app.graph.nodes.resource_finder import resource_finder_node
 from app.graph.nodes.resource_reader import resource_reader_node
 from app.graph.nodes.wide_receiver import wide_receiver_node
+from app.graph.observability import instrument_node
 from app.graph.routing import (
     fan_out_from_wr,
     route_after_defense,
@@ -43,21 +44,23 @@ def build_graph() -> CompiledStateGraph:
     """Construct and compile the core TESS LangGraph orchestration chain."""
     builder = StateGraph(GraphState)
 
-    builder.add_node("wide_receiver", wide_receiver_node)
-    builder.add_node("direct_responder", direct_responder_node)
-    builder.add_node("post_fan_in", post_fan_in_node)
-    builder.add_node("fan_in_wait", fan_in_wait_node)
-    builder.add_node("combiner_mayor", combiner_mayor_node)
-    builder.add_node("combiner_micro", combiner_micro_node)
-    builder.add_node("collector", collector_node)
-    builder.add_node("defense_delegator", defense_delegator_node)
-    builder.add_node("defense_review", defense_review_node)
-    builder.add_node("presenter", presenter_node)
-    builder.add_node("resource_finder", resource_finder_node)
-    builder.add_node("resource_reader", resource_reader_node)
+    # Every node routes through instrument_node (a flags-off passthrough) — enforced
+    # statically by tests/test_graph_metrics.py, which reads this file's source.
+    builder.add_node("wide_receiver", instrument_node("wide_receiver", wide_receiver_node))
+    builder.add_node("direct_responder", instrument_node("direct_responder", direct_responder_node))
+    builder.add_node("post_fan_in", instrument_node("post_fan_in", post_fan_in_node))
+    builder.add_node("fan_in_wait", instrument_node("fan_in_wait", fan_in_wait_node))
+    builder.add_node("combiner_mayor", instrument_node("combiner_mayor", combiner_mayor_node))
+    builder.add_node("combiner_micro", instrument_node("combiner_micro", combiner_micro_node))
+    builder.add_node("collector", instrument_node("collector", collector_node))
+    builder.add_node("defense_delegator", instrument_node("defense_delegator", defense_delegator_node))
+    builder.add_node("defense_review", instrument_node("defense_review", defense_review_node))
+    builder.add_node("presenter", instrument_node("presenter", presenter_node))
+    builder.add_node("resource_finder", instrument_node("resource_finder", resource_finder_node))
+    builder.add_node("resource_reader", instrument_node("resource_reader", resource_reader_node))
 
     for name in AGENT_REGISTRY:
-        builder.add_node(name, _SPECIALIST_NODES[name])
+        builder.add_node(name, instrument_node(name, _SPECIALIST_NODES[name], agent=name))
         builder.add_edge(name, "post_fan_in")
 
     builder.add_edge("resource_finder", "resource_reader")

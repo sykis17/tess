@@ -18,6 +18,10 @@ deploy/
 tess-offline-bundle-*.tar.gz
 tess-offline-bundle-*.tar.gz.sha256
 
+# Eval history is a local artifact; scripts/ is COPYed into the image, so without
+# this exclusion every build ships (and the chown -R layer duplicates) a growing db.
+scripts/graph_eval/history.db
+
 __pycache__/
 *.py[cod]
 *.egg-info/

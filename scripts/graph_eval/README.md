@@ -40,11 +40,14 @@ note it in the commit.
 
 ## Budgets (baselined 2026-07-27, this laptop, warm llama3.2)
 
-| run | graph wall | with judge legs |
-|---|---|---|
-| one L4 prompt | ~70–105 s | +~15–30 s |
-| smoke (5 prompts) | ~3.5 min | ~6–10 min |
-| full (20 prompts) | ~15–25 min | ~30–60 min |
+| run | graph wall (measured) |
+|---|---|
+| one L4 prompt | 80–230 s (heaviest: `l4_science_fair`) |
+| smoke (5 prompts) | ~3.5 min |
+| full (20 prompts) | ~25 min (1492 s graph wall, ~180k tokens) |
+
+Wall times vary by 2× run to run on the same prompt — the Ollama lock plus
+model-reload cost dominate. Size expectations off the upper end.
 
 Cold model load adds ~30–40 s to the first prompt. Search-bearing prompts
 (L3/L4) absorb live DuckDuckGo/Tavily latency inside their ceilings.

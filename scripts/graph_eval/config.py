@@ -13,9 +13,11 @@ from dataclasses import dataclass
 from app.core.config import settings
 
 # Judge score (0-10) at or above which a prompt's judge leg passes.
-# Re-baseline: 6 banded from the first green smoke run (llama3.2 judge, prompt v1,
-# observed scores 8-9 across all five prompts - a 2-point margin under the floor);
-# a change is a deliberate re-baseline event, never a mid-arc bump.
+# Re-baseline: 6, from the first green full-set run (llama3.2 judge, prompt v1):
+# 19 of 20 prompts scored 8-9, l4_metrics_dashboard scored exactly 6. The band is
+# therefore tight, not comfortable - a judge dip on the heaviest L4 prompt is one
+# point from red. Raising this floor needs a stronger judge (the provider knob),
+# not optimism; a change is a deliberate re-baseline event, never a mid-arc bump.
 JUDGE_PASS_THRESHOLD = 6
 
 

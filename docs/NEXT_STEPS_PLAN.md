@@ -272,15 +272,23 @@ deliberately broken chain fails the eval.
 
 ---
 
-## W3 — LangGraph checkpointing  ·  *shared foundation*
+## W3 — LangGraph checkpointing  ·  *shared foundation*  ·  **IMPLEMENTED (PR pending)**
 
-> **Handoff notes written:** [W3_HANDOFF_NOTES.md](W3_HANDOFF_NOTES.md) — folded from the
-> W2-S2 session + an oversight review, verified against the pinned langgraph. Start there,
-> then expand this section into the opener. Two open decisions below already moved:
-> pending-writes/no-double-execution is a **framework guarantee** in the pinned 1.2.9 given
-> a correct saver, and the backend question turns on dependency arithmetic
-> (`langgraph-checkpoint` is already transitive; `-redis` is not). Five traps are named
-> there, three of which corrupt silently.
+> **Status (2026-07-27):** landed on `graph/w3-checkpointing` as C1–C6 (saver + contract
+> battery; flag/seam/durability guard; explicit resume path; panel-stream dedup settlement;
+> framework-version history columns; docs/doctrine). All seven open decisions below are
+> settled — see the PR body and the commit messages for the evidence trail. Notable
+> deviations from the handoff's sketch, found by investigation: the planned `stream_reset`
+> consume-once reset was NOT shipped (multi-stream turns made it wrong; the streaming
+> producers' opener panels already carry the reset semantics — pinned by
+> `tests/test_panel_stream_dedup.py`), and every checkpoint hash records `fw_versions`.
+>
+> **Handoff notes:** [W3_HANDOFF_NOTES.md](W3_HANDOFF_NOTES.md) — folded from the
+> W2-S2 session + an oversight review, verified against the pinned langgraph. Two open
+> decisions moved there before implementation: pending-writes/no-double-execution is a
+> **framework guarantee** in the pinned 1.2.9 given a correct saver, and the backend
+> question turns on dependency arithmetic (`langgraph-checkpoint` is already transitive;
+> `-redis` is not). Five traps are named there, three of which corrupt silently.
 
 **Goal.** Make runs **checkpointable/resumable**. Today a live run exists only in a Celery
 worker's memory mid-`astream` ([builder.py:81](../app/graph/builder.py#L81) is a bare
@@ -310,12 +318,17 @@ final Panel; a replay reproduces the same node sequence.
 
 **Size.** ~1–2 sessions.
 
-**Open decisions:** checkpointer backend (Redis saver vs Postgres vs custom-over-Redis —
-dependency arithmetic in the handoff notes points at custom-over-Redis); serialization
-boundaries for `GraphState` (Pydantic models + reducer lists — the default serializer
-degrades to plain `dict` without raising, so this needs a round-trip guard). Also to
-settle: doctrine classification of checkpoints as recoverable-loss data, `durability` mode,
-Panel delivery guarantee on resume, metrics semantics for resumed runs, and checkpoint TTL.
+**Decisions — all settled in the implementation:** backend = custom
+`RedisCheckpointSaver` over the existing dep (zero new packages); serialization =
+whole-checkpoint `dumps_typed` with the serde allowlist derived from `app.graph.schemas`
++ `LLMMessage` and a loud post-load validator (`CheckpointDeserializationError`) closing
+the silent dict-degrade hole, round-trip-guarded over all 11 models; doctrine =
+recoverable-loss (paragraph in `deploy/MULTI_CLOUD.md`); durability = `"sync"`, statically
+guarded against `"exit"`/`checkpoint_during`; Panel delivery = at-least-once with the
+producers' opener panels as the reset affordance (no wire change — see
+`tests/test_panel_stream_dedup.py`); metrics = bounded `"resumed"` outcome
+(`GRAPH_RUN_OUTCOMES`), histograms stay success-only, `thread_id` banned as a label;
+TTL = 3600 s, sized from the measured L4 run (19 checkpoints, ~839 KB).
 
 ---
 

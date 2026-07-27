@@ -117,16 +117,35 @@ START
 
 ### Streaming and timing
 
-- `app/worker.py::_run_graph_with_streaming` uses `astream(stream_mode="updates")` to publish Panels as each node completes. Soft time limit 720s, hard 730s (Celery).
+- `app/worker.py::_run_graph_with_streaming` uses `astream(stream_mode="updates")` to publish Panels as each node completes. Soft time limit 900s, hard 910s (Celery, from `settings.pipeline_*_time_limit_seconds`).
 - `app/graph/stream_utils.py::generate_with_panel_stream` — token-level streaming for L0 `direct_responder` and POV specialists; publishes `is_streaming` Panel deltas via Redis (throttled by `stream_throttle_ms`, default 75 ms).
-- `app/core/session_control.py` — Redis-backed active task id + interrupt flag; WebSocket steer revokes in-flight Celery tasks when user sends while processing.
+- `app/core/session_control.py` — Redis-backed active task id + interrupt flag; WebSocket steer revokes in-flight Celery tasks when user sends while processing. Since W3 the steer targets the flag at the revoked task id (`set_interrupt(sid, target_task_id=...)`) so a stale flag can never abort a resumed run; the legacy value `"1"` interrupts every observer.
 - `app/graph/panel_stream.py::publish_panel` — synchronous Redis publish from within async nodes (best-effort).
 - Fan-in join via `expected_fan_in_branches` / `fan_in_branches_done` in `GraphState` (reducer-appended). `post_fan_in` waits until all branches complete; `fan_in_wait` is a no-op sink for early branches.
+- **Checkpointing (W3, flag-gated OFF by default):** `GRAPH_CHECKPOINTING_ENABLED=true`
+  makes the worker run a checkpointer-compiled twin (`get_checkpointed_graph()` /
+  `RedisCheckpointSaver` in `app/graph/checkpoint.py`); the bare `compiled_graph`
+  singleton stays checkpointer-free forever (the zero-infra eval harness imports it).
+  Threads are per TURN — `thread_id = f"{session_id}:{panel_id}"`; a session-scoped
+  thread would inherit `fan_in_branches_done` across turns and fire the fan-in join
+  early. Durability is pinned to `"sync"` at the worker call site (`"exit"` silently
+  disables the pending-writes mechanism resume rests on — statically guarded by
+  `tests/test_checkpoint_seam.py`). Resume is explicit-only: WS `{"type": "resume"}` →
+  `resume_user_input` re-enters via `astream(None, ...)`; final state comes from
+  `aget_state()` (the pre-interrupt half lives only in the checkpoint) and the turn is
+  recorded to `conversation:{session_id}` exactly once on completion. Checkpoints are
+  **recoverable-loss run scratch** in Redis, TTL `GRAPH_CHECKPOINT_TTL_SECONDS`
+  (default 3600) — doctrine in `deploy/MULTI_CLOUD.md`. The saver uses the binary
+  factories (`create_binary_*_redis`) — never the `decode_responses=True` ones
+  (UTF-8-decoding msgpack corrupts silently). Resumed runs record the bounded metric
+  outcome `"resumed"` (`GRAPH_RUN_OUTCOMES`; never in duration histograms; `thread_id`
+  is a span attribute, banned as a metric label).
 
 ## Key Conventions
 
 - **All new graph state** must be declared in `app/graph/state.py::GraphState` and added to `_REDUCER_KEYS` in `app/worker.py` if it should append-merge from parallel branches.
 - **All Panel additions** are optional with sensible defaults — frontend `frontend/src/types/panel.ts` should mirror them.
+- **Streaming producers publish their opener panel BEFORE streaming.** The non-streaming opener (content `""`) is a frontend wholesale REPLACE — it is also the resume reset affordance that keeps a resumed re-stream from appending onto stale partial content. Enforced by a discovery-based source guard in `tests/test_panel_stream_dedup.py`, which also holds the Python mirror of `mergePanelUpdate`'s content rule (the frontend has no test runner — change both together).
 - **POV agents** are disciplinary lenses, not depth variants. New POV: add to `POV_DEFINITIONS` in `app/agents/subjects/registry.py`, create `app/agents/<key>/`, register in `app/agents/registry.py`, mirror in `app/core/folder_tree.py` and `frontend/src/data/folderTree.ts`.
 - **Linter** on frontend: `oxlint`; type-check via `tsc -b` (run as part of `npm run build`).
 - **No Cursor rules** (`.cursor/` absent) — `.cursorrules` contains a short set: production-ready typed/Pydantic code, async-first FastAPI, modular layout, Celery delegation for heavy AI work, English-only docs and user-facing strings.
@@ -233,6 +252,9 @@ split-brain harness:
 | WebSocket endpoint | `app/api/ws.py` |
 | Frontend WebSocket hook | `frontend/src/hooks/useWebSocket.ts` |
 | Frontend Panel type | `frontend/src/types/panel.ts` |
+| Graph checkpointing (W3 saver) | `app/graph/checkpoint.py` + binary factories in `app/core/redis.py` |
+| Resume entry + task | `app/api/ws.py::_handle_resume` + `app/worker.py::resume_user_input` |
+| Checkpoint/resume guards (tests) | `tests/test_checkpoint_saver.py`, `tests/test_checkpoint_seam.py`, `tests/test_checkpoint_resume.py`, `tests/test_panel_stream_dedup.py` |
 | Status wall logic | `app/graph/pipeline_stages.py` + `frontend/src/hooks/usePipelineStatus.ts` |
 | Folder tree | `app/core/folder_tree.py` + `frontend/src/data/folderTree.ts` |
 | POV segment builder | `app/graph/pov_segments.py` |

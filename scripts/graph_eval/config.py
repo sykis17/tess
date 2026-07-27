@@ -13,8 +13,9 @@ from dataclasses import dataclass
 from app.core.config import settings
 
 # Judge score (0-10) at or above which a prompt's judge leg passes.
-# Re-baseline: 6 set from the first green smoke run (S2 commit 3, llama3.2 judge,
-# judge prompt v1); a change is a deliberate re-baseline event, never a mid-arc bump.
+# Re-baseline: 6 banded from the first green smoke run (llama3.2 judge, prompt v1,
+# observed scores 8-9 across all five prompts - a 2-point margin under the floor);
+# a change is a deliberate re-baseline event, never a mid-arc bump.
 JUDGE_PASS_THRESHOLD = 6
 
 

@@ -210,6 +210,16 @@ for its four manual gates.
 > is folded in and historical. **Session 1 (graph observability + per-push CI) landed as
 > PR #13**; Session 2 starts at [W2_S2_OPENER.md](W2_S2_OPENER.md) (eval harness —
 > invocation path verified, flake policy, budgets).
+>
+> **Session 2 (eval harness) landed** on `ops/w2-s2-graph-eval`: `scripts/graph_eval/` —
+> golden set v1 (20 prompts, composition pinned as executable claims), strict structural
+> rubrics + pinned Ollama judge (identity recorded per run), sqlite history, smoke/full
+> gates with `--expect-pass` tallies, runaway-chain guard, live sabotage red-first proof.
+> The harness's **first live run caught a real unbounded L3 defense retry loop** (masked
+> in production by the Celery 720s kill), fixed red-first in the same PR
+> (`tests/test_defense_routing.py`). Gate doctrine: smoke before any chain change, full
+> before a chain-touching PR — see `scripts/graph_eval/README.md`. LLM-bearing CI legs
+> (nightly tier, runner-fit) are **Session 3 scope**, not delivered here.
 
 **Goal.** Give the graph what the ops plane already has: per-node observability + a
 repeatable eval gate. Nothing downstream (W5, W6) is verifiable without this.

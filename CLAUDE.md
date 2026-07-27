@@ -131,6 +131,13 @@ START
 - **Linter** on frontend: `oxlint`; type-check via `tsc -b` (run as part of `npm run build`).
 - **No Cursor rules** (`.cursor/` absent) — `.cursorrules` contains a short set: production-ready typed/Pydantic code, async-first FastAPI, modular layout, Celery delegation for heavy AI work, English-only docs and user-facing strings.
 - **Tests are unit-level** — they exercise routing/parsing/serialization utilities directly, not the live graph. Live integration testing is via the local Docker stack (see `LOCAL_DEV.md`).
+- **Chain changes are gated by the graph eval harness** (since W2 S2): run
+  `python -m scripts.graph_eval run-all --set smoke --expect-pass 5` before any chain
+  change (`app/graph/**`, `app/agents/**`, prompts, routing), and the full set
+  (`run-all --expect-pass 20`) before a chain-touching PR. Needs host Ollama, no docker —
+  see `scripts/graph_eval/README.md` for budgets, flake protocol, and re-baseline
+  doctrine. Only the harness's no-LLM unit layer rides per-push CI; LLM-bearing CI legs
+  are W2-S3 scope.
 
 ## Ops control-plane HA — critical invariants
 
@@ -242,6 +249,9 @@ split-brain harness:
 | Graph observability (metrics/spans/cost) | `app/graph/observability.py` + `app/graph/model_costs.py` |
 | Graph metrics cardinality guard (tests) | `tests/test_graph_metrics.py` + `tests/test_llm_usage.py` |
 | Graph observability verification overlay | `docker-compose.graph-obs.yml` |
+| Graph eval harness (chain-change gate) | `scripts/graph_eval/` + its `README.md` |
+| Golden set + composition guards | `scripts/graph_eval/golden/set_v1.json` + `tests/test_graph_eval_golden.py` |
+| Defense-loop regression guards | `tests/test_defense_routing.py` |
 | Per-push CI | `.github/workflows/ci.yml` |
 | Offline / sovereign stack | `docker-compose.offline.yml` + `deploy/offline/` (`build-bundle.sh`, `install-offline.sh`, `verify-egress-blocked.sh`) |
 | Sovereignty audit + offline runbook | `deploy/MULTI_CLOUD.md` §Offline packaging |

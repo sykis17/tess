@@ -8,6 +8,7 @@ smoke/full runs are a local command (see scripts/graph_eval/README.md) — only
 this no-LLM layer rides per-push CI.
 """
 
+import asyncio
 import json
 import sqlite3
 
@@ -18,6 +19,7 @@ from app.graph.schemas import MayorData, Panel, UsableAnswer
 
 from scripts.graph_eval import __main__ as cli
 from scripts.graph_eval import runner
+from scripts.graph_eval.judge import JudgeResult
 from scripts.graph_eval.golden import GoldenPrompt, GoldenSet, load_set
 from scripts.graph_eval.metrics_delta import GraphDelta, compute_delta, take_snapshot
 from scripts.graph_eval.rubrics import evaluate_structural
@@ -203,7 +205,9 @@ def _fake_suite(monkeypatch, tmp_path, failing_ids=()):
     )
     executed: list[str] = []
 
-    async def fake_run_prompt(prompt_text, *, chain_profile, product_mode, progress=None):
+    async def fake_run_prompt(
+        prompt_text, *, chain_profile, product_mode, timeout_s=None, progress=None
+    ):
         pid = prompt_text.split()[-1]
         executed.append(pid)
         state = _completed_state()
@@ -220,8 +224,14 @@ def _fake_suite(monkeypatch, tmp_path, failing_ids=()):
             delta=GraphDelta(prompt_tokens=10, completion_tokens=5, cost_usd=0.0, llm_calls=1),
         )
 
+    async def fake_judge(cfg, prompt_text, answer, expected_povs):
+        return JudgeResult(
+            score=9.0, verdict="solid", prompt_tokens=100, completion_tokens=20, cost_usd=0.0
+        )
+
     monkeypatch.setattr(cli, "load_set", lambda: golden)
     monkeypatch.setattr(cli, "run_prompt", fake_run_prompt)
+    monkeypatch.setattr(cli, "judge_answer", fake_judge)
     monkeypatch.setattr(cli, "_assert_ready", lambda: ("fakeprov", "fakemodel"))
     monkeypatch.setenv("GRAPH_EVAL_HISTORY_DB", str(tmp_path / "history.db"))
     return executed, tmp_path / "history.db"
@@ -257,15 +267,22 @@ def test_run_all_writes_history_with_identity(monkeypatch, tmp_path):
     try:
         run = conn.execute(
             "SELECT set_name, set_version, graph_provider, graph_model, git_commit, "
-            "prompts_total, structural_passed, result FROM runs"
+            "prompts_total, structural_passed, result, judge_provider, judge_model, "
+            "judge_prompt_version, judge_passed FROM runs"
         ).fetchone()
-        assert run == ("smoke", "test-v1", "fakeprov", "fakemodel", run[4], 2, 2, "pass")
+        assert run[:4] == ("smoke", "test-v1", "fakeprov", "fakemodel")
         assert len(run[4]) == 40  # a real git commit hash
+        assert run[5:8] == (2, 2, "pass")
+        # Judge identity must be populated whenever a judge scored the run.
+        assert run[8] is not None and run[9] is not None and run[10] is not None
+        assert run[11] == 2
         rows = conn.execute(
-            "SELECT prompt_id, structural_pass, failures FROM prompt_results ORDER BY prompt_id"
+            "SELECT prompt_id, structural_pass, failures, judge_score FROM prompt_results "
+            "ORDER BY prompt_id"
         ).fetchall()
         assert [(r[0], r[1]) for r in rows] == [("p1", 1), ("p2", 1)]
         assert all(json.loads(r[2]) == [] for r in rows)
+        assert all(r[3] == 9.0 for r in rows)
     finally:
         conn.close()
 
@@ -273,6 +290,80 @@ def test_run_all_writes_history_with_identity(monkeypatch, tmp_path):
 def test_run_single_unknown_id(monkeypatch, tmp_path):
     _fake_suite(monkeypatch, tmp_path)
     assert cli.main(["run", "nope"]) == 1
+
+
+def test_judge_flake_retry_recovers_and_is_recorded(monkeypatch, tmp_path):
+    _fake_suite(monkeypatch, tmp_path)
+    scores = iter([2.0, 9.0])  # first judge call misses the band, the re-run clears it
+
+    async def flaky_judge(cfg, prompt_text, answer, expected_povs):
+        return JudgeResult(
+            score=next(scores), verdict="v", prompt_tokens=1, completion_tokens=1, cost_usd=0.0
+        )
+
+    monkeypatch.setattr(cli, "judge_answer", flaky_judge)
+    outcome = asyncio.run(
+        cli._run_one_with_retry(_golden_prompt("p1", ("full",)), cli.load_config(), 1)
+    )
+    assert outcome.passed
+    assert outcome.attempts == 2
+
+
+def test_judge_persistent_failure_is_real(monkeypatch, tmp_path):
+    _fake_suite(monkeypatch, tmp_path)
+
+    async def bad_judge(cfg, prompt_text, answer, expected_povs):
+        return JudgeResult(
+            score=2.0, verdict="v", prompt_tokens=1, completion_tokens=1, cost_usd=0.0
+        )
+
+    monkeypatch.setattr(cli, "judge_answer", bad_judge)
+    outcome = asyncio.run(
+        cli._run_one_with_retry(_golden_prompt("p1", ("full",)), cli.load_config(), 1)
+    )
+    # Two consecutive judge-band failures are real — no third attempt.
+    assert not outcome.passed
+    assert outcome.attempts == 2
+
+
+# ---------------------------------------------------------------------------
+# Runaway-chain guard — a hung graph becomes a red result, not a hung harness.
+# ---------------------------------------------------------------------------
+
+
+class _FakeGraph:
+    def __init__(self, hang: bool):
+        self._hang = hang
+
+    def astream(self, state, stream_mode):
+        hang = self._hang
+
+        async def _gen():
+            yield {"wide_receiver": {"current_task": "probe"}}
+            if hang:
+                await asyncio.sleep(3600)
+            yield {"presenter": {}}
+
+        return _gen()
+
+
+def test_runner_timeout_aborts_hung_graph(monkeypatch):
+    monkeypatch.setattr(runner, "compiled_graph", _FakeGraph(hang=True))
+    result = asyncio.run(
+        runner.run_prompt("x", chain_profile="L3", product_mode="auto", timeout_s=0.2)
+    )
+    assert result.outcome == "timeout"
+    assert "runaway-chain guard" in result.error
+    # State merged before the abort is preserved for the structural post-mortem.
+    assert result.final_state.get("current_task") == "probe"
+
+
+def test_runner_completes_within_ceiling(monkeypatch):
+    monkeypatch.setattr(runner, "compiled_graph", _FakeGraph(hang=False))
+    result = asyncio.run(
+        runner.run_prompt("x", chain_profile="L3", product_mode="auto", timeout_s=5.0)
+    )
+    assert result.outcome == "success"
 
 
 # ---------------------------------------------------------------------------

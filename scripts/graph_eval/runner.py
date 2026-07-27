@@ -8,6 +8,7 @@ overhead.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -25,7 +26,7 @@ from scripts.graph_eval.metrics_delta import GraphDelta, compute_delta, take_sna
 
 @dataclass
 class PromptRunResult:
-    outcome: str  # "success" | "error"
+    outcome: str  # "success" | "error" | "timeout"
     error: str
     wall_s: float
     final_state: dict[str, Any]
@@ -37,6 +38,7 @@ async def run_prompt(
     *,
     chain_profile: str,
     product_mode: str,
+    timeout_s: float | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> PromptRunResult:
     state = build_initial_state(
@@ -49,13 +51,25 @@ async def run_prompt(
     before = take_snapshot()
     outcome, error = "success", ""
     started = time.monotonic()
-    try:
+
+    async def _consume() -> None:
         async for update in compiled_graph.astream(state, stream_mode="updates"):
             for node_name, node_output in update.items():
                 if isinstance(node_output, dict):
                     _merge_node_output(merged, node_output)
                 if progress is not None:
                     progress(node_name)
+
+    # The rubric's wall ceiling doubles as a hard abort: a runaway chain (e.g. an
+    # unbounded defense retry loop) must become a red result, not a hung harness.
+    try:
+        if timeout_s is not None:
+            await asyncio.wait_for(_consume(), timeout=timeout_s)
+        else:
+            await _consume()
+    except asyncio.TimeoutError:
+        outcome = "timeout"
+        error = f"aborted at {timeout_s:.0f}s wall ceiling (runaway-chain guard)"
     except Exception as exc:  # noqa: BLE001 — a red prompt must not kill the run loop
         outcome, error = "error", f"{type(exc).__name__}: {exc}"
     wall_s = time.monotonic() - started

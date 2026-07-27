@@ -161,6 +161,10 @@ parity env line removed → parity job red on the skipped==0 assert (recorded, d
 
 ## Session 2 runway — eval harness (`scripts/graph_eval/`)
 
+> **Session opener written:** [W2_S2_OPENER.md](W2_S2_OPENER.md) — invocation path
+> verified in-process (zero infra), flake policy, wall-time budgeting, history schema,
+> commit map. Start Session 2 there; the bullets below are the original runway sketch.
+
 - Golden set 15–25 hand-authored prompts × rubric (L0–L4 × product modes), analogous in
   spirit to `scripts/ops_cp_splitbrain/`; `python -m scripts.graph_eval run-all` prints
   per-prompt scores + a tokens/latency/cost table (fed by `LLMResponse.prompt_tokens/

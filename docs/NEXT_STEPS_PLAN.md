@@ -207,7 +207,9 @@ for its four manual gates.
 > **Opener written:** [W2_OPENER.md](W2_OPENER.md) — the cold-start execution doc (settled
 > decisions, invariants, per-session gates, metric inventory, environment profile). This
 > section is the filing; start sessions there. [W2_HANDOFF_NOTES.md](W2_HANDOFF_NOTES.md)
-> is folded in and historical.
+> is folded in and historical. **Session 1 (graph observability + per-push CI) landed as
+> PR #13**; Session 2 starts at [W2_S2_OPENER.md](W2_S2_OPENER.md) (eval harness —
+> invocation path verified, flake policy, budgets).
 
 **Goal.** Give the graph what the ops plane already has: per-node observability + a
 repeatable eval gate. Nothing downstream (W5, W6) is verifiable without this.

@@ -38,9 +38,11 @@ ALLOWED_LABELS = {
 
 # Anything that is (or can become) unbounded — banned as a metric label forever.
 # (Fine as span attributes, which are not aggregated; never as metric labels.)
+# thread_id (W3) is session-derived — span attribute graph.thread_id only.
 BANNED_LABELS = {
     "session_id", "panel_id", "url", "path", "error", "last_error", "message",
     "trace_id", "request_id", "user_input", "agent_id", "provider_id",
+    "thread_id",
 }
 
 
@@ -176,6 +178,54 @@ def test_run_duration_success_only(monkeypatch: pytest.MonkeyPatch):
     assert _sample(obs.RUN_DURATION, "_count", labels) == before
     obs.record_run("L1", "coding", "success", 5.0)
     assert _sample(obs.RUN_DURATION, "_count", labels) == before + 1
+
+
+# ---------------------------------------------------------------------------
+# W3: run-outcome vocabulary bounding (the graph plane's first outcome enum —
+# before this, record_run piped free-form strings straight into a label).
+# ---------------------------------------------------------------------------
+def test_run_outcome_vocabulary_pinned():
+    assert obs.GRAPH_RUN_OUTCOMES == frozenset(
+        {"success", "interrupted", "cancelled", "error", "resumed"}
+    )
+
+
+def test_run_outcome_vocabulary_bounded(monkeypatch: pytest.MonkeyPatch):
+    """Non-vacuous: an unknown outcome must land in "other", not mint a label."""
+    monkeypatch.setattr(obs, "_METRICS_ON", True)
+    labels = {"chain_profile": "L2", "product_mode": "auto"}
+    other_before = _sample(obs.GRAPH_RUNS, "_total", {**labels, "outcome": "other"})
+    obs.record_run("L2", "auto", "weird_outcome")
+    assert (
+        _sample(obs.GRAPH_RUNS, "_total", {**labels, "outcome": "weird_outcome"}) == 0
+    ), "unbounded outcome value leaked into a metric label"
+    assert (
+        _sample(obs.GRAPH_RUNS, "_total", {**labels, "outcome": "other"})
+        == other_before + 1
+    )
+
+
+def test_resumed_outcome_skips_duration_histogram(monkeypatch: pytest.MonkeyPatch):
+    """Resumed runs have partial wall time — they advance the counter but must
+    never enter latency trends (histograms stay success-only by construction)."""
+    monkeypatch.setattr(obs, "_METRICS_ON", True)
+    labels = {"chain_profile": "L3", "product_mode": "research"}
+    hist_before = _sample(obs.RUN_DURATION, "_count", labels)
+    runs_before = _sample(
+        obs.GRAPH_RUNS, "_total", {**labels, "outcome": "resumed"}
+    )
+    obs.record_run("L3", "research", "resumed", 12.5)
+    assert (
+        _sample(obs.GRAPH_RUNS, "_total", {**labels, "outcome": "resumed"})
+        == runs_before + 1
+    )
+    assert _sample(obs.RUN_DURATION, "_count", labels) == hist_before
+
+
+def test_thread_id_banned_as_metric_label():
+    assert "thread_id" in BANNED_LABELS
+    for m in obs.ALL_GRAPH_METRICS:
+        assert "thread_id" not in m._labelnames, m._name
 
 
 # ---------------------------------------------------------------------------

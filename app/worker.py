@@ -18,7 +18,9 @@ from app.core.session_control import (
     SessionInterrupted,
     clear_active_task_if_matches,
     clear_interrupt,
+    clear_resumable_thread,
     is_session_interrupted,
+    set_resumable_thread,
 )
 from app.core.ws_payload import parse_incoming_payload
 from app.graph import compiled_graph, get_checkpoint_saver, get_checkpointed_graph
@@ -221,8 +223,17 @@ async def _run_graph_with_streaming(
     redis_client,
     channel: str,
     session_id: str,
+    *,
+    resume_thread_id: str | None = None,
+    observer_task_id: str | None = None,
 ) -> dict[str, Any]:
-    """Run the graph and publish Panels incrementally as nodes complete."""
+    """Run the graph and publish Panels incrementally as nodes complete.
+
+    With ``resume_thread_id`` the graph re-enters from that thread's last
+    checkpoint (``initial_state`` then carries the checkpointed values for
+    span labels and merging only — the graph input is None). The caller
+    guarantees checkpointing is enabled on that path.
+    """
     merged: dict[str, Any] = dict(initial_state)
     pipeline_start = time.monotonic()
     node_start = pipeline_start
@@ -236,26 +247,37 @@ async def _run_graph_with_streaming(
         initial_state.get("product_mode", ""),
     ) as run:
         checkpointing = bool(settings.graph_checkpointing_enabled and session_id)
-        if checkpointing:
+        if resume_thread_id is not None:
+            # Resume re-entry: input=None + existing checkpoint == resume;
+            # the framework rehydrates recorded writes and ticks only the
+            # writeless tasks (no double execution, given the durable saver).
+            thread_id: str | None = resume_thread_id
+            graph_input: GraphState | None = None
+        elif checkpointing:
             # Thread per TURN: a session-scoped thread would inherit
             # fan_in_branches_done across turns and fire the fan-in join early.
             thread_id = f"{session_id}:{initial_state['panel_id']}"
+            graph_input = initial_state
+        else:
+            thread_id = None
+            graph_input = initial_state
+        if thread_id is not None:
             run.set_thread_id(thread_id)
             # durability="sync": checkpoint N is durable before superstep N+1
             # starts — the invariant the resume gate rests on. "exit" would
             # silently disable pending-writes; statically guarded by
             # tests/test_checkpoint_seam.py.
             stream = get_checkpointed_graph().astream(
-                initial_state,
+                graph_input,
                 {"configurable": {"thread_id": thread_id}},
                 stream_mode="updates",
                 durability="sync",
             )
         else:
-            stream = compiled_graph.astream(initial_state, stream_mode="updates")
+            stream = compiled_graph.astream(graph_input, stream_mode="updates")
         try:
             async for update in stream:
-                if is_session_interrupted(session_id):
+                if is_session_interrupted(session_id, observer_task_id):
                     logger.info("Session %s interrupted between graph nodes", session_id)
                     _publish_cancelled(
                         redis_client,
@@ -297,10 +319,12 @@ async def _run_graph_with_streaming(
             # finalizes only at asyncio.run's shutdown_asyncgens — after this
             # function returns — and the exit-stack flush needs a live client.
             await stream.aclose()
-            if checkpointing:
+            if thread_id is not None:
                 saver = get_checkpoint_saver()
                 if saver is not None:
                     await saver.aclose()
+        if resume_thread_id is not None:
+            run.set_outcome("resumed")
 
     return merged
 
@@ -330,11 +354,21 @@ def process_user_input(payload: str, session_id: str) -> None:
             product_mode=product_mode,
             chain_profile=chain_profile,
         )
+        if settings.graph_checkpointing_enabled and session_id:
+            # Written at run START so interrupt AND crash both leave a handle;
+            # cleared on successful completion below.
+            set_resumable_thread(session_id, f"{session_id}:{panel_id}")
         result = asyncio.run(
-            _run_graph_with_streaming(initial_state, redis_client, channel, session_id)
+            _run_graph_with_streaming(
+                initial_state,
+                redis_client,
+                channel,
+                session_id,
+                observer_task_id=task_id,
+            )
         )
 
-        if is_session_interrupted(session_id):
+        if is_session_interrupted(session_id, task_id):
             logger.info("Session %s run ended due to interrupt", session_id)
             return
 
@@ -347,6 +381,7 @@ def process_user_input(payload: str, session_id: str) -> None:
 
         assistant_content = _extract_assistant_content(result)
         append_conversation_turn(session_id, user_text, assistant_content)
+        clear_resumable_thread(session_id)
     except SessionInterrupted:
         logger.info("Session %s interrupted during streaming", session_id)
         _publish_cancelled(
@@ -358,7 +393,7 @@ def process_user_input(payload: str, session_id: str) -> None:
         logger.error("Task timed out for session %s", session_id)
         _publish_error(redis_client, channel, _format_worker_error(exc))
     except Exception as exc:
-        if is_session_interrupted(session_id):
+        if is_session_interrupted(session_id, task_id):
             logger.info("Session %s interrupted (exception during teardown)", session_id)
             _publish_cancelled(
                 redis_client,
@@ -367,6 +402,112 @@ def process_user_input(payload: str, session_id: str) -> None:
             )
             return
         logger.exception("Failed to process user input for session %s", session_id)
+        _publish_error(redis_client, channel, _format_worker_error(exc))
+    finally:
+        clear_active_task_if_matches(session_id, task_id)
+        redis_client.close()
+
+
+async def _run_resume(
+    thread_id: str,
+    redis_client,
+    channel: str,
+    session_id: str,
+    task_id: str | None,
+) -> dict[str, Any] | None:
+    """Re-enter a checkpointed run and return its authoritative final state.
+
+    One coroutine for pre-flight, stream, and final read so the saver's
+    loop-stamped client spans a single event loop. Returns None when the
+    thread has nothing pending (empty or already complete).
+    """
+    graph = get_checkpointed_graph()
+    config = {"configurable": {"thread_id": thread_id}}
+    snapshot = await graph.aget_state(config)
+    if not getattr(snapshot, "values", None) or not getattr(snapshot, "next", ()):
+        return None
+    await _run_graph_with_streaming(
+        dict(snapshot.values),
+        redis_client,
+        channel,
+        session_id,
+        resume_thread_id=thread_id,
+        observer_task_id=task_id,
+    )
+    # Authoritative final state: the streamed merge only saw post-resume
+    # updates — the pre-interrupt half of the run lives in the checkpoint.
+    final = await graph.aget_state(config)
+    saver = get_checkpoint_saver()
+    if saver is not None:
+        await saver.aclose()  # closes the client the final aget_state opened
+    return dict(final.values)
+
+
+@celery_app.task(
+    name="resume_user_input",
+    soft_time_limit=PIPELINE_SOFT_TIME_LIMIT_SECONDS,
+    time_limit=PIPELINE_HARD_TIME_LIMIT_SECONDS,
+)
+def resume_user_input(session_id: str, thread_id: str) -> None:
+    """Resume an interrupted run from its last checkpoint (explicit trigger).
+
+    The conversation turn is recorded to conversation:{session_id} exactly
+    once, here on completion, with the user text recovered from checkpointed
+    state — no second history store.
+    """
+    channel = session_channel(session_id)
+    redis_client = create_sync_redis()
+    task_id = resume_user_input.request.id
+
+    try:
+        if not settings.graph_checkpointing_enabled:
+            _publish_error(
+                redis_client, channel, "Checkpointing is disabled — nothing to resume."
+            )
+            return
+        clear_interrupt(session_id)
+        values = asyncio.run(
+            _run_resume(thread_id, redis_client, channel, session_id, task_id)
+        )
+        if values is None:
+            _publish_error(redis_client, channel, "Nothing to resume for this session.")
+            return
+
+        if is_session_interrupted(session_id, task_id):
+            logger.info("Session %s resume ended due to interrupt", session_id)
+            return
+
+        panels: list[Panel] = values.get("panels", [])
+        if not panels:
+            logger.warning("Resume completed with no panels for session %s", session_id)
+            _publish_error(redis_client, channel, "Resume completed with no panels.")
+            return
+
+        assistant_content = _extract_assistant_content(values)
+        append_conversation_turn(
+            session_id, str(values.get("user_input", "")), assistant_content
+        )
+        clear_resumable_thread(session_id)
+    except SessionInterrupted:
+        logger.info("Session %s interrupted during resume streaming", session_id)
+        _publish_cancelled(
+            redis_client,
+            channel,
+            "Previous request cancelled — processing your new message.",
+        )
+    except SoftTimeLimitExceeded as exc:
+        logger.error("Resume timed out for session %s", session_id)
+        _publish_error(redis_client, channel, _format_worker_error(exc))
+    except Exception as exc:
+        if is_session_interrupted(session_id, task_id):
+            logger.info("Session %s resume interrupted (teardown)", session_id)
+            _publish_cancelled(
+                redis_client,
+                channel,
+                "Previous request cancelled — processing your new message.",
+            )
+            return
+        logger.exception("Failed to resume run for session %s", session_id)
         _publish_error(redis_client, channel, _format_worker_error(exc))
     finally:
         clear_active_task_if_matches(session_id, task_id)

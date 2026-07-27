@@ -75,6 +75,10 @@ async def run_specialist(state: GraphState, agent_name: str) -> dict[str, Any]:
             output_level=state.get("chain_profile"),
             pipeline_stage=PipelineStage.AGENTS,
         )
+        # This opener (non-streaming => frontend wholesale REPLACE) doubles as
+        # the resume reset: it must precede the stream or a resumed re-stream
+        # appends onto stale partial content. Guarded by
+        # tests/test_panel_stream_dedup.py.
         publish_panel(streaming_panel, session_id)
 
     messages: list[LLMMessage] = [

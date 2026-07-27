@@ -45,6 +45,7 @@ function App() {
     providerNotice,
     isProcessing,
     sendMessage,
+    sendResume,
     clearError,
     clearCancelNotice,
     clearProviderNotice,
@@ -148,6 +149,9 @@ function App() {
         {cancelNotice && (
           <div className="cancel-notice" role="status">
             <span>{cancelNotice}</span>
+            <button type="button" onClick={sendResume}>
+              Resume
+            </button>
             <button type="button" onClick={clearCancelNotice}>
               Dismiss
             </button>
@@ -156,6 +160,9 @@ function App() {
         {providerNotice && (
           <div className="cancel-notice" role="status">
             <span>{providerNotice}</span>
+            <button type="button" onClick={sendResume}>
+              Resume
+            </button>
             <button type="button" onClick={clearProviderNotice}>
               Dismiss
             </button>

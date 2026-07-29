@@ -2,9 +2,12 @@
 
 from unittest.mock import patch
 
+import pytest
+
+from app.core.config import Settings
 from app.ops.bootstrap import bootstrap_ops_control_plane
 from app.ops.models import CloudProvider, ProviderType
-from app.ops.store import reset_store
+from app.ops.store import ensure_default_hetzner, reset_store
 from app.providers.cloud import GcpAdapter, get_adapter
 
 
@@ -62,7 +65,7 @@ def test_bootstrap_seeds_hetzner_and_cloud_env() -> None:
         with patch("app.ops.bootstrap.persist_store"):
             with patch("app.ops.bootstrap.settings") as mock_settings:
                 mock_settings.ops_local_base_url = "http://127.0.0.1:8000"
-                mock_settings.ops_public_ws_base_url = "ws://5.78.186.223"
+                mock_settings.ops_public_ws_base_url = "ws://203.0.113.10"
                 mock_settings.ops_hetzner_region = "fsn1"
                 mock_settings.ops_aws_base_url = "http://aws.example:8000"
                 mock_settings.ops_aws_region = "us-east-1"
@@ -84,4 +87,26 @@ def test_bootstrap_seeds_hetzner_and_cloud_env() -> None:
     assert ProviderType.AWS in types
     assert ProviderType.GCP in types
     hetzner = next(p for p in store.list_providers() if p.type == ProviderType.HETZNER)
-    assert hetzner.ws_base_url == "ws://5.78.186.223"
+    assert hetzner.ws_base_url == "ws://203.0.113.10"
+
+
+def test_ensure_default_hetzner_empty_ws_base_url_preserves_existing() -> None:
+    # OPS_PUBLIC_WS_BASE_URL= (empty) in an env file must mean "unset", never
+    # "clear the advertised WS URL" (P0.2 Defect C).
+    reset_store()
+    seeded = ensure_default_hetzner(
+        "http://127.0.0.1:8000", ws_base_url="ws://203.0.113.10"
+    )
+    assert seeded.ws_base_url == "ws://203.0.113.10"
+
+    refreshed = ensure_default_hetzner("http://127.0.0.1:8000", ws_base_url="")
+    assert refreshed.ws_base_url == "ws://203.0.113.10"
+
+
+def test_settings_empty_public_ws_base_url_is_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Must set the empty var in-process: PS 5.1 cannot express an empty env var
+    # ($env:X='' deletes it), so a shell spot-check would mask this defect.
+    monkeypatch.setenv("OPS_PUBLIC_WS_BASE_URL", "")
+    assert Settings().ops_public_ws_base_url is None

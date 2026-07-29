@@ -148,6 +148,22 @@ jobs:
           tar -C "$RUNNER_TEMP/tess-offline" -xzf "$BUNDLE"
           echo "BUNDLE_DIR=$RUNNER_TEMP/tess-offline" >> "$GITHUB_ENV"
           echo "TARGET_DIR=$RUNNER_TEMP/tess-target" >> "$GITHUB_ENV"
+      - name: SABOTAGE corrupt one manifest-covered byte (red-first)
+        # P1 Step 3 planted violation — REVERTED in the next commit: XOR one byte
+        # of images/all-images.tar INSIDE the extracted bundle, between extraction
+        # and install, so install-offline.sh's `sha256sum -c MANIFEST.sha256` gate
+        # is provably the line that dies. Tampering the outer .tar.gz would red in
+        # gzip's CRC instead — a death that never reaches the manifest gate (F4).
+        run: |
+          python3 -c "
+          p = '$BUNDLE_DIR/images/all-images.tar'
+          with open(p, 'r+b') as f:
+              f.seek(4096)
+              b = f.read(1)
+              f.seek(4096)
+              f.write(bytes([b[0] ^ 0xFF]))
+          print('sabotage: XOR-flipped byte at offset 4096 of', p)
+          "
       - name: Install offline
         # The manifest gate (sha256sum -c MANIFEST.sha256) and the image-ID guard
         # live inside the script; its exit code is the step.

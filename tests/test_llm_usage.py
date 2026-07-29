@@ -212,3 +212,31 @@ def test_ollama_stream_abandoned_records_cancelled_with_last_usage(
     asyncio.run(drive())
     assert _sample(obs.LLM_CALLS, "_total", {**labels, "outcome": "cancelled"}) == cancelled_before + 1
     assert _sample(obs.LLM_TOKENS, "_total", {**labels, "kind": "prompt"}) >= 4
+
+
+# ---------------------------------------------------------------------------
+# W3 regression: the Ollama serialization lock must survive event-loop
+# turnover. Every Celery task runs its own loop (asyncio.run); an asyncio.Lock
+# binds to the loop that first CONTENDS it (the uncontended acquire fast path
+# never binds — which is why single-call tests stay green), so a module-level
+# lock breaks the SECOND task on the same prefork child with "is bound to a
+# different event loop": any turn 2, and every resume. Found live by the W3
+# flag-on resume smoke.
+# ---------------------------------------------------------------------------
+class _YieldingModel(_FakeModel):
+    """Holds the lock across a scheduler tick so a sibling call really contends."""
+
+    async def ainvoke(self, messages):
+        await asyncio.sleep(0)
+        return self._result
+
+
+def test_ollama_lock_survives_event_loop_turnover():
+    async def contended(llm: OllamaLLM) -> None:
+        await asyncio.gather(llm.generate(_request()), llm.generate(_request()))
+
+    # Loop A: contention binds whatever lock the provider uses to loop A.
+    asyncio.run(contended(_ollama("fake-oll-loop", _YieldingModel(result=_Msg("x")))))
+    # Loop B (the Celery task boundary): contended acquire again. Red with a
+    # module-level lock (RuntimeError: ... bound to a different event loop).
+    asyncio.run(contended(_ollama("fake-oll-loop", _YieldingModel(result=_Msg("y")))))

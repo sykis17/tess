@@ -20,7 +20,24 @@ from app.llm.usage import extract_usage
 
 # Ollama on small hardware handles one inference at a time; serialize parallel graph
 # branches so queued requests do not burn their HTTP timeout waiting for the model.
-_ollama_request_lock = asyncio.Lock()
+# Loop-stamped, never module-bound: every Celery task runs its own event loop via
+# asyncio.run, and an asyncio.Lock binds to the loop that first CONTENDS it — a
+# module-level Lock breaks the second task on the same prefork child with
+# "is bound to a different event loop" (any turn 2; every W3 resume — found live by
+# the W3 flag-on smoke). One lock per loop preserves the real serialization domain:
+# parallel branches within a run. Cross-child was never serialized (separate
+# processes), and a prefork child runs one task loop at a time.
+_ollama_request_lock: asyncio.Lock | None = None
+_ollama_lock_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _request_lock() -> asyncio.Lock:
+    global _ollama_request_lock, _ollama_lock_loop
+    loop = asyncio.get_running_loop()
+    if _ollama_request_lock is None or _ollama_lock_loop is not loop:
+        _ollama_request_lock = asyncio.Lock()
+        _ollama_lock_loop = loop
+    return _ollama_request_lock
 
 
 class OllamaLLM(BaseLLM):
@@ -56,7 +73,7 @@ class OllamaLLM(BaseLLM):
         lc_messages = to_langchain_messages(request.messages)
         # llm_call spans the lock wait too — for Ollama the duration is queue + inference.
         with llm_call(self.provider.value, self._model_name) as rec:
-            async with _ollama_request_lock:
+            async with _request_lock():
                 result = await self._model.ainvoke(lc_messages)
             prompt_tokens, completion_tokens = extract_usage(result)
             rec.set_usage(prompt_tokens, completion_tokens)
@@ -78,7 +95,7 @@ class OllamaLLM(BaseLLM):
         # An abandoned generator records at asyncgen finalization: llm_call.__exit__
         # runs on the GeneratorExit from aclose() with outcome=cancelled + last usage.
         with llm_call(self.provider.value, self._model_name, streaming=True) as rec:
-            async with _ollama_request_lock:
+            async with _request_lock():
                 async for chunk in self._model.astream(lc_messages):
                     # The final done chunk carries usage with empty content — it is
                     # seen here even though the content filter below never yields it.

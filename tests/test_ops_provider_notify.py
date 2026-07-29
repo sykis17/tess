@@ -27,6 +27,7 @@ def test_provider_changed_message_serializes_for_ws() -> None:
         to_provider_id="b",
         sessions_dropped=2,
         ws_base_url="ws://standby.example",
+        last_failover_at="2026-07-29T00:00:00+00:00",
     )
     payload = json.loads(msg.model_dump_json())
     assert payload["type"] == "provider_changed"
@@ -35,6 +36,9 @@ def test_provider_changed_message_serializes_for_ws() -> None:
     assert payload["sessions_dropped"] == 2
     assert payload["ws_base_url"] == "ws://standby.example"
     assert "message" in payload and payload["message"]
+    # Pre-serialized string, shipped verbatim (P0.2 in-band baseline advance):
+    # json round-trip must not reformat it.
+    assert payload["last_failover_at"] == "2026-07-29T00:00:00+00:00"
 
 
 def test_publish_provider_changed_uses_ops_channel() -> None:
@@ -102,3 +106,6 @@ def test_force_active_publishes_provider_changed() -> None:
     assert published.from_provider_id == "a"
     assert published.to_provider_id == "b"
     assert published.sessions_dropped == 1
+    # The in-band baseline advance's carrier (P0.2): a real switch always ships
+    # the just-stamped last_failover_at.
+    assert isinstance(published.last_failover_at, str) and published.last_failover_at

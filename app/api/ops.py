@@ -360,9 +360,17 @@ async def get_routing_notice() -> dict[str, Any]:
         if routing.active_provider_id
         else None
     )
+    # last_failover_at is the disconnect classifier's only decision input
+    # (docs/P0_OPENER.md): opaque string, compared for change between socket
+    # open and close. Its serialization must stay byte-identical to
+    # ProviderChangedMessage.last_failover_at (isoformat; guarded by
+    # tests/test_ops_routing_notice.py). sessions_dropped_last is deliberately
+    # absent — a never-reset counter in a public payload was P0.2's Defect B.
     return {
         "ws_base_url": active.effective_ws_base_url() if active else None,
-        "sessions_dropped_last": routing.sessions_dropped_last,
+        "last_failover_at": (
+            routing.last_failover_at.isoformat() if routing.last_failover_at else None
+        ),
     }
 
 

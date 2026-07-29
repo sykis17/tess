@@ -322,6 +322,9 @@ def evaluate_dual_homes(
             "Dual home lost — sessions on the failed home were dropped. "
             "Reconnect and resubmit if needed (seamless migration deferred)."
         ),
+        last_failover_at=(
+            routing.last_failover_at.isoformat() if routing.last_failover_at else None
+        ),
     )
     publish_provider_changed(msg)
     logger.warning(

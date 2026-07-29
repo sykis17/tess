@@ -188,15 +188,16 @@ down" = total loss = the sitting primary correctly demotes.
   s08's identical durable path green at 30 s — measured non-root, 2026-07-26). The offline
   verifier should set/document a realistic convergence budget rather than inherit the
   dev-tuned default.
-- **`reset_stack` assumes a pre-existing full stack.** It recreates only CP + etcd (+ redis
-  start) with `--no-deps`; from a torn-down project it silently yields a stack with **no
-  worker / otel-collector**, and `s10` then fails on worker-metrics reachability. Either
-  `reset_stack` grows a first-run full `compose up`, or the runbooks state "bring the full
-  stack up once before `run-all`."
+- ~~**`reset_stack` assumes a pre-existing full stack.**~~ **Struck (P1 docs flip,
+  cold-review F7): already fixed in code before P1** — `harness.py` grew the
+  worker-sentinel full `compose_up` fallback (see ~:141-142 above, proven
+  2026-07-26); only this filing text was stale.
 
-**Durable cure (W2).** The offline chain joins the **nightly CI tier** (see Cross-cutting —
-CI) so this non-default path can't rot invisibly again — the exact discipline the arc used
-for its four manual gates.
+**Durable cure (W2) — ✅ DELIVERED (P1, PR #22).** The offline chain rides
+`nightly.yml` nightly (build → install → verify, the verifier's own tally as
+the gate), proven non-vacuous by a manifest-tamper red — see
+[PROOF_PROGRAM.md](PROOF_PROGRAM.md) §P1. This non-default path can no longer
+rot invisibly.
 
 **Size.** ~1 short session.
 
@@ -221,14 +222,15 @@ for its four manual gates.
 > before a chain-touching PR — see `scripts/graph_eval/README.md`. LLM-bearing CI legs
 > (nightly tier, runner-fit) are **Session 3 scope**, not delivered here.
 >
-> **Session 3 (nightly CI) is DEFERRED, not dropped — owner: the session after W3.**
-> Resequenced (2026-07-27, with Jesse) because W3 blocks W4 and enriches W5 while nightly
-> blocks nothing. Scope unchanged and still filed at
-> [W2_OPENER.md §Session 3 runway](W2_OPENER.md): split-brain, offline chain, eval judge
-> legs + runner-fit, `s11` single-node stretch. Recorded with an owner **because the
-> offline verifier rotted precisely from a verification step deferred without one** — see
-> §W1.5's durable cure below, which this deferral leaves open. Until S3 lands the eval
-> doctrine is manual discipline, which is the state CI exists to end.
+> **Session 3 (nightly CI) — ✅ LANDED as Proof Program P1 (PR #22, 2026-07-29).**
+> The owner clause fired exactly as filed: the session after W3 delivered
+> `nightly.yml` (split-brain, offline chain, eval smoke — every pin
+> probe-measured, every leg proven non-vacuous by a planted violation) plus the
+> per-push `redis-parity` live checkpointer leg. Spec:
+> [P1_OPENER.md](P1_OPENER.md); status + red-line evidence:
+> [PROOF_PROGRAM.md](PROOF_PROGRAM.md) §P1. The `s11` single-node stretch
+> dropped to P1_OPENER §Follow-ups (severable by design). The eval doctrine is
+> no longer manual discipline.
 
 **Goal.** Give the graph what the ops plane already has: per-node observability + a
 repeatable eval gate. Nothing downstream (W5, W6) is verifiable without this.
@@ -429,23 +431,21 @@ exactly the two feeds it needs. Everything above is a step toward it.
 
 ---
 
-## Cross-cutting — CI
+## Cross-cutting — CI  ·  ✅ **fully landed** (W2-S1 per-push + P1 nightly, PR #22)
 
-The arc had **four manual gates** (unit suite, live-etcd parity, split-brain harness,
-doc-links). As part of W2, bring them into CI and add the **eval gate**:
-- Unit + doc-links: cheap, every push.
-- Parity: CI service container (throwaway etcd) + `OPS_TEST_ETCD_ENDPOINT`.
-- Split-brain harness + eval: Docker-in-CI, nightly or on ops/graph-path changes.
-- **Offline verifier** (`build-bundle → install-offline → verify-egress-blocked`): nightly —
-  **W1.5** re-synced it (topology-keyed s11 skip + in-harness expected tally) after it rotted
-  invisibly precisely because it was never in the gate ladder. Nightly CI is the durable cure
-  for that failure mode.
-- **Eval judge budget:** the LLM-judge leg spends real tokens on every nightly run — pin a
-  cheap, fixed judge model and cap the golden-set size so nightly cost stays bounded and
-  predictable. Deterministic rubric checks carry the cheap per-push signal; the judge runs
-  nightly only.
-
-CI wants to ride along with W2 because that's when the eval gate is born.
+- Per-push (`ci.yml`, W2-S1): unit + skip-tally pin, doc-links, etcd-parity,
+  frontend — and since P1, **redis-parity** (live checkpointer contract +
+  resume battery, junit non-vacuity assert).
+- Nightly (`nightly.yml`, P1): split-brain harness (dev gate 11+0), offline
+  verifier chain (the W1.5 durable cure, delivered), eval smoke (Ollama-local
+  judge = $0/night, `--expect-pass 5`, ×3 CI wall profile). Deduped
+  `nightly-red` issue on failure.
+- **Rejected (P1, recorded):** the "or on ops/graph-path changes" trigger
+  variant — it would add 40–60 min latency to every ops/graph PR to duplicate
+  the mandatory local gate ladder; revisit only if a regression demonstrably
+  slips the local-gate→nightly window ([P1_OPENER.md](P1_OPENER.md) §(c)).
+- Full-20 eval set stays a local pre-PR gate until the measured smoke wall
+  supports the extrapolation (P1_OPENER §Follow-ups).
 
 ---
 

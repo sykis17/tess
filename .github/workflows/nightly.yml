@@ -1,0 +1,302 @@
+# Nightly proof tier (Proof Program P1 - docs/P1_OPENER.md). Three legs promote the
+# manual proof surfaces to scheduled CI: the split-brain harness (dev-parity compose
+# stack), the offline/sovereign verifier chain, and the LLM-bearing eval smoke.
+#
+# Every leg is gated by its tally-as-exit-code artifact and was proven non-vacuous
+# by a planted violation before its green was trusted (evidence: PR #22 body +
+# docs/PROOF_PROGRAM.md P1). Every numeric pin below carries the probe run that
+# measured it.
+#
+# Conventions (docs/P1_OPENER.md, Cross-leg conventions):
+# - no marketplace actions - first-party actions/* plus a sha256-pinned Ollama release
+# - explicit `shell: bash` everywhere => `bash -e -o pipefail` (the implicit default
+#   shell has NO pipefail - pipes would mask exit codes)
+# - job names here never join branch-protection required checks (schedule-only checks
+#   would block every PR)
+# - scheduled-run reds attach to no PR: the nightly-red-reporter job below opens or
+#   comments a deduped `nightly-red` issue (first-party gh + GITHUB_TOKEN)
+#
+# Recorded risk (opener resolved question (c)): GitHub disables `schedule` workflows
+# after 60 days of repo inactivity - an absent run looks exactly like a green one
+# from the issues list. Heartbeat visibility is a filed P3 follow-up.
+
+name: nightly
+
+on:
+  schedule:
+    - cron: "17 3 * * *" # 03:17 UTC - off-peak, odd minute (opener resolved question (c))
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false # a nightly must finish, not yield to the next one
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  nightly-splitbrain:
+    runs-on: ubuntu-latest
+    # Probe-measured (run 30445817123): whole job 8.5 min - compose up --build 51 s
+    # + run-all 428 s (11 scenarios, 27.8-55.8 s each). 30 min is ~3.5x measured;
+    # re-baseline consciously if the harness grows scenarios.
+    timeout-minutes: 30
+    env:
+      # s10 FAILs (never skips) without the obs overlay in scope - both here and in
+      # the compose up file list below.
+      OPS_HA_COMPOSE_OBS: docker-compose.ops-obs.yml
+      # Probed green at 60 s on runner hardware (run 30445817123: scenario walls
+      # 27.8-55.8 s, no convergence timeout hit); default would be 3xTTL=30 s.
+      OPS_HA_CONVERGENCE_TIMEOUT: "60"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.lock.txt
+      - name: Install from hash-pinned lock
+        run: python -m pip install --require-hashes -r requirements.lock.txt
+      - name: Probe disk before
+        run: df -h /
+      - name: Single-source OPS_ADMIN_TOKEN
+        # Compose interpolates from .env; the harness client reads shell env. One
+        # generated token into both kills the 403-storm drift trap by construction.
+        run: |
+          TOKEN=$(openssl rand -hex 16)
+          echo "::add-mask::$TOKEN"
+          echo "OPS_ADMIN_TOKEN=$TOKEN" >> .env
+          echo "OPS_ADMIN_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+      - name: Compose up (full first-run build)
+        # FULL up - worker + otel-collector included - so the obs overlay is in the
+        # running stack (s10 needs it) and image build cost lands outside the
+        # harness's own timing.
+        run: |
+          t0=$(date +%s)
+          docker compose -f docker-compose.yml -f docker-compose.ops-ha.yml \
+            -f docker-compose.ops-obs.yml -p tess-engine up --build -d
+          echo "PROBE wall compose-up-build: $(( $(date +%s) - t0 ))s"
+      - name: Probe disk and images after build
+        run: |
+          df -h /
+          docker image ls --format '{{.Repository}}:{{.Tag}}  {{.Size}}'
+      - name: Split-brain harness run-all (dev gate 11+0)
+        # The dev-topology certification tally as an exit-code artifact - probed
+        # 11/11 PASS on run 30445817123. Tally changes are conscious re-baselines
+        # (see the interlock table in docs/P1_OPENER.md).
+        run: |
+          t0=$(date +%s)
+          python -m scripts.ops_cp_splitbrain run-all --expect-pass 11 --expect-skip 0
+          echo "PROBE wall splitbrain-run-all: $(( $(date +%s) - t0 ))s"
+      - name: Probe disk after
+        if: always()
+        run: df -h /
+      - name: Collect compose logs
+        if: failure()
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.ops-ha.yml \
+            -f docker-compose.ops-obs.yml -p tess-engine logs --no-color \
+            > splitbrain-compose-logs.txt || true
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-splitbrain-logs
+          path: splitbrain-compose-logs.txt
+
+  nightly-offline:
+    runs-on: ubuntu-latest
+    # Probe-measured (run 30446106195): whole job ~7 min - build-bundle 107 s +
+    # install 23 s + verify 277 s (10/10 PASS + 1 topology-SKIP printed). 20 min
+    # is ~3x measured. MAX_APP_IMAGE_GB stays 3: overlay2 measured 358 MB, the
+    # containerd-vs-overlay2 risk did not fire.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      # build-bundle.sh runs `npm ci && npm run build` on the HOST - node pinned to
+      # ci.yml's frontend job (22); version drift reds this leg, not the frontend job.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Probe disk before
+        run: df -h /
+      - name: Build offline bundle
+        run: |
+          t0=$(date +%s)
+          deploy/offline/build-bundle.sh
+          echo "PROBE wall build-bundle: $(( $(date +%s) - t0 ))s"
+      - name: Probe app image size (overlay2 instrument) and disk
+        # MAX_APP_IMAGE_GB was tuned against the laptop's containerd CONTENT size;
+        # this exact-bytes number is the overlay2 reading the ceiling gets re-tuned
+        # against IF it ever trips (never compare the two instruments).
+        run: |
+          bytes=$(docker image inspect -f '{{.Size}}' tess-engine-app:offline)
+          echo "PROBE tess-engine-app:offline overlay2 bytes=$bytes ($(( bytes / 1024 / 1024 )) MB)"
+          docker image ls --format '{{.Repository}}:{{.Tag}}  {{.Size}}'
+          df -h /
+      - name: Extract bundle (transit checksum first)
+        run: |
+          BUNDLE=$(ls tess-offline-bundle-*.tar.gz)
+          sha256sum -c "$BUNDLE.sha256"
+          mkdir -p "$RUNNER_TEMP/tess-offline"
+          tar -C "$RUNNER_TEMP/tess-offline" -xzf "$BUNDLE"
+          echo "BUNDLE_DIR=$RUNNER_TEMP/tess-offline" >> "$GITHUB_ENV"
+          echo "TARGET_DIR=$RUNNER_TEMP/tess-target" >> "$GITHUB_ENV"
+      - name: Install offline
+        # The manifest gate (sha256sum -c MANIFEST.sha256) and the image-ID guard
+        # live inside the script; its exit code is the step.
+        run: |
+          t0=$(date +%s)
+          cd "$BUNDLE_DIR"
+          ./install-offline.sh --target "$TARGET_DIR"
+          echo "PROBE wall install-offline: $(( $(date +%s) - t0 ))s"
+      - name: Verify egress blocked
+        # The verifier exits with the harness RC and bakes in the certification
+        # tally --expect-pass 10 --expect-skip 1 (s11 is quorum-only on the offline
+        # single-node etcd) - the script IS the gate; this job adds probes only.
+        run: |
+          t0=$(date +%s)
+          cd "$BUNDLE_DIR"
+          ./verify-egress-blocked.sh --target "$TARGET_DIR"
+          echo "PROBE wall verify-egress: $(( $(date +%s) - t0 ))s"
+      - name: Probe disk after
+        if: always()
+        run: df -h /
+      - name: Collect offline stack logs
+        if: failure()
+        run: |
+          cd "$TARGET_DIR" 2>/dev/null || exit 0
+          docker compose -f docker-compose.offline.yml -p tess-engine logs --no-color \
+            > "$GITHUB_WORKSPACE/offline-compose-logs.txt" || true
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-offline-logs
+          path: offline-compose-logs.txt
+
+  nightly-eval:
+    runs-on: ubuntu-latest
+    # Probe-measured (runs 30445817123 / 30446106195): smoke walls 1640 s / 1447 s
+    # (~27 min job), per-prompt worst l4 779 s. 75 min covers 2x the measured job
+    # plus one prompt riding its scaled ceiling (l4 x3 = 2700 s = 45 min).
+    timeout-minutes: 75
+    env:
+      # CI wall profile (P1 Step 4 conscious calibration): x3 on every golden-set
+      # max_wall_s - probe measured l4 at 779 s vs its 900 s laptop ceiling (13%
+      # headroom) with a documented 2x run-to-run band. Judge identity, threshold,
+      # and set composition untouched (see scripts/graph_eval/golden/__init__.py).
+      GRAPH_EVAL_WALL_PROFILE: ci
+      # Pinned Ollama release - versioned download + recorded sha256, never a
+      # marketplace action (docs/P1_OPENER.md resolved question (b)).
+      # sha256 is ollama-linux-amd64.tar.zst from the v0.32.5 release sha256sum.txt,
+      # recorded 2026-07-29.
+      OLLAMA_VERSION: v0.32.5
+      OLLAMA_SHA256: f7d6bdbcf71b83aa8670c4e7dc4b6936c0952fcf8b114eaf6a11cbadb9684214
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.lock.txt
+      - name: Install from hash-pinned lock
+        run: python -m pip install --require-hashes -r requirements.lock.txt
+      - name: Cache Ollama models
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ollama-models-${{ env.OLLAMA_VERSION }}-llama3.2
+      - name: Install pinned Ollama release
+        run: |
+          curl -fsSL -o /tmp/ollama.tar.zst \
+            "https://github.com/ollama/ollama/releases/download/${OLLAMA_VERSION}/ollama-linux-amd64.tar.zst"
+          echo "${OLLAMA_SHA256}  /tmp/ollama.tar.zst" | sha256sum -c -
+          sudo tar --zstd -C /usr/local -xf /tmp/ollama.tar.zst
+          ollama --version
+      - name: Start ollama serve
+        run: |
+          nohup ollama serve > "$RUNNER_TEMP/ollama-serve.log" 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS localhost:11434/api/version >/dev/null 2>&1; then
+              echo "ollama ready"; exit 0
+            fi
+            sleep 2
+          done
+          echo "ollama never became ready"
+          cat "$RUNNER_TEMP/ollama-serve.log"
+          exit 1
+      - name: Pull llama3.2 (unconditional)
+        # On a healthy cache this is a cheap digest-verify no-op; it is the
+        # validation step that keeps a poisoned or partially-restored cache from
+        # producing a teaches-nothing blob-error red. Probe: cold pull was 8 s on
+        # runner bandwidth - the cache is registry-outage robustness, not speed.
+        run: |
+          t0=$(date +%s)
+          ollama pull llama3.2
+          echo "PROBE wall ollama-pull: $(( $(date +%s) - t0 ))s"
+          ollama list
+      - name: Write .env
+        # The harness asserts the resolved graph provider/model at startup and
+        # refuses zeroed-metrics runs - this explicit env is the leg's own guard.
+        run: |
+          printf 'DEFAULT_LLM_PROVIDER=ollama\nOLLAMA_BASE_URL=http://localhost:11434\nOLLAMA_MODEL=llama3.2\n' > .env
+      - name: Probe search reachability from runner IP
+        # Data only, never a gate - the flake protocol absorbs a transient miss;
+        # systematic blocking is a Jesse-escalation (TAVILY_API_KEY), not a red.
+        run: |
+          echo "duckduckgo.com: $(curl -m 10 -sS -o /dev/null -w '%{http_code}' https://duckduckgo.com/ || echo FAIL)"
+          echo "html.duckduckgo.com: $(curl -m 10 -sS -o /dev/null -w '%{http_code}' 'https://html.duckduckgo.com/html/?q=probe' || echo FAIL)"
+      - name: Eval smoke (gated 5/5, ci wall profile)
+        # The smoke tally as an exit-code artifact - probed 5/5 PASS on both
+        # measurement runs. Honesty line (scripts/graph_eval/README.md, Scoring):
+        # routing regressions are caught by the structural layer; the judge gates
+        # answer quality - this leg claims "structurally sound, judge-acceptable
+        # answers on CI hardware", nothing stronger.
+        run: |
+          t0=$(date +%s)
+          python -m scripts.graph_eval run-all --set smoke --expect-pass 5
+          echo "PROBE wall eval-smoke: $(( $(date +%s) - t0 ))s"
+      - name: Upload eval history and serve log
+        # Per-prompt walls live in history.db - the leg's trend artifact.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-eval-probe
+          path: |
+            scripts/graph_eval/history.db
+            ${{ runner.temp }}/ollama-serve.log
+
+  # Failure visibility (opener resolved question (d), approved in advance and
+  # ratified by PR #21's merge): scheduled-run reds attach to no PR and watcher
+  # e-mail is easy to miss - open or comment ONE deduped issue instead.
+  nightly-red-reporter:
+    runs-on: ubuntu-latest
+    needs: [nightly-splitbrain, nightly-offline, nightly-eval]
+    if: failure()
+    steps:
+      - name: Open or comment the deduped nightly-red issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh label create nightly-red --repo "${{ github.repository }}" \
+            --description "scheduled nightly proof tier is red" --color B60205 --force
+          body="Nightly red: $RUN_URL
+          jobs: splitbrain=${{ needs.nightly-splitbrain.result }}, offline=${{ needs.nightly-offline.result }}, eval=${{ needs.nightly-eval.result }}"
+          existing=$(gh issue list --repo "${{ github.repository }}" --label nightly-red \
+            --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "${{ github.repository }}" --body "$body"
+          else
+            gh issue create --repo "${{ github.repository }}" \
+              --title "nightly-red: scheduled proof tier failing" \
+              --label nightly-red --body "$body"
+          fi

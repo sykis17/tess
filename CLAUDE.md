@@ -157,8 +157,13 @@ START
   change (`app/graph/**`, `app/agents/**`, prompts, routing), and the full set
   (`run-all --expect-pass 20`) before a chain-touching PR. Needs host Ollama, no docker —
   see `scripts/graph_eval/README.md` for budgets, flake protocol, and re-baseline
-  doctrine. Only the harness's no-LLM unit layer rides per-push CI; LLM-bearing CI legs
-  are W2-S3 scope.
+  doctrine. The harness's no-LLM unit layer rides per-push CI; since P1 the LLM-bearing
+  smoke also runs nightly (`.github/workflows/nightly.yml`, `--expect-pass 5`, CPU
+  ceilings via `GRAPH_EVAL_WALL_PROFILE=ci` — a ×3 on golden-set `max_wall_s`, applied
+  at set load; judge identity and set composition untouched). Nightly also carries the
+  split-brain harness (11+0) and the offline verifier chain; per-push `ci.yml` carries
+  `redis-parity` (live-Redis checkpointer contract + resume battery, unit skip tally
+  pinned at 6 = 2 etcd + 4 redis-live). Nightly job names never join required checks.
 
 ## Ops control-plane HA — critical invariants
 
@@ -277,6 +282,8 @@ split-brain harness:
 | Graph eval harness (chain-change gate) | `scripts/graph_eval/` + its `README.md` |
 | Golden set + composition guards | `scripts/graph_eval/golden/set_v1.json` + `tests/test_graph_eval_golden.py` |
 | Defense-loop regression guards | `tests/test_defense_routing.py` |
-| Per-push CI | `.github/workflows/ci.yml` |
+| Per-push CI (incl. `redis-parity` live checkpointer leg) | `.github/workflows/ci.yml` |
+| Nightly proof tier (splitbrain / offline / eval legs) | `.github/workflows/nightly.yml` |
+| Live-Redis checkpointer battery | `tests/test_checkpoint_saver_live.py` |
 | Offline / sovereign stack | `docker-compose.offline.yml` + `deploy/offline/` (`build-bundle.sh`, `install-offline.sh`, `verify-egress-blocked.sh`) |
 | Sovereignty audit + offline runbook | `deploy/MULTI_CLOUD.md` §Offline packaging |

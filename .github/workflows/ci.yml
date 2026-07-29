@@ -2,8 +2,9 @@
 # chain, eval judge) land in a separate nightly.yml in W2 Session 3 — see
 # docs/W2_OPENER.md.
 #
-# Job names (unit, doc-links, etcd-parity, frontend) are stable API for branch
-# protection required-checks — renaming one silently drops it from enforcement.
+# Job names (unit, doc-links, etcd-parity, redis-parity, frontend) are stable API
+# for branch protection required-checks — renaming one silently drops it from
+# enforcement.
 
 name: ci
 
@@ -36,10 +37,13 @@ jobs:
         run: python -m pytest tests/ -q --junitxml=unit.xml
       - name: Assert expected skip tally
         # Deliberate certification baseline, enforced as an exit code (never a
-        # log-grep): exactly 2 skips — the live-etcd parity tests, which run for
-        # real in the etcd-parity job below. Adding a legitimately skipped test is
-        # SUPPOSED to break this until the expectation is consciously re-baselined
-        # here — tallies drift silently when they live in prose only.
+        # log-grep): exactly 6 skips — the live-etcd parity tests (2, run for real
+        # in the etcd-parity job below) plus the live-Redis checkpointer suite (4,
+        # run for real in the redis-parity job below). Adding a legitimately
+        # skipped test is SUPPOSED to break this until the expectation is
+        # consciously re-baselined here — tallies drift silently when they live
+        # in prose only. (P1 Step 5 re-baseline: 2 -> 6 when
+        # tests/test_checkpoint_saver_live.py landed.)
         run: |
           python - <<'EOF'
           import xml.etree.ElementTree as ET
@@ -48,7 +52,7 @@ jobs:
           tests = sum(int(s.get("tests", 0)) for s in suites)
           skipped = sum(int(s.get("skipped", 0)) for s in suites)
           assert tests > 0, "no tests collected"
-          assert skipped == 2, f"{skipped} skipped, expected exactly 2 (etcd parity)"
+          assert skipped == 6, f"{skipped} skipped, expected exactly 6 (2 etcd parity + 4 redis-live checkpointer)"
           print(f"tally ok: {tests} tests, {skipped} skipped")
           EOF
 
@@ -129,6 +133,62 @@ jobs:
           from tests.test_fence_store_parity import _ETCD_ENDPOINT
           assert _ETCD_ENDPOINT, "parity module resolved no etcd endpoint"
           print(f"parity ok: {tests} tests, 0 skipped, endpoint={_ETCD_ENDPOINT}")
+          EOF
+
+  # Live-Redis twin of etcd-parity (P1 Step 5): a plain `pytest tests/` run skips
+  # the live checkpointer contract + resume battery, so a green unit job alone
+  # never proves the saver against real Redis. Runs the shared assertion bodies
+  # (tests/test_checkpoint_saver.py::_assert_checkpointer_contract + the resume
+  # battery via the binary-factory seam) against a throwaway Redis and asserts —
+  # from the junit artifact, not the exit code — that they actually executed.
+  redis-parity:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        # redis:7-alpine has a shell (unlike the distroless etcd image above), so
+        # a health-cmd would work — but readiness is gated by the explicit wait
+        # step below for symmetry with the etcd job and its distroless lesson.
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.lock.txt
+      - name: Install from hash-pinned lock
+        run: python -m pip install --require-hashes -r requirements.lock.txt
+      - name: Wait for redis
+        run: |
+          for i in $(seq 1 30); do
+            if python -c "import redis; redis.Redis.from_url('redis://127.0.0.1:6379/9').ping()" 2>/dev/null; then
+              echo "redis healthy"; exit 0
+            fi
+            sleep 2
+          done
+          echo "redis never became healthy"; exit 1
+      - name: Live-Redis checkpointer suite
+        env:
+          OPS_TEST_REDIS_URL: redis://127.0.0.1:6379/9
+        run: python -m pytest tests/test_checkpoint_saver_live.py -v --junitxml=redis-parity.xml
+      - name: Assert live tests actually ran
+        env:
+          OPS_TEST_REDIS_URL: redis://127.0.0.1:6379/9
+        run: |
+          python - <<'EOF'
+          import xml.etree.ElementTree as ET
+          root = ET.parse("redis-parity.xml").getroot()
+          suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
+          tests = sum(int(s.get("tests", 0)) for s in suites)
+          skipped = sum(int(s.get("skipped", 0)) for s in suites)
+          assert tests >= 4, f"only {tests} live checkpointer tests collected, expected >= 4"
+          assert skipped == 0, f"{skipped} live tests skipped — redis leg is vacuous"
+          # belt and suspenders: the module's env gate resolved a real URL
+          from tests.test_checkpoint_saver_live import _REDIS_URL
+          assert _REDIS_URL, "live module resolved no redis url"
+          print(f"redis-parity ok: {tests} tests, 0 skipped, url={_REDIS_URL}")
           EOF
 
   frontend:

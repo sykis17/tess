@@ -1,9 +1,11 @@
 """Contract battery for the W3 RedisCheckpointSaver (fake-backed).
 
 House parity pattern (tests/test_fence_store_parity.py): the shared assertion
-body `_assert_checkpointer_contract` is the anchor — a future live-Redis CI leg
-runs the same body against a real binary client. No skips added: per-push CI
-pins the suite-wide skip tally at exactly 2 (etcd parity).
+body `_assert_checkpointer_contract` is the anchor — the live-Redis CI leg
+(tests/test_checkpoint_saver_live.py, the per-push `redis-parity` job) runs the
+same body plus the resume battery against a real binary client. Its 4 tests
+skip without OPS_TEST_REDIS_URL: per-push CI pins the suite-wide skip tally at
+exactly 6 (2 etcd parity + 4 redis-live).
 
 Policy under test (never-silent doctrine): the framework serializer degrades a
 failed pydantic reconstruction to a raw kwargs dict WITHOUT raising; the saver's

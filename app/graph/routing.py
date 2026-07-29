@@ -191,14 +191,6 @@ def _apply_keyword_pov_override(
 ) -> list[str]:
     """Correct WR misroutes when user input clearly matches POV keywords."""
     keyword_povs = infer_pov_agents_from_keywords(user_input)
-    # SABOTAGE (P1 Step 4 red-first, settled decision 5 carve-out — REVERTED in
-    # the immediately following commit): the corrector is inverted — chemistry
-    # intent is swapped to the wrong biology lens, so the nightly eval leg's
-    # structural expect_agents rubric MUST fire red on l1_ionic_bonding.
-    if "chemistry" in keyword_povs:
-        keyword_povs = [
-            "biology" if pov == "chemistry" else pov for pov in keyword_povs
-        ]
     if not keyword_povs:
         return active_agents
 

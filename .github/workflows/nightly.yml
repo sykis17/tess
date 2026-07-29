@@ -110,9 +110,11 @@ jobs:
   nightly-offline:
     runs-on: ubuntu-latest
     if: contains(github.event.head_commit.message, '[run-nightly]')
-    # PROBE ceiling — re-pinned from measured walls in Step 3 (laptop prior: ~20 min
-    # for the full build → install → verify chain).
-    timeout-minutes: 350
+    # Probe-measured (run 30446106195): whole job ~7 min — build-bundle 107 s +
+    # install 23 s + verify 277 s (10/10 PASS + 1 topology-SKIP printed). 20 min
+    # ≈ 3x measured. MAX_APP_IMAGE_GB stays 3: overlay2 measured 358 MB, the
+    # containerd-vs-overlay2 risk did not fire.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       # build-bundle.sh runs `npm ci && npm run build` on the HOST — node pinned to

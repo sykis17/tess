@@ -193,6 +193,7 @@ def _switch(
             to_provider_id=to_id,
             sessions_dropped=dropped,
             ws_base_url=target.effective_ws_base_url() if target else None,
+            last_failover_at=routing.last_failover_at.isoformat(),
         )
         details: dict = {
             "from": from_id,

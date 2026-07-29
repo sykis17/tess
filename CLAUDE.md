@@ -146,6 +146,8 @@ START
 - **All new graph state** must be declared in `app/graph/state.py::GraphState` and added to `_REDUCER_KEYS` in `app/worker.py` if it should append-merge from parallel branches.
 - **All Panel additions** are optional with sensible defaults — frontend `frontend/src/types/panel.ts` should mirror them.
 - **Streaming producers publish their opener panel BEFORE streaming.** The non-streaming opener (content `""`) is a frontend wholesale REPLACE — it is also the resume reset affordance that keeps a resumed re-stream from appending onto stale partial content. Enforced by a discovery-based source guard in `tests/test_panel_stream_dedup.py`, which also holds the Python mirror of `mergePanelUpdate`'s content rule (the frontend has no test runner — change both together).
+- **WS disconnects are classified only via `classifyDisconnect`** (`frontend/src/hooks/useWebSocket.ts`): provider failover iff the server-authored `last_failover_at` changed between socket open and close — opaque-string compare, in-band baseline advance on `provider_changed`, every unknown → "connection lost" (P0.2: may under-count, never fabricates). The public `/ops/routing/notice` payload is `{ws_base_url, last_failover_at}` — `sessions_dropped_last` (never-reset counter) must not re-enter it, and the notice/message stamps must stay byte-identical (`tests/test_ops_routing_notice.py`). Python mirror + forbidden-token source guard in `tests/test_ws_disconnect_classify.py` — change both together.
+- **Review-trail counts travel with the content.** If content changes after review findings (an amend or follow-up), update the finding-count/claims in the commit message and PR body in the same change — a review-trail count is an executable claim, same family as the tally gates.
 - **POV agents** are disciplinary lenses, not depth variants. New POV: add to `POV_DEFINITIONS` in `app/agents/subjects/registry.py`, create `app/agents/<key>/`, register in `app/agents/registry.py`, mirror in `app/core/folder_tree.py` and `frontend/src/data/folderTree.ts`.
 - **Linter** on frontend: `oxlint`; type-check via `tsc -b` (run as part of `npm run build`).
 - **No Cursor rules** (`.cursor/` absent) — `.cursorrules` contains a short set: production-ready typed/Pydantic code, async-first FastAPI, modular layout, Celery delegation for heavy AI work, English-only docs and user-facing strings.
@@ -255,6 +257,7 @@ split-brain harness:
 | Graph checkpointing (W3 saver) | `app/graph/checkpoint.py` + binary factories in `app/core/redis.py` |
 | Resume entry + task | `app/api/ws.py::_handle_resume` + `app/worker.py::resume_user_input` |
 | Checkpoint/resume guards (tests) | `tests/test_checkpoint_saver.py`, `tests/test_checkpoint_seam.py`, `tests/test_checkpoint_resume.py`, `tests/test_panel_stream_dedup.py` |
+| Disconnect classifier (mirror + notice guards) | `tests/test_ws_disconnect_classify.py`, `tests/test_ops_routing_notice.py` + `frontend/src/hooks/useWebSocket.ts` |
 | Status wall logic | `app/graph/pipeline_stages.py` + `frontend/src/hooks/usePipelineStatus.ts` |
 | Folder tree | `app/core/folder_tree.py` + `frontend/src/data/folderTree.ts` |
 | POV segment builder | `app/graph/pov_segments.py` |

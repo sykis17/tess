@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -39,6 +40,15 @@ class Settings(BaseSettings):
     # so ops-ui does not advertise loopback mid-demo.
     ops_public_ws_base_url: str | None = None
     ops_hetzner_region: str = "fsn1"
+
+    @field_validator("ops_public_ws_base_url", mode="before")
+    @classmethod
+    def _empty_public_ws_base_url_is_unset(cls, value: object) -> object:
+        # OPS_PUBLIC_WS_BASE_URL= (empty, as .env.example ships) must mean
+        # "unset", never "clear the advertised WS URL" (P0.2 Defect C).
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
     ops_aws_base_url: str | None = None
     ops_aws_region: str = "us-east-1"
     ops_aws_credentials_ref: str | None = "AWS_ROLE_ARN"

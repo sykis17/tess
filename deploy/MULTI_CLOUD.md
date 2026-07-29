@@ -616,7 +616,7 @@ from `GET /ops/health-logs`, recent `GET /ops/events`, and a link to the
 | POST | `/ops/probe` | Probe all + evaluate failover (**admin**) |
 | GET | `/ops/health-logs` | Own probes + provider-native metrics (**admin**) |
 | GET | `/ops/events` | Failover, chaos, BYO, policy events (**admin**) |
-| GET | `/ops/routing/notice` | Public: `ws_base_url` + `sessions_dropped_last` only |
+| GET | `/ops/routing/notice` | Public: `ws_base_url` + `last_failover_at` only |
 | GET/PUT | `/ops/routing`, `/ops/routing/policy` | Active provider + policy (**admin**) |
 | POST | `/ops/routing/active/{id}` | Force switch — drops sessions (**admin**) |
 | POST/DELETE | `/ops/routing/dual` | Dual two-home mode (**admin**; XOR Performance) |
@@ -647,7 +647,10 @@ simulate-unhealthy, compare, BYO, session assign, and **sensitive GETs**
 `operator_id` on `OpsEvent.details`.
 
 **Public (no auth):** `GET /ops/routing/notice` →
-`{ "ws_base_url", "sessions_dropped_last" }` for the frontend reconnect banner.
+`{ "ws_base_url", "last_failover_at" }` for the frontend disconnect classifier
+(P0.2: a disconnect is labeled a failover only when `last_failover_at` changed
+between socket open and close; `sessions_dropped_last` was removed from the
+public payload — never-reset counter, admin `/ops/routing` still serves it).
 Secrets Manager / Vault for token storage is **later** — tokens live in
 `.env.prod` for now.
 

@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.main import app
 from app.ops import admin_auth
 from app.ops.admin_auth import _check_admin, load_admin_tokens, resolve_operator
+from app.ops.models import utc_now
 from app.ops.store import get_store
 
 
@@ -112,6 +113,9 @@ def test_routing_notice_is_public(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "ops_admin_token", "secret-token")
     store = get_store()
     routing = store.get_routing()
+    routing.last_failover_at = utc_now()
+    # Stays internal/admin-only (never-reset counter — P0.2 Defect B): the
+    # public notice must NOT serve it.
     routing.sessions_dropped_last = 3
     store.set_routing(routing)
 
@@ -119,8 +123,9 @@ def test_routing_notice_is_public(monkeypatch: pytest.MonkeyPatch) -> None:
     res = client.get("/ops/routing/notice")
     assert res.status_code == 200
     body = res.json()
-    assert set(body.keys()) == {"ws_base_url", "sessions_dropped_last"}
-    assert body["sessions_dropped_last"] == 3
+    assert set(body.keys()) == {"ws_base_url", "last_failover_at"}
+    assert body["last_failover_at"] == routing.last_failover_at.isoformat()
+    assert "sessions_dropped_last" not in body
     assert "policy" not in body
     assert "routing" not in body
     assert "providers" not in body

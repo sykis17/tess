@@ -268,6 +268,11 @@ class ProviderChangedMessage(BaseModel):
         "Reconnect and resubmit if needed."
     )
     ws_base_url: str | None = None
+    # Pre-serialized isoformat string, NOT datetime: the frontend compares this
+    # value against /ops/routing/notice's last_failover_at as an opaque string,
+    # and a datetime field would model_dump_json() to "...Z" while the notice
+    # serves isoformat's "...+00:00" — same instant, different bytes.
+    last_failover_at: str | None = None
 
 
 class SeamlessMigrationStatus(BaseModel):

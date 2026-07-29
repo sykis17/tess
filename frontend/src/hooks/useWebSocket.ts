@@ -30,6 +30,35 @@ function httpBaseFromWs(wsBase: string): string {
 const PROCESSING_TIMEOUT_MS = 900_000;
 const PROCESSING_TIMEOUT_MINUTES = PROCESSING_TIMEOUT_MS / 60_000;
 
+interface RoutingNotice {
+  ws_base_url?: string | null;
+  last_failover_at?: string | null;
+}
+
+// Disconnect classification mirrored in tests/test_ws_disconnect_classify.py
+// (the frontend has no test runner) — change BOTH together. A disconnect is a
+// provider failover ONLY when the server-authored last_failover_at CHANGED
+// between socket open and close, compared as an opaque string (never parsed,
+// never compared to the client clock). undefined = unknown (fetch failed or
+// never ran); null = server says no failover ever recorded. Every unknown
+// resolves to "connection_lost": this classifier may under-count, it must
+// never fabricate a failover — fabrication was the P0.2 defect.
+export function classifyDisconnect(
+  baseline: string | null | undefined,
+  current: string | null | undefined,
+): "provider_changed" | "connection_lost" {
+  if (baseline === undefined || current === undefined) {
+    return "connection_lost";
+  }
+  if (current === null) {
+    return "connection_lost";
+  }
+  if (baseline === null) {
+    return "provider_changed";
+  }
+  return current !== baseline ? "provider_changed" : "connection_lost";
+}
+
 function buildPayload(
   text: string,
   productMode: string,
@@ -102,6 +131,9 @@ export function useWebSocket(sessionId: string) {
   const wsRef = useRef<WebSocket | null>(null);
   const pendingCountRef = useRef(0);
   const wasProcessingOnCloseRef = useRef(false);
+  // Baseline for classifyDisconnect: last_failover_at snapshotted at socket
+  // open (advanced in-band on provider_changed). undefined = unknown.
+  const lastFailoverAtRef = useRef<string | null | undefined>(undefined);
 
   const decrementPending = useCallback(() => {
     pendingCountRef.current = Math.max(0, pendingCountRef.current - 1);
@@ -113,12 +145,30 @@ export function useWebSocket(sessionId: string) {
   useEffect(() => {
     const url = `${WS_BASE_URL}/ws/${sessionId}`;
     setConnectionState("connecting");
+    // Reset to unknown per socket: the effect re-runs on remount / sessionId
+    // change (StrictMode double-invokes too) — a stale baseline from a
+    // previous socket must never classify this one.
+    lastFailoverAtRef.current = undefined;
 
     const ws = new WebSocket(url);
     wsRef.current = ws;
 
     ws.onopen = () => {
       setConnectionState("connected");
+      void (async () => {
+        try {
+          const res = await fetch(
+            `${httpBaseFromWs(WS_BASE_URL)}/ops/routing/notice`,
+            { cache: "no-store" },
+          );
+          if (res.ok) {
+            const payload = (await res.json()) as RoutingNotice;
+            lastFailoverAtRef.current = payload.last_failover_at;
+          }
+        } catch {
+          // Baseline stays unknown — onclose classifies conservatively.
+        }
+      })();
     };
 
     ws.onmessage = (event) => {
@@ -150,6 +200,12 @@ export function useWebSocket(sessionId: string) {
           );
           pendingCountRef.current = 0;
           setIsProcessing(false);
+          // In-band baseline advance: this switch is now reported; a LATER
+          // plain disconnect must not re-report it (opener row 14). Absent
+          // stamp -> unknown, which classifies conservatively.
+          lastFailoverAtRef.current = data.last_failover_at
+            ? data.last_failover_at
+            : undefined;
           if (data.ws_base_url && data.ws_base_url !== WS_BASE_URL) {
             setProviderNotice(
               `${data.message} New endpoint: ${data.ws_base_url}`,
@@ -197,33 +253,32 @@ export function useWebSocket(sessionId: string) {
       if (wasProcessingOnCloseRef.current) {
         pendingCountRef.current = 0;
         setIsProcessing(false);
+        const baseline = lastFailoverAtRef.current;
         void (async () => {
+          let current: string | null | undefined = undefined;
+          let activeWs: string | null | undefined = undefined;
           try {
             const res = await fetch(
               `${httpBaseFromWs(WS_BASE_URL)}/ops/routing/notice`,
+              { cache: "no-store" },
             );
-            if (!res.ok) {
-              setProviderNotice(
-                "Connection lost while processing. The answer may have been interrupted — please resubmit.",
-              );
-              return;
-            }
-            const payload = (await res.json()) as {
-              ws_base_url?: string | null;
-              sessions_dropped_last?: number;
-            };
-            const activeWs = payload.ws_base_url;
-            const dropped = payload.sessions_dropped_last ?? 0;
-            if (dropped > 0 || (activeWs && activeWs !== WS_BASE_URL)) {
-              setProviderNotice(
-                "Provider changed — in-flight answer was interrupted. Reconnect and resubmit if needed.",
-              );
-            } else {
-              setProviderNotice(
-                "Connection lost while processing. Please resubmit if your answer did not finish.",
-              );
+            if (res.ok) {
+              const payload = (await res.json()) as RoutingNotice;
+              current = payload.last_failover_at;
+              activeWs = payload.ws_base_url;
             }
           } catch {
+            // current stays unknown — classified conservatively below.
+          }
+          if (classifyDisconnect(baseline, current) === "provider_changed") {
+            const endpoint =
+              activeWs && activeWs !== WS_BASE_URL
+                ? ` New endpoint: ${activeWs}`
+                : "";
+            setProviderNotice(
+              `Provider changed — in-flight answer was interrupted. Reconnect and resubmit if needed.${endpoint}`,
+            );
+          } else {
             setProviderNotice(
               "Connection lost while processing. Please resubmit if your answer did not finish.",
             );

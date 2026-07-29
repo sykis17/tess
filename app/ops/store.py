@@ -749,8 +749,10 @@ def ensure_default_hetzner(
         updates: dict[str, Any] = {}
         if base_url and provider.base_url != base_url.rstrip("/"):
             updates["base_url"] = base_url.rstrip("/")
-        if ws_base_url is not None:
-            updates["ws_base_url"] = ws_base_url.rstrip("/") if ws_base_url else None
+        # Truthy, not is-not-None: "" (empty env value) must never clear the
+        # advertised URL. Clearing stays possible via the admin ProviderUpdate API.
+        if ws_base_url and provider.ws_base_url != ws_base_url.rstrip("/"):
+            updates["ws_base_url"] = ws_base_url.rstrip("/")
         if region and provider.region != region:
             updates["region"] = region
         if updates:

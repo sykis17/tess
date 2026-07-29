@@ -46,8 +46,8 @@ continues as workstreams W4–W6 but is **out of scope for this program's claims
 
 ```mermaid
 flowchart TB
-    P0[P0 · Correctness gate<br/>ollama lock DONE · WS mislabel OPEN] --> P1
-    P1[P1 · Nightly CI tier<br/>= W2 Session 3, owner clause fired] --> P2
+    P0[P0 · Correctness gate<br/>ollama lock DONE · WS mislabel DONE] --> P1
+    P1[P1 · Nightly CI tier<br/>DONE · nightly.yml + redis-parity] --> P2
     P2[P2 · Multi-node build-out<br/>3 nodes + observer + mode flags] --> P3
     P3[P3 · Shakedown<br/>1–2 wks · fixes allowed · clock resets] --> P4
     P4[P4 · Measurement soak<br/>2–4 wks · frozen code] --> P5
@@ -101,29 +101,41 @@ this doc and in the measurement methodology.
 
 ---
 
-## P1 — Nightly CI tier  ·  *= W2 Session 3; the owner clause has fired*
+## P1 — Nightly CI tier  ·  ✅ **DONE** (PR #22, spec: [P1_OPENER.md](P1_OPENER.md))
 
-NEXT_STEPS_PLAN §W2: "Session 3 is DEFERRED, not dropped — owner: the session
-after W3." W3 merged; this is that session. Scope unchanged from
-[W2_OPENER.md §Session 3 runway](W2_OPENER.md), now plus one W3 addition:
+Delivered as `.github/workflows/nightly.yml` (schedule `17 3 * * *` UTC +
+`workflow_dispatch`; three legs, every numeric pin probe-measured and cited
+inline; deduped `nightly-red` auto-issue on failure) plus the per-push
+`redis-parity` job in `ci.yml` (live-Redis checkpointer contract + resume
+battery via the binary-factory seam — the PR #16 residual's CI-able piece; the
+worker-path interrupt→resume live smoke stays manual, filed P3-adjacent).
+Runner-fit resolved by measurement: smoke ~27 min CPU-only, disk a non-issue —
+no self-hosted fallback, no Tavily secret. Eval ceilings ride an env-selected
+×3 CI wall profile (`GRAPH_EVAL_WALL_PROFILE=ci`); judge identity and set
+composition untouched.
 
-- Split-brain harness leg (run-all, expected-tally enforced).
-- Offline verifier chain (`build-bundle → install-offline → verify-egress-blocked`)
-  — the path that already rotted once from exactly this deferral.
-- Eval judge leg (pinned cheap judge, capped golden set, bounded nightly spend).
-- `s11` single-node stretch variant (W1.5 filing).
-- **NEW (PR #16 residual gap):** the flag-on checkpoint/resume leg — currently
-  unit-tested + one manual live smoke, which is the manual-discipline state CI
-  exists to end.
+**Non-vacuity — five planted violations, each red before its green was trusted**
+(full logs pasted in PR #22's body; these lines are the durable record):
 
-**Why it precedes deployment.** P3–P4 generate weeks of data on a system that
-must not silently regress mid-soak; nightly CI is what makes "frozen and still
-healthy" a checked claim instead of an assumed one.
+1. *splitbrain / product layer* — obs overlay withheld (both sites):
+   `[FAIL] s10_failover_visible … scrape http://127.0.0.1:8001/metrics failed: HTTP Error 404`
+2. *splitbrain / tally wiring* — pin lowered to 10 while all 11 passed:
+   `11/11 PASS` → `EXPECTATION FAILED: 11 scenarios passed, expected 10`
+3. *offline / manifest gate* — one byte XOR'd inside the extracted bundle:
+   `ERROR: MANIFEST checksum mismatch — bundle corrupt or tampered`
+4. *eval / structural layer* — chemistry→biology corrector inversion (app/**
+   carve-out pair `b73acad`→`64964a8`):
+   `failure: expected agent missing: chemistry (ran: ['biology'])` — judge
+   scored the wrong-lens answer 9; the structural layer is what caught it.
+5. *redis-parity / vacuity detector* — endpoint withheld:
+   `AssertionError: 4 live tests skipped — redis leg is vacuous`
 
-**Gate / non-vacuity.** Each nightly leg must fail on a planted violation once
-(the harness sabotage idiom) before its green is trusted.
+**Dropped to follow-ups (severable by design):** the `s11` single-node variant
+— the `10+1 → 11+0` nine-site flip stays filed in
+[P1_OPENER.md](P1_OPENER.md) §Follow-ups.
 
-**Size.** ~1–2 sessions.
+**Size.** Delivered in 1 session (7 nightly runs, 2 measurement + 5
+sabotage/verify cycles).
 
 ---
 

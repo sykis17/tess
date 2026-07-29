@@ -177,7 +177,13 @@ parity env line removed → parity job red on the skipped==0 assert (recorded, d
 - Cheap-harness-test pattern to copy: `tests/test_splitbrain_topology_gate.py` (argparse →
   exit-code wiring with docker patched out).
 
-## Session 3 runway — `nightly.yml`
+## Session 3 runway — `nightly.yml`  ·  ✅ **LANDED as Proof Program P1** (PR #22)
+
+> Delivered 2026-07-29: spec [P1_OPENER.md](P1_OPENER.md), status
+> [PROOF_PROGRAM.md](PROOF_PROGRAM.md) §P1 (five planted-violation reds
+> recorded there). Runner fit resolved by measurement (GH-hosted, 145 G disk);
+> the s11 single-node stretch dropped to P1_OPENER §Follow-ups. The runway
+> below is the historical filing.
 
 - Legs: split-brain harness (dev topology, `run-all --expect-pass 11 --expect-skip 0`),
   offline chain (`build-bundle → install-offline → verify-egress-blocked`, ~20 min

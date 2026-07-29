@@ -70,10 +70,16 @@ Two known bugs poison any data collected on top of them.
    `d5c545b`). Loop-stamped lock; red-first regression
    `test_ollama_lock_survives_event_loop_turnover` locks it permanently. Found
    live by the W3 flag-on smoke — the gate class working as designed.
-2. **`OPS_PUBLIC_WS_BASE_URL` mismatch — ⬜ OPEN.** Any WebSocket disconnect is
-   mislabeled as a provider failover. This fabricates failover events in exactly
-   the dataset P3–P4 exist to collect. Fix + a red-first test that distinguishes
-   a plain WS disconnect from a real failover in the emitted event/metric.
+2. **`OPS_PUBLIC_WS_BASE_URL` mismatch — ✅ DONE** (`7c57ad1` → `864c7ad`, spec:
+   [P0_OPENER.md](P0_OPENER.md)). Disconnects are now classified by *change* in
+   the server-authored `last_failover_at` between socket open and close
+   (opaque-string compare, in-band baseline advance, conservative on every
+   unknown — may under-count, never fabricates); the sticky
+   `sessions_dropped_last` left the public notice payload. Red-first tests
+   distinguish a plain WS disconnect from a real failover in the **user-facing
+   signal** (server-side events/metrics were never fabricated — the defect was
+   the client-side label); Python mirror + forbidden-token source guard in
+   `tests/test_ws_disconnect_classify.py`.
 
 **Also settled here, before any measurement** (decision, ~zero code): does the
 900 s `session:{sid}:active_task` stale-TTL window after a hard worker crash

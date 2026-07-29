@@ -8,6 +8,13 @@ docker compose -f docker-compose.yml -f docker-compose.ops-ha.yml -p tess-engine
 
 Overlay sets `OPS_ADMIN_TOKEN=ha-harness-token` for both CPs (override via env if needed).
 
+**Token-drift trap:** compose interpolates `${OPS_ADMIN_TOKEN:-...}` from the repo's
+`.env` file, but the harness client reads the host *shell* env. If your `.env` sets a
+real `OPS_ADMIN_TOKEN` (e.g. for prod smoke scripts), the containers get that value
+while the harness defaults to `ha-harness-token` → every scenario fails `403 Invalid
+admin token`. Export the same value before running:
+`export OPS_ADMIN_TOKEN=$(grep '^OPS_ADMIN_TOKEN=' .env | cut -d= -f2)`.
+
 ## Run
 
 ```bash

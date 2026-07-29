@@ -272,11 +272,14 @@ deliberately broken chain fails the eval.
 
 ---
 
-## W3 — LangGraph checkpointing  ·  *shared foundation*  ·  **IMPLEMENTED (PR pending)**
+## W3 — LangGraph checkpointing  ·  *shared foundation*  ·  ✅ **DONE (PR #16 merged)**
 
-> **Status (2026-07-27):** landed on `graph/w3-checkpointing` as C1–C6 (saver + contract
-> battery; flag/seam/durability guard; explicit resume path; panel-stream dedup settlement;
-> framework-version history columns; docs/doctrine). All seven open decisions below are
+> **Status (2026-07-29): MERGED — PR #16 → main `be93f7f`.** Landed as C1–C7 (saver +
+> contract battery; flag/seam/durability guard; explicit resume path; panel-stream dedup
+> settlement; framework-version history columns; docs/doctrine; **C7:** the pre-PR live
+> flag-on smoke caught a latent product bug — the module-level Ollama `asyncio.Lock` binds
+> to the first contending event loop, breaking the second task on a reused prefork child —
+> fixed loop-stamped with a red-first regression test). All seven open decisions below are
 > settled — see the PR body and the commit messages for the evidence trail. Notable
 > deviations from the handoff's sketch, found by investigation: the planned `stream_reset`
 > consume-once reset was NOT shipped (multi-stream turns made it wrong; the streaming

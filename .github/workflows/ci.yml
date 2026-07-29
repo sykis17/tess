@@ -170,9 +170,8 @@ jobs:
           done
           echo "redis never became healthy"; exit 1
       - name: Live-Redis checkpointer suite
-        # SABOTAGE (P1 Step 5 red-first, vacuity detection proven — FIXED in the
-        # next commit): OPS_TEST_REDIS_URL deliberately withheld, so the live
-        # tests skip and the junit assert below must fail loudly.
+        env:
+          OPS_TEST_REDIS_URL: redis://127.0.0.1:6379/9
         run: python -m pytest tests/test_checkpoint_saver_live.py -v --junitxml=redis-parity.xml
       - name: Assert live tests actually ran
         env:

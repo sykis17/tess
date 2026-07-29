@@ -54,6 +54,10 @@ export interface ProviderChangedMessage {
   to_provider_id?: string | null;
   sessions_dropped?: number;
   ws_base_url?: string | null;
+  // Pre-serialized server stamp (isoformat string, byte-identical to
+  // /ops/routing/notice's last_failover_at) — the in-band baseline advance
+  // for the disconnect classifier reads this.
+  last_failover_at?: string | null;
 }
 
 export type WebSocketMessage =

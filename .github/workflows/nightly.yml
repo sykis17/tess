@@ -1,0 +1,265 @@
+# Nightly proof tier (Proof Program P1 — docs/P1_OPENER.md). Three legs promote the
+# manual proof surfaces to scheduled CI: the split-brain harness (dev-parity compose
+# stack), the offline/sovereign verifier chain, and the LLM-bearing eval smoke.
+#
+# PROBE PHASE (Step 1, measure-before-pin): every leg runs UNGATED — no --expect-*
+# on splitbrain/eval (the offline verifier's baked-in tally stays: it IS that leg) —
+# and prints wall clocks, df -h, and image sizes. The numbers recorded from this
+# phase set every pin in Steps 2-4; a guessed ceiling could kill the measurement run,
+# so probe timeout-minutes sit near the 360-min job maximum.
+#
+# TEMPORARY TRIGGER: push-to-branch + '[run-nightly]' commit-tag opt-in, because
+# workflow_dispatch cannot fire for a workflow absent from the default branch.
+# Flipped to `schedule` (cron 17 3 * * *) + workflow_dispatch in Step 6.
+#
+# Conventions (docs/P1_OPENER.md §Cross-leg conventions):
+# - no marketplace actions — first-party actions/* plus a sha256-pinned Ollama release
+# - explicit `shell: bash` everywhere ⇒ `bash -e -o pipefail` (the implicit default
+#   shell has NO pipefail — pipes would mask exit codes)
+# - job names here never join branch-protection required checks (schedule-only checks
+#   would block every PR)
+
+name: nightly
+
+on:
+  push:
+    branches: [ops/p1-nightly-ci] # TEMPORARY (Step 1 probe) — Step 6 flips to schedule + dispatch
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false # a nightly must finish, not yield to the next one
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  nightly-splitbrain:
+    runs-on: ubuntu-latest
+    if: contains(github.event.head_commit.message, '[run-nightly]')
+    # PROBE ceiling near the 360-min job max — re-pinned from measured walls in Step 2
+    # (laptop prior: 17-20 min run-all + compose build/up, measured on a 4 GB WSL2 VM).
+    timeout-minutes: 350
+    env:
+      # s10 FAILs (never skips) without the obs overlay in scope — both here and in
+      # the compose up file list below.
+      OPS_HA_COMPOSE_OBS: docker-compose.ops-obs.yml
+      # 60 s = the 4 GB-WSL2-VM measurement (scripts/ops_cp_splitbrain/README.md
+      # §Timeouts); re-pinned from the probe's convergence timings in Step 2.
+      OPS_HA_CONVERGENCE_TIMEOUT: "60"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.lock.txt
+      - name: Install from hash-pinned lock
+        run: python -m pip install --require-hashes -r requirements.lock.txt
+      - name: Probe disk before
+        run: df -h /
+      - name: Single-source OPS_ADMIN_TOKEN
+        # Compose interpolates from .env; the harness client reads shell env. One
+        # generated token into both kills the 403-storm drift trap by construction.
+        run: |
+          TOKEN=$(openssl rand -hex 16)
+          echo "::add-mask::$TOKEN"
+          echo "OPS_ADMIN_TOKEN=$TOKEN" >> .env
+          echo "OPS_ADMIN_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+      - name: Compose up (full first-run build)
+        # FULL up — worker + otel-collector included — so the obs overlay is in the
+        # running stack (s10 needs it) and image build cost lands outside the
+        # harness's own timing.
+        run: |
+          t0=$(date +%s)
+          docker compose -f docker-compose.yml -f docker-compose.ops-ha.yml \
+            -f docker-compose.ops-obs.yml -p tess-engine up --build -d
+          echo "PROBE wall compose-up-build: $(( $(date +%s) - t0 ))s"
+      - name: Probe disk and images after build
+        run: |
+          df -h /
+          docker image ls --format '{{.Repository}}:{{.Tag}}  {{.Size}}'
+      - name: Split-brain harness run-all (PROBE — ungated)
+        # --expect-pass 11 --expect-skip 0 (the dev gate) arrives in Step 2; scenario
+        # PASS/FAIL still drives the exit code, only the tally pin is absent.
+        run: |
+          t0=$(date +%s)
+          python -m scripts.ops_cp_splitbrain run-all
+          echo "PROBE wall splitbrain-run-all: $(( $(date +%s) - t0 ))s"
+      - name: Probe disk after
+        if: always()
+        run: df -h /
+      - name: Collect compose logs
+        if: failure()
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.ops-ha.yml \
+            -f docker-compose.ops-obs.yml -p tess-engine logs --no-color \
+            > splitbrain-compose-logs.txt || true
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-splitbrain-logs
+          path: splitbrain-compose-logs.txt
+
+  nightly-offline:
+    runs-on: ubuntu-latest
+    if: contains(github.event.head_commit.message, '[run-nightly]')
+    # PROBE ceiling — re-pinned from measured walls in Step 3 (laptop prior: ~20 min
+    # for the full build → install → verify chain).
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      # build-bundle.sh runs `npm ci && npm run build` on the HOST — node pinned to
+      # ci.yml's frontend job (22); version drift reds this leg, not the frontend job.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Probe disk before
+        run: df -h /
+      - name: Build offline bundle
+        run: |
+          t0=$(date +%s)
+          deploy/offline/build-bundle.sh
+          echo "PROBE wall build-bundle: $(( $(date +%s) - t0 ))s"
+      - name: Probe app image size (overlay2 instrument) and disk
+        # MAX_APP_IMAGE_GB was tuned against the laptop's containerd CONTENT size;
+        # this exact-bytes number is the overlay2 reading the ceiling gets re-tuned
+        # against in Step 3 IF the probe trips it (never compare the two instruments).
+        run: |
+          bytes=$(docker image inspect -f '{{.Size}}' tess-engine-app:offline)
+          echo "PROBE tess-engine-app:offline overlay2 bytes=$bytes ($(( bytes / 1024 / 1024 )) MB)"
+          docker image ls --format '{{.Repository}}:{{.Tag}}  {{.Size}}'
+          df -h /
+      - name: Extract bundle (transit checksum first)
+        run: |
+          BUNDLE=$(ls tess-offline-bundle-*.tar.gz)
+          sha256sum -c "$BUNDLE.sha256"
+          mkdir -p "$RUNNER_TEMP/tess-offline"
+          tar -C "$RUNNER_TEMP/tess-offline" -xzf "$BUNDLE"
+          echo "BUNDLE_DIR=$RUNNER_TEMP/tess-offline" >> "$GITHUB_ENV"
+          echo "TARGET_DIR=$RUNNER_TEMP/tess-target" >> "$GITHUB_ENV"
+      - name: Install offline
+        # The manifest gate (sha256sum -c MANIFEST.sha256) and the image-ID guard
+        # live inside the script; its exit code is the step.
+        run: |
+          t0=$(date +%s)
+          cd "$BUNDLE_DIR"
+          ./install-offline.sh --target "$TARGET_DIR"
+          echo "PROBE wall install-offline: $(( $(date +%s) - t0 ))s"
+      - name: Verify egress blocked
+        # The verifier exits with the harness RC and bakes in the certification
+        # tally --expect-pass 10 --expect-skip 1 (s11 is quorum-only on the offline
+        # single-node etcd) — the script IS the gate; this job adds probes only.
+        run: |
+          t0=$(date +%s)
+          cd "$BUNDLE_DIR"
+          ./verify-egress-blocked.sh --target "$TARGET_DIR"
+          echo "PROBE wall verify-egress: $(( $(date +%s) - t0 ))s"
+      - name: Probe disk after
+        if: always()
+        run: df -h /
+      - name: Collect offline stack logs
+        if: failure()
+        run: |
+          cd "$TARGET_DIR" 2>/dev/null || exit 0
+          docker compose -f docker-compose.offline.yml -p tess-engine logs --no-color \
+            > "$GITHUB_WORKSPACE/offline-compose-logs.txt" || true
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-offline-logs
+          path: offline-compose-logs.txt
+
+  nightly-eval:
+    runs-on: ubuntu-latest
+    if: contains(github.event.head_commit.message, '[run-nightly]')
+    # PROBE ceiling — CPU-only llama3.2 inference on 4 vCPU is the arc's biggest
+    # unknown (laptop walls: smoke ~3.5 min warm; golden-set per-prompt ceilings
+    # 300-900 s are laptop-calibrated and may trip here — that trip is itself the
+    # measurement Step 4's CI wall profile calibrates from).
+    timeout-minutes: 350
+    env:
+      # Pinned Ollama release — versioned download + recorded sha256, never a
+      # marketplace action (docs/P1_OPENER.md resolved question (b)).
+      # sha256 is ollama-linux-amd64.tar.zst from the v0.32.5 release sha256sum.txt,
+      # recorded 2026-07-29.
+      OLLAMA_VERSION: v0.32.5
+      OLLAMA_SHA256: f7d6bdbcf71b83aa8670c4e7dc4b6936c0952fcf8b114eaf6a11cbadb9684214
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.lock.txt
+      - name: Install from hash-pinned lock
+        run: python -m pip install --require-hashes -r requirements.lock.txt
+      - name: Cache Ollama models
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ollama-models-${{ env.OLLAMA_VERSION }}-llama3.2
+      - name: Install pinned Ollama release
+        run: |
+          curl -fsSL -o /tmp/ollama.tar.zst \
+            "https://github.com/ollama/ollama/releases/download/${OLLAMA_VERSION}/ollama-linux-amd64.tar.zst"
+          echo "${OLLAMA_SHA256}  /tmp/ollama.tar.zst" | sha256sum -c -
+          sudo tar --zstd -C /usr/local -xf /tmp/ollama.tar.zst
+          ollama --version
+      - name: Start ollama serve
+        run: |
+          nohup ollama serve > "$RUNNER_TEMP/ollama-serve.log" 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS localhost:11434/api/version >/dev/null 2>&1; then
+              echo "ollama ready"; exit 0
+            fi
+            sleep 2
+          done
+          echo "ollama never became ready"
+          cat "$RUNNER_TEMP/ollama-serve.log"
+          exit 1
+      - name: Pull llama3.2 (unconditional)
+        # On a healthy cache this is a cheap digest-verify no-op; it is the
+        # validation step that keeps a poisoned or partially-restored cache from
+        # producing a teaches-nothing blob-error red.
+        run: |
+          t0=$(date +%s)
+          ollama pull llama3.2
+          echo "PROBE wall ollama-pull: $(( $(date +%s) - t0 ))s"
+          ollama list
+      - name: Write .env
+        # The harness asserts the resolved graph provider/model at startup and
+        # refuses zeroed-metrics runs — this explicit env is the leg's own guard.
+        run: |
+          printf 'DEFAULT_LLM_PROVIDER=ollama\nOLLAMA_BASE_URL=http://localhost:11434\nOLLAMA_MODEL=llama3.2\n' > .env
+      - name: Probe search reachability from runner IP
+        # Data only, never a gate — datacenter IPs are a known DDG rate-limit
+        # target; systematic blocking is a Jesse-escalation (TAVILY_API_KEY), not
+        # a red. The L3/L4 smoke prompts are the real probe; this is the cheap
+        # direct reading next to it.
+        run: |
+          echo "duckduckgo.com: $(curl -m 10 -sS -o /dev/null -w '%{http_code}' https://duckduckgo.com/ || echo FAIL)"
+          echo "html.duckduckgo.com: $(curl -m 10 -sS -o /dev/null -w '%{http_code}' 'https://html.duckduckgo.com/html/?q=probe' || echo FAIL)"
+      - name: Eval smoke (PROBE — ungated)
+        # --expect-pass 5 + the env-selected CI wall profile arrive in Step 4 as a
+        # conscious calibration commit fed by this run's per-prompt walls.
+        run: |
+          t0=$(date +%s)
+          python -m scripts.graph_eval run-all --set smoke
+          echo "PROBE wall eval-smoke: $(( $(date +%s) - t0 ))s"
+      - name: Upload probe history and serve log
+        # Per-prompt walls live in history.db — the probe's primary artifact.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-eval-probe
+          path: |
+            scripts/graph_eval/history.db
+            ${{ runner.temp }}/ollama-serve.log

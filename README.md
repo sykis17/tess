@@ -2,7 +2,7 @@
 
 Event-driven AI orchestration engine with multi-agent LangGraph pipelines, WebSocket Panel streaming, and Celery background processing.
 
-**Production:** http://5.78.186.223  
+**Production:** see deploy docs  
 **Repo:** https://github.com/sykis17/tess.git
 
 ## Documentation

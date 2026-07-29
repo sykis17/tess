@@ -40,15 +40,16 @@ jobs:
   nightly-splitbrain:
     runs-on: ubuntu-latest
     if: contains(github.event.head_commit.message, '[run-nightly]')
-    # PROBE ceiling near the 360-min job max — re-pinned from measured walls in Step 2
-    # (laptop prior: 17-20 min run-all + compose build/up, measured on a 4 GB WSL2 VM).
-    timeout-minutes: 350
+    # Probe-measured (run 30445817123): whole job 8.5 min — compose up --build 51 s
+    # + run-all 428 s (11 scenarios, 27.8-55.8 s each). 30 min ≈ 3.5x measured;
+    # re-baseline consciously if the harness grows scenarios.
+    timeout-minutes: 30
     env:
       # s10 FAILs (never skips) without the obs overlay in scope — both here and in
       # the compose up file list below.
       OPS_HA_COMPOSE_OBS: docker-compose.ops-obs.yml
-      # 60 s = the 4 GB-WSL2-VM measurement (scripts/ops_cp_splitbrain/README.md
-      # §Timeouts); re-pinned from the probe's convergence timings in Step 2.
+      # Probed green at 60 s on runner hardware (run 30445817123: scenario walls
+      # 27.8-55.8 s, no convergence timeout hit); default would be 3xTTL=30 s.
       OPS_HA_CONVERGENCE_TIMEOUT: "60"
     steps:
       - uses: actions/checkout@v4
@@ -82,12 +83,13 @@ jobs:
         run: |
           df -h /
           docker image ls --format '{{.Repository}}:{{.Tag}}  {{.Size}}'
-      - name: Split-brain harness run-all (PROBE — ungated)
-        # --expect-pass 11 --expect-skip 0 (the dev gate) arrives in Step 2; scenario
-        # PASS/FAIL still drives the exit code, only the tally pin is absent.
+      - name: Split-brain harness run-all (dev gate 11+0)
+        # The dev-topology certification tally as an exit-code artifact — probed
+        # 11/11 PASS on run 30445817123. Tally changes are conscious re-baselines
+        # (see the interlock table in docs/P1_OPENER.md).
         run: |
           t0=$(date +%s)
-          python -m scripts.ops_cp_splitbrain run-all
+          python -m scripts.ops_cp_splitbrain run-all --expect-pass 11 --expect-skip 0
           echo "PROBE wall splitbrain-run-all: $(( $(date +%s) - t0 ))s"
       - name: Probe disk after
         if: always()

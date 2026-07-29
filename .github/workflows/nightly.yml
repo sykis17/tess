@@ -89,7 +89,10 @@ jobs:
         # (see the interlock table in docs/P1_OPENER.md).
         run: |
           t0=$(date +%s)
-          python -m scripts.ops_cp_splitbrain run-all --expect-pass 11 --expect-skip 0
+          # SABOTAGE (P1 Step 2 red-first, planted violation B — REVERTED in the
+          # next commit): wrong tally pin; the harness's own EXPECTATION FAILED
+          # exit must flip this job red, proving the gate reaches job status.
+          python -m scripts.ops_cp_splitbrain run-all --expect-pass 10 --expect-skip 0
           echo "PROBE wall splitbrain-run-all: $(( $(date +%s) - t0 ))s"
       - name: Probe disk after
         if: always()

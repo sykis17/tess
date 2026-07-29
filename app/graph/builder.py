@@ -1,5 +1,6 @@
 from typing import Any
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
@@ -40,7 +41,7 @@ def _make_specialist_node(agent_name: str):
 _SPECIALIST_NODES = {name: _make_specialist_node(name) for name in AGENT_REGISTRY}
 
 
-def build_graph() -> CompiledStateGraph:
+def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> CompiledStateGraph:
     """Construct and compile the core TESS LangGraph orchestration chain."""
     builder = StateGraph(GraphState)
 
@@ -78,7 +79,29 @@ def build_graph() -> CompiledStateGraph:
     builder.add_conditional_edges("defense_review", route_after_defense)
     builder.add_edge("presenter", END)
 
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)
 
 
 compiled_graph = build_graph()
+
+# W3: the bare singleton above stays eager and checkpointer-free forever — the
+# zero-infra eval harness imports it and tests patch it. The checkpointed twin
+# is constructed lazily at first use, never at import: an import-time saver
+# would drag Redis configuration into every process that imports app.graph.
+_checkpointed_graph: CompiledStateGraph | None = None
+_checkpoint_saver = None
+
+
+def get_checkpoint_saver():
+    """The saver behind get_checkpointed_graph(), or None before first use."""
+    return _checkpoint_saver
+
+
+def get_checkpointed_graph() -> CompiledStateGraph:
+    global _checkpointed_graph, _checkpoint_saver
+    if _checkpointed_graph is None:
+        from app.graph.checkpoint import RedisCheckpointSaver
+
+        _checkpoint_saver = RedisCheckpointSaver.from_settings()
+        _checkpointed_graph = build_graph(checkpointer=_checkpoint_saver)
+    return _checkpointed_graph

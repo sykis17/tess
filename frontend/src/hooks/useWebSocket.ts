@@ -49,6 +49,11 @@ function buildPayload(
   return JSON.stringify(envelope);
 }
 
+// Merge semantics mirrored in tests/test_panel_stream_dedup.py (the frontend
+// has no test runner) — change BOTH together. The non-streaming wholesale
+// REPLACE below is also the resume reset affordance: every streaming producer
+// publishes a content:"" opener before (re-)streaming, which is what keeps a
+// resumed stream from appending onto stale partial content.
 function mergePanelUpdate(previous: Panel, incoming: Panel): Panel {
   if (incoming.is_streaming) {
     return {
@@ -264,6 +269,19 @@ export function useWebSocket(sessionId: string) {
     [],
   );
 
+  const sendResume = useCallback(() => {
+    // Explicit resume-from-checkpoint (W3). The backend refuses while a task
+    // is in flight, so this is safe to expose next to the cancel notice.
+    const ws = wsRef.current;
+    if (ws?.readyState === WebSocket.OPEN) {
+      pendingCountRef.current += 1;
+      setIsProcessing(true);
+      setLastError(null);
+      setCancelNotice(null);
+      ws.send(JSON.stringify({ type: "resume" }));
+    }
+  }, []);
+
   const clearError = useCallback(() => {
     setLastError(null);
   }, []);
@@ -284,6 +302,7 @@ export function useWebSocket(sessionId: string) {
     providerNotice,
     isProcessing,
     sendMessage,
+    sendResume,
     clearError,
     clearCancelNotice,
     clearProviderNotice,

@@ -12,15 +12,49 @@ from app.core.redis import (
 )
 from app.core.session_control import (
     get_active_task,
+    get_resumable_thread,
     revoke_active_task,
     set_active_task,
     set_interrupt,
 )
-from app.worker import process_user_input
+from app.worker import process_user_input, resume_user_input
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _is_resume_request(raw: str) -> bool:
+    """True for the explicit resume control envelope {"type": "resume"}."""
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return False
+    return isinstance(data, dict) and data.get("type") == "resume"
+
+
+async def _handle_resume(websocket: WebSocket, session_id: str) -> None:
+    """Explicit resume-from-checkpoint (W3).
+
+    The refusal-while-active check is the concurrency guard that keeps one
+    stream per session channel — resume never interrupts or revokes anything.
+    """
+    if get_active_task(session_id):
+        await websocket.send_json(
+            {
+                "type": "error",
+                "message": "A request is already in flight — resume refused.",
+            }
+        )
+        return
+    thread_id = get_resumable_thread(session_id)
+    if not thread_id:
+        await websocket.send_json(
+            {"type": "error", "message": "Nothing to resume for this session."}
+        )
+        return
+    async_result = resume_user_input.delay(session_id, thread_id)
+    set_active_task(session_id, async_result.id)
 
 
 async def _forward_redis_messages(pubsub: PubSub, websocket: WebSocket) -> None:
@@ -88,8 +122,16 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
             user_message = await websocket.receive_text()
 
             try:
-                if get_active_task(session_id):
-                    set_interrupt(session_id)
+                if _is_resume_request(user_message):
+                    await _handle_resume(websocket, session_id)
+                    continue
+
+                active_task = get_active_task(session_id)
+                if active_task:
+                    # Target the flag at the task being steered away from so a
+                    # later resumed run (a different task id) can't be aborted
+                    # by this stale flag.
+                    set_interrupt(session_id, target_task_id=active_task)
                     revoke_active_task(session_id)
 
                 async_result = process_user_input.delay(user_message, session_id)

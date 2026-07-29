@@ -64,6 +64,15 @@ _METRICS_ON = bool(settings.graph_metrics_enabled and _PROM_AVAILABLE)
 _CHAIN_PROFILES = frozenset(p.value for p in ChainProfile)
 _PRODUCT_MODES = frozenset(m.value for m in ProductMode)
 
+# W3: run-outcome vocabulary — the graph plane's first outcome bounding
+# (before this, record_run piped free-form strings straight into a label).
+# "resumed" = a resume-after-interrupt run that completed cleanly; it advances
+# the counter but never the success-only duration histogram (partial wall time
+# would flatter latency trends).
+GRAPH_RUN_OUTCOMES = frozenset(
+    {"success", "interrupted", "cancelled", "error", "resumed"}
+)
+
 # Which node is executing, for LLM-call attribution. Set by instrument_node; inherited
 # by tasks the node spawns (contextvars propagate into asyncio.create_task).
 _current_node: contextvars.ContextVar[str] = contextvars.ContextVar(
@@ -166,6 +175,7 @@ def record_run(
 ) -> None:
     cp = _fold(chain_profile, _CHAIN_PROFILES)
     pm = _fold(product_mode, _PRODUCT_MODES)
+    outcome = _fold(outcome, GRAPH_RUN_OUTCOMES)
     GRAPH_RUNS.labels(cp, pm, outcome).inc()
     if outcome == "success" and duration_seconds is not None:
         RUN_DURATION.labels(cp, pm).observe(duration_seconds)
@@ -380,6 +390,15 @@ class graph_run:
 
     def set_outcome(self, outcome: str) -> None:
         self._outcome = outcome
+
+    def set_thread_id(self, thread_id: str) -> None:
+        """Span attribute ONLY — thread_id is session-derived (unbounded
+        cardinality) and is banned as a metric label."""
+        if self._span is not None:
+            try:
+                self._span.set_attribute("graph.thread_id", thread_id)
+            except Exception:
+                pass
 
     def __enter__(self) -> "graph_run":
         if not (_METRICS_ON or tracing_on()):

@@ -95,11 +95,19 @@ loop on L3 — see `tests/test_defense_routing.py` for the regression guards.
 
 `history.db` (gitignored + dockerignored; override with
 `GRAPH_EVAL_HISTORY_DB`): `runs` carries git commit + dirty flag, set
-name/version, graph provider/model, judge provider/model/prompt-version, and
-totals (tokens, cost, wall, structural/judge pass counts); `prompt_results`
-carries per-prompt structural failures (json), judge score/verdict, graph and
-judge token/cost columns (never mixed — graph deltas are sampled before the
-judge leg), latency, outcome, attempts.
+name/version, graph provider/model, judge provider/model/prompt-version,
+totals (tokens, cost, wall, structural/judge pass counts), and — since W3 —
+the framework identity (`langgraph_version`, `langchain_core_version`):
+identity is part of the measurement, and the W3 venv drift (langchain-core
+1.4.9 installed vs 1.5.1 locked) would have been visible in data with these
+columns. `prompt_results` carries per-prompt structural failures (json),
+judge score/verdict, graph and judge token/cost columns (never mixed — graph
+deltas are sampled before the judge leg), latency, outcome, attempts.
+
+An existing `history.db` predating the framework-version columns is migrated
+in place on the next open (`open_history` adds missing columns via
+`ALTER TABLE`; historical rows stay NULL — their framework identity was never
+recorded). No manual step.
 
 ## Per-push honesty (S2 scope)
 

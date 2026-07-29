@@ -18,7 +18,7 @@ import app.graph.observability as obs
 from app.graph.schemas import MayorData, Panel, UsableAnswer
 
 from scripts.graph_eval import __main__ as cli
-from scripts.graph_eval import runner
+from scripts.graph_eval import history, runner
 from scripts.graph_eval.judge import JudgeResult
 from scripts.graph_eval.golden import GoldenPrompt, GoldenSet, load_set
 from scripts.graph_eval.metrics_delta import GraphDelta, compute_delta, take_snapshot
@@ -283,6 +283,95 @@ def test_run_all_writes_history_with_identity(monkeypatch, tmp_path):
         assert [(r[0], r[1]) for r in rows] == [("p1", 1), ("p2", 1)]
         assert all(json.loads(r[2]) == [] for r in rows)
         assert all(r[3] == 9.0 for r in rows)
+        # W3: framework identity is part of the measurement identity — the
+        # venv drift the W3 handoff found would have been visible in data.
+        fw = conn.execute(
+            "SELECT langgraph_version, langchain_core_version FROM runs"
+        ).fetchone()
+        assert fw == history.framework_versions()
+        assert all(fw)
+    finally:
+        conn.close()
+
+
+# Pre-W3 runs table (no framework-version columns) — what an existing
+# history.db on disk looks like.
+_LEGACY_RUNS_SCHEMA = """
+CREATE TABLE runs (
+    run_id TEXT PRIMARY KEY,
+    ts_utc TEXT NOT NULL,
+    git_commit TEXT NOT NULL,
+    git_dirty INTEGER NOT NULL,
+    set_version TEXT NOT NULL,
+    set_name TEXT NOT NULL,
+    graph_provider TEXT NOT NULL,
+    graph_model TEXT NOT NULL,
+    judge_provider TEXT,
+    judge_model TEXT,
+    judge_prompt_version TEXT,
+    prompts_total INTEGER NOT NULL,
+    structural_passed INTEGER NOT NULL,
+    judge_passed INTEGER,
+    prompt_tokens INTEGER NOT NULL,
+    completion_tokens INTEGER NOT NULL,
+    cost_usd REAL NOT NULL,
+    judge_prompt_tokens INTEGER,
+    judge_completion_tokens INTEGER,
+    judge_cost_usd REAL,
+    wall_s REAL NOT NULL,
+    result TEXT NOT NULL
+);
+"""
+
+
+def test_history_migrates_legacy_db_in_place(tmp_path):
+    """CREATE IF NOT EXISTS never adds columns to an existing table — without
+    open_history's _ensure_column step this test is red: the 24-value INSERT
+    fails against the legacy 22-column table."""
+    db_path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(_LEGACY_RUNS_SCHEMA)
+    conn.commit()
+    conn.close()
+
+    conn = history.open_history(str(db_path))
+    try:
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
+        assert {"langgraph_version", "langchain_core_version"} <= columns
+        lg, lc = history.framework_versions()
+        history.record_run(
+            conn,
+            history.RunRow(
+                run_id="r1",
+                ts_utc=history.utc_now_iso(),
+                git_commit="0" * 40,
+                git_dirty=False,
+                set_version="v1",
+                set_name="smoke",
+                graph_provider="fakeprov",
+                graph_model="fakemodel",
+                judge_provider=None,
+                judge_model=None,
+                judge_prompt_version=None,
+                prompts_total=1,
+                structural_passed=1,
+                judge_passed=None,
+                prompt_tokens=1,
+                completion_tokens=1,
+                cost_usd=0.0,
+                judge_prompt_tokens=None,
+                judge_completion_tokens=None,
+                judge_cost_usd=None,
+                wall_s=1.0,
+                result="pass",
+                langgraph_version=lg,
+                langchain_core_version=lc,
+            ),
+        )
+        row = conn.execute(
+            "SELECT langgraph_version, langchain_core_version FROM runs"
+        ).fetchone()
+        assert row == (lg, lc)
     finally:
         conn.close()
 

@@ -84,9 +84,9 @@ The chaos schedule SIGKILLs workers on repeat, so P3 **will** surface this as
 soak data is a clock reset. Either answer is publishable; an unstated answer is
 not.
 
-> **DECIDED (2026-07-29, recorded in PR #16 §Residual gaps):** the window **counts
-> against availability** in published numbers until the W4 liveness-checked refusal
-> removes it — scoping it out would make the soak data flatter than the product.
+> **DECIDED (2026-07-29, Jesse):** the window **counts against availability** in
+> published numbers until the W4 liveness-checked refusal removes it — scoping it
+> out would make the soak data flatter than the product.
 
 **Gate.** Both fixes merged with red-first tests; the 900 s decision recorded in
 this doc and in the measurement methodology.

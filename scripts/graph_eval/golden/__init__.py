@@ -8,6 +8,7 @@ re-baseline event (bump the version, note it inline). Every prompt belongs to
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,27 @@ _PROMPT_KEYS = frozenset(
 _TOP_KEYS = frozenset({"set_version", "notes", "prompts"})
 
 DEFAULT_SET_PATH = Path(__file__).resolve().parent / "set_v1.json"
+
+# Wall-profile calibration (P1 Step 4, conscious — never a silent multiplier).
+# The set's max_wall_s ceilings are LAPTOP-calibrated (warm llama3.2, sequential
+# behind the Ollama lock). A 4-vCPU CPU-only GH runner is a different instrument:
+# probe run 30445817123 measured smoke walls 42.2/151.7/276.7/265.0/779.1 s
+# (L0-L4) vs ~3.5 min laptop smoke total — l4 landed at 779 s against its 900 s
+# laptop ceiling, and walls vary 2x run to run. "ci" scales every ceiling x3
+# (l4: 2700 s), keeping the runaway-chain guard bounded while never tripping on
+# honest CPU variance. Selected via GRAPH_EVAL_WALL_PROFILE; unknown names fail
+# loud. Judge identity, thresholds, and set composition are NOT touched here.
+_WALL_PROFILES: dict[str, int] = {"local": 1, "ci": 3}
+
+
+def _wall_profile_factor() -> int:
+    name = (os.environ.get("GRAPH_EVAL_WALL_PROFILE") or "local").strip() or "local"
+    if name not in _WALL_PROFILES:
+        raise ValueError(
+            f"unknown GRAPH_EVAL_WALL_PROFILE {name!r} — "
+            f"known profiles: {sorted(_WALL_PROFILES)}"
+        )
+    return _WALL_PROFILES[name]
 
 
 @dataclass(frozen=True)
@@ -58,6 +80,7 @@ def _fail(prompt_id: str, message: str) -> ValueError:
 
 def load_set(path: Path | None = None) -> GoldenSet:
     src = path or DEFAULT_SET_PATH
+    wall_factor = _wall_profile_factor()
     raw = json.loads(src.read_text(encoding="utf-8"))
 
     unknown_top = set(raw) - _TOP_KEYS
@@ -98,6 +121,10 @@ def load_set(path: Path | None = None) -> GoldenSet:
         unknown_rubric = set(rubric) - KNOWN_RUBRIC_KEYS
         if unknown_rubric:
             raise _fail(pid, f"unknown rubric keys {sorted(unknown_rubric)}")
+        if wall_factor != 1 and rubric.get("max_wall_s") is not None:
+            # single application site: the runaway-guard timeout and the
+            # structural wall check both read the loaded rubric.
+            rubric = dict(rubric, max_wall_s=rubric["max_wall_s"] * wall_factor)
         prompts.append(
             GoldenPrompt(
                 id=pid,

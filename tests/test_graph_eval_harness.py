@@ -528,3 +528,41 @@ def test_metrics_delta_zero_when_quiet():
     delta = compute_delta(before, take_snapshot())
     assert delta.total_tokens == 0
     assert delta.llm_calls == 0
+
+
+# --- CI wall profile (P1 Step 4) — conscious calibration, never silent ---------
+
+
+def test_wall_profile_ci_scales_every_ceiling(monkeypatch):
+    baseline = load_set()
+    monkeypatch.setenv("GRAPH_EVAL_WALL_PROFILE", "ci")
+    scaled = load_set()
+    pairs = list(zip(baseline.prompts, scaled.prompts))
+    assert pairs, "empty golden set"
+    checked = 0
+    for base, ci in pairs:
+        assert base.id == ci.id
+        base_wall = base.rubric.get("max_wall_s")
+        if base_wall is None:
+            continue
+        assert ci.rubric["max_wall_s"] == base_wall * 3
+        checked += 1
+    assert checked > 0, "no max_wall_s ceilings found — scaling test is vacuous"
+    # everything except the wall ceiling is untouched
+    for base, ci in pairs:
+        base_rest = {k: v for k, v in base.rubric.items() if k != "max_wall_s"}
+        ci_rest = {k: v for k, v in ci.rubric.items() if k != "max_wall_s"}
+        assert base_rest == ci_rest
+
+
+def test_wall_profile_local_and_default_identical(monkeypatch):
+    default = load_set()
+    monkeypatch.setenv("GRAPH_EVAL_WALL_PROFILE", "local")
+    explicit_local = load_set()
+    assert default == explicit_local
+
+
+def test_wall_profile_unknown_name_fails_loud(monkeypatch):
+    monkeypatch.setenv("GRAPH_EVAL_WALL_PROFILE", "turbo")
+    with pytest.raises(ValueError, match="GRAPH_EVAL_WALL_PROFILE"):
+        load_set()

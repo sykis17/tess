@@ -184,12 +184,16 @@ jobs:
   nightly-eval:
     runs-on: ubuntu-latest
     if: contains(github.event.head_commit.message, '[run-nightly]')
-    # PROBE ceiling — CPU-only llama3.2 inference on 4 vCPU is the arc's biggest
-    # unknown (laptop walls: smoke ~3.5 min warm; golden-set per-prompt ceilings
-    # 300-900 s are laptop-calibrated and may trip here — that trip is itself the
-    # measurement Step 4's CI wall profile calibrates from).
-    timeout-minutes: 350
+    # Probe-measured (runs 30445817123 / 30446106195): smoke walls 1640 s / 1447 s
+    # (~27 min job), per-prompt worst l4 779 s. 75 min covers 2x the measured job
+    # plus one prompt riding its scaled ceiling (l4 x3 = 2700 s = 45 min).
+    timeout-minutes: 75
     env:
+      # CI wall profile (P1 Step 4 conscious calibration): x3 on every golden-set
+      # max_wall_s — probe measured l4 at 779 s vs its 900 s laptop ceiling (13%
+      # headroom) with a documented 2x run-to-run band. Judge identity, threshold,
+      # and set composition untouched (see scripts/graph_eval/golden/__init__.py).
+      GRAPH_EVAL_WALL_PROFILE: ci
       # Pinned Ollama release — versioned download + recorded sha256, never a
       # marketplace action (docs/P1_OPENER.md resolved question (b)).
       # sha256 is ollama-linux-amd64.tar.zst from the v0.32.5 release sha256sum.txt,
@@ -251,12 +255,15 @@ jobs:
         run: |
           echo "duckduckgo.com: $(curl -m 10 -sS -o /dev/null -w '%{http_code}' https://duckduckgo.com/ || echo FAIL)"
           echo "html.duckduckgo.com: $(curl -m 10 -sS -o /dev/null -w '%{http_code}' 'https://html.duckduckgo.com/html/?q=probe' || echo FAIL)"
-      - name: Eval smoke (PROBE — ungated)
-        # --expect-pass 5 + the env-selected CI wall profile arrive in Step 4 as a
-        # conscious calibration commit fed by this run's per-prompt walls.
+      - name: Eval smoke (gated 5/5, ci wall profile)
+        # The smoke tally as an exit-code artifact — probed 5/5 PASS on both
+        # measurement runs. Honesty line (scripts/graph_eval/README.md §Scoring):
+        # routing regressions are caught by the structural layer; the judge gates
+        # answer quality — this leg claims "structurally sound, judge-acceptable
+        # answers on CI hardware", nothing stronger.
         run: |
           t0=$(date +%s)
-          python -m scripts.graph_eval run-all --set smoke
+          python -m scripts.graph_eval run-all --set smoke --expect-pass 5
           echo "PROBE wall eval-smoke: $(( $(date +%s) - t0 ))s"
       - name: Upload probe history and serve log
         # Per-prompt walls live in history.db — the probe's primary artifact.

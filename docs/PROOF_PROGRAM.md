@@ -139,7 +139,7 @@ sabotage/verify cycles).
 
 ---
 
-## P2 — Multi-node build-out  ·  *the deployment the claim is about*
+## P2 — Multi-node build-out  ·  *the deployment the claim is about*  ·  spec: [P2_OPENER.md](P2_OPENER.md)
 
 **Topology.**
 - **3 TESS nodes** on Hetzner across **≥2 locations** (e.g., Falkenstein +
@@ -178,9 +178,21 @@ endpoint exists.
 **Gate.** Full stack green on all 3 nodes; split-brain harness passes *against
 the real cluster* (not just local compose); observer probe demonstrably survives
 any single node's death; strict-mode egress block verified in-process.
+*Wording amendment PROPOSED at the phase opener (2026-07-30, ratified with it):
+node-3 is a quorum witness by design, so "full stack green on all 3 nodes" reads
+as full stacks green on both serving nodes + witness (etcd member) green on
+node-3. A third full stack was considered and rejected as a failover trap —
+`/health` scores Redis + host load, not inference, so a stack whose LLM lives on
+a dead peer reports healthy while unable to answer. See
+[P2_OPENER.md](P2_OPENER.md) §(a).*
 
 **Cost.** ~€40/month for the cluster + observer; rises at P5 (duplicate stack).
 Accepted: at this stage running cost may exceed building cost.
+*Re-priced at the phase opener (2026-07-30): ~€65–70/month P2–P4 with soak-grade
+serving-node classes — deliberate, per the DECIDED budget rationale (avoid the
+mid-program resize clock-reset); peak ≈ €115–120 in the P5 window, at the DECIDED
+€100–120 ceiling's top edge (overshoot at console pricing resolves by resizing at
+Step 0 / the P5 opener, never mid-soak). See [P2_OPENER.md](P2_OPENER.md) §(a).*
 
 **Size.** ~2–3 sessions + provisioning.
 
@@ -231,6 +243,13 @@ not the schedule.
 
 Stand up LiteLLM (and optionally one more OSS gateway) on an identical Hetzner
 footprint, same traffic profile, same chaos schedule, same observer.
+
+> *Footprint reading PROPOSED at the P2 opener (2026-07-30, ratified with it):
+> "identical footprint" = the **serving footprint** (node classes, locations,
+> traffic, chaos, observer). Each stack carries its own control-plane overhead as
+> its own cost — TESS's etcd witness is TESS's architecture cost, not replicated
+> onto the comparison. Binds P5's pre-registered methodology; detail in
+> [P2_OPENER.md](P2_OPENER.md) §(a).*
 
 **Honest framing, decided in advance:** LiteLLM likely wins raw single-node
 throughput and ecosystem breadth — publish that. TESS's aimed-for win is
@@ -294,17 +313,43 @@ candidate identity for the unnamed educational `product_mode`.
 1. **Availability target** — what number is publicly held? Single-VPS ceiling is
    ~99.9 % regardless of software; the multi-node claim must state its target
    before measurement starts, not after seeing the data.
+
+   > **DECIDED (2026-07-29, Jesse): 99.9 %** — "same nines a single VPS claims,
+   > but demonstrated through node death and datacenter faults"; overdeliver
+   > against a defensible target rather than scrape past an aggressive one.
+
 2. **The 900 s resume-refusal window** — counts against availability, or scoped
    as a stated W4-supervisor limitation? (Settled in P0, restated here because
    it shapes the methodology text.)
 3. **Chaos schedule** — fault classes, frequencies, and whether partition drills
    run in P4 or only P3.
+
+   > **DECIDED (2026-07-29, Jesse): full schedule including partition drills in
+   > P4.** Partitions are the reason consensus HA exists; an ugly window is a
+   > publishable finding under asymmetric honesty. Frequencies are P3's
+   > calibration output.
+
 4. **Observer implementation** — self-hosted probe on a 4th node vs external
    service (an external service is a third party: fine for *measuring* strict
    mode from outside, but note it in the methodology).
+
+   > **DECIDED (2026-07-29, Jesse): both.** 4th tiny Hetzner node runs the real
+   > probe; a free-tier external pinger watches **only the observer node, never
+   > TESS** — the third party answers "was the witness awake" and never enters
+   > the measurement path.
+
 5. **Comparison stack list** — LiteLLM only, or +1 (candidates: Portkey OSS
    gateway); each added stack extends P5 cost and calendar.
+
+   > **DECIDED (2026-07-29, Jesse): LiteLLM only.** Portkey filed as future work
+   > in the report — it signals the harness generalizes.
+
 6. **Budget ceiling** for the P4+P5 window (cluster ×2 + observer + traffic).
+
+   > **DECIDED (2026-07-29, Jesse): €100–120/month peak.** Comfortable node
+   > classes from the start — a mid-program resize re-baselines every prior
+   > latency number (clock-reset by construction); steady-state returns to
+   > ~€25–30/month after P5 teardown.
 
 When a phase starts, expand its section into a full opener (arc-context +
 invariants + per-step gates + verification), same shape as the workstream

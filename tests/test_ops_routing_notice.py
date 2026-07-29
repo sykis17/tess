@@ -11,6 +11,7 @@ message field would serialize to "...Z" while the notice serves isoformat's
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 import pytest
@@ -54,17 +55,28 @@ def test_notice_last_failover_at_null_before_any_switch() -> None:
 
 
 def test_notice_last_failover_at_changes_across_switches() -> None:
+    # The switch stamp is patched deterministic: on Windows CPython < 3.13,
+    # time.time() ticks at ~15.6 ms, so two fast switches can land in one tick
+    # and stamp identically (the opener's accepted row-13 corner, widened by
+    # the platform clock). The semantics under test are "a switch changes the
+    # notice value", not wall-clock granularity.
     _seed_providers()
     client = TestClient(app)
+    stamps = iter(
+        [
+            datetime(2026, 7, 29, 10, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 7, 29, 10, 0, 1, tzinfo=timezone.utc),
+        ]
+    )
 
-    with patch("app.ops.failover.publish_provider_changed"):
-        force_active_provider("b", store=get_store())
-    first = client.get("/ops/routing/notice").json()["last_failover_at"]
-    assert isinstance(first, str) and first
-
-    with patch("app.ops.failover.publish_provider_changed"):
-        force_active_provider("a", store=get_store())
+    with patch("app.ops.failover.utc_now", side_effect=lambda: next(stamps)):
+        with patch("app.ops.failover.publish_provider_changed"):
+            force_active_provider("b", store=get_store())
+            first = client.get("/ops/routing/notice").json()["last_failover_at"]
+            force_active_provider("a", store=get_store())
     second = client.get("/ops/routing/notice").json()["last_failover_at"]
+
+    assert isinstance(first, str) and first
     assert isinstance(second, str) and second != first
 
 

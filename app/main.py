@@ -12,6 +12,7 @@ from app.api.health import router as health_router
 from app.api.ops import router as ops_router
 from app.api import ws_router
 from app.core.config import settings
+from app.core.egress_guard import verify_posture_or_raise
 from app.ops import metrics
 from app.ops.bootstrap import bootstrap_ops_control_plane
 from app.ops.failover import evaluate_failover
@@ -173,6 +174,10 @@ async def _campaign_loop() -> None:
 async def lifespan(app: FastAPI):
     global _probe_task, _campaign_task, _held_lease_id
     _ = app
+    # Sovereign-strict must prove its egress guard before serving (fail-closed:
+    # an unproven strict posture raises and the app refuses to start). The
+    # result is cached in-process for GET /ops/posture.
+    await asyncio.to_thread(verify_posture_or_raise)
     metrics.init_tracing("web")  # no-op unless tracing is enabled + endpoint set
     clear_demote_callbacks()
     register_demote_callback(_stop_probe_loop)

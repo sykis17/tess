@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
+from app.core.egress_guard import get_cached_result, run_canary
 from app.ops.admin_auth import require_admin
 from app.ops.balancer import (
     assign_session,
@@ -181,6 +182,41 @@ async def get_ha_status() -> dict[str, Any]:
         "primary_instance_id": role.primary_instance_id or live_leader,
         "etcd_leader": live_leader,
         "etcd_fence_term": live_term,
+    }
+
+
+@router.get("/posture")
+async def get_posture() -> dict[str, Any]:
+    """Runtime posture + egress-canary artifact (P2 Step 4).
+
+    Admin not required, mirroring /ops/ha: this is the ops-readable proof
+    artifact for the in-process egress guard. Read-only — reports the cached
+    canary result (startup or last on-demand run), never dials.
+    """
+    cached = get_cached_result()
+    return {
+        "posture": settings.runtime_posture().value,
+        "canary": cached.as_dict() if cached else None,
+        "instance_id": settings.ops_cp_instance_id,
+    }
+
+
+@router.post("/posture/canary")
+async def rerun_posture_canary(_operator_id: AdminOperator) -> dict[str, Any]:
+    """Re-run the egress canary on demand (admin).
+
+    No durable write happens here, so this deliberately does NOT ride
+    _fenced_commit/_mutation_lock: under sovereign-strict the guard refuses
+    in-process before any socket opens, and under availability-first the
+    canary records not-applicable without dialing. On a standby CP the
+    router-level mutation gate 503s this POST — the standby's posture proof
+    is its startup canary, readable via GET /ops/posture.
+    """
+    result = await asyncio.wait_for(run_in_threadpool(run_canary), timeout=10.0)
+    return {
+        "posture": result.posture,
+        "canary": result.as_dict(),
+        "instance_id": settings.ops_cp_instance_id,
     }
 
 

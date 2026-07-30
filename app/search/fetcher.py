@@ -3,6 +3,7 @@ import logging
 import httpx
 
 from app.core.config import settings
+from app.core.egress_guard import ensure_egress_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +14,13 @@ _USER_AGENT = (
 
 
 async def fetch_page_text(url: str) -> str | None:
-    """Fetch a URL and return raw HTML, or None on failure."""
+    """Fetch a URL and return raw HTML, or None on failure.
+
+    Raises EgressRefusedError under sovereign-strict. This seam is guarded in
+    addition to search_urls because cached search hits bypass the finder and
+    reach the fetcher directly (resource_finder cache short-circuit).
+    """
+    ensure_egress_allowed("fetch_page_text", url)
     timeout = httpx.Timeout(settings.search_fetch_timeout_seconds)
     headers = {"User-Agent": _USER_AGENT}
 

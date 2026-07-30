@@ -3,6 +3,7 @@ import logging
 from dataclasses import dataclass
 
 from app.core.config import settings
+from app.core.egress_guard import ensure_egress_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +84,12 @@ async def _search_ddgs(query: str, max_results: int) -> list[SearchHit]:
 
 
 async def search_urls(query: str, max_results: int | None = None) -> list[SearchHit]:
-    """Locate URLs for a query using Tavily (if configured) or DDGS."""
+    """Locate URLs for a query using Tavily (if configured) or DDGS.
+
+    Raises EgressRefusedError under sovereign-strict — search backends are
+    third parties, refused before any of them is consulted.
+    """
+    ensure_egress_allowed("search_urls", "third-party search backends (Tavily/DDGS)")
     limit = max_results if max_results is not None else settings.search_max_urls
 
     if settings.tavily_api_key:

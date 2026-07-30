@@ -427,6 +427,97 @@ transcript + driver; laptop archive `p2-artifacts-20260730T082658Z.tar.gz`,
   on a cadence, if Step 7 slips. **P3 shakedown gate:** one ollama-kill drill
   must prove the flip before P3's measurement clock starts.
 
+**Step 4 as-built (2026-07-30/31, this PR — closes opener Step 4; artifacts at
+node1:`/root/p2-artifacts/step4-posture/`, 13 files; laptop archive
+`p2-artifacts-20260730T215415Z.tar.gz`, 77 entries):**
+
+- **Posture flag, fail-closed:** `TESS_RUNTIME_POSTURE` = `availability-first`
+  (default, historical behavior — bit-identical: the guard is a strict-only
+  branch) | `sovereign-strict`. Unknown values raise at `Settings()`
+  construction via field_validator — in BOTH web and worker processes (the
+  compose partial-set lesson applied to validation), unlike the
+  fold-permissive product-mode/chain-profile validators (PROPOSED item,
+  ratified by this merge).
+- **Guards at the seams (never `app/graph/**`):** the LLM factory refuses
+  Gemini pre-construction and gates Ollama on the internal-base-URL check
+  (loopback/private IP literals, single-label hostnames, explicit
+  {localhost, host.docker.internal} allowlist — semantics chosen so every
+  shipped Docker default passes; PROPOSED item, ratified by this merge);
+  `search_urls` AND `fetch_page_text` both refuse — the second seam is
+  load-bearing (cached search hits bypass the finder:
+  `resource_finder.py:25-28` → reader → fetcher is a live egress path).
+  Refusal is typed: `EgressRefusedError(ValueError)` — subclasses ValueError
+  for the factory's config-refusal shape, but the canary counts ONLY the
+  exact subclass (a bare `except ValueError` would misattribute config
+  errors; unit-tested with a planted wrong-ValueError).
+- **Canary, inert by construction:** target `https://egress-canary.invalid/`
+  (RFC 2606 reserved TLD — never resolvable, no real host contacted even on
+  regression, no phone-home shape; a regression dial fails DNS, which
+  classifies guard-missing, never refusal). Strict-only: availability-first
+  records `not-applicable` and never dials. Runs at web lifespan AND
+  `worker_process_init`; strict-unproven → raise → the process refuses to
+  start (fail-closed). Zero-socket proven in-test (client construction
+  banned; guard raises first). Artifacts: `GET /ops/posture` (admin-free,
+  /ops/ha model) reports posture + cached canary + instance_id;
+  `POST /ops/posture/canary` (admin) re-runs on demand — no durable write,
+  deliberately outside `_fenced_commit`/`_mutation_lock`; on standby the
+  router-level mutation gate 503s it.
+- **Red-first record (both ways, banked):** the four seam tests observed
+  failing before the guards landed (`DID NOT RAISE EgressRefusedError`; the
+  red transcript shows LIVE DDGS + example.com egress while posture was
+  strict — the violation class the canary exists to catch); planted
+  guard-off → canary succeeds → strict assertion raises; network-failure ≠
+  refusal; wrong-ValueError ≠ refusal. `tests/test_posture_guard.py`,
+  35 tests (`red-first-record.txt` banked).
+- **Cluster verify (curl bodies banked per node/posture):** strict on both
+  stacks → `canary.outcome="refused-by-guard"` with the typed refusal naming
+  the inert target, from `cp-a` and `cp-b`; availability-first →
+  `not-applicable`, no dial, behavior unchanged. Standby
+  `POST /ops/posture/canary` → **503 fence body exercised on BOTH CPs, with
+  no auth token sent** — demonstrating gate-before-auth ordering live
+  (cp-b at term 9 pre-handover; cp-a at term 10 post). Primary POST (admin)
+  → 200 on-demand re-run (cp-b). Node1's web rebuild handed the CP primary
+  to cp-b (**term 9→10, single leader throughout** — HA doing its job,
+  recorded not incidental). WS smoke post-restart: node1 completed panel
+  15.7 s / node2 12.5 s (L0 through caddy). Prober green after (score-95
+  snapshot 21:55Z, zero consecutive failures both providers). **Resting
+  posture = availability-first on both nodes** — strict is exercised and
+  evidenced, not left resting; Step 7 labels runs by posture when it wants
+  strict numbers.
+- **Gates:** suite **495 passed / 6 skipped** (was 460/6: +35, skip pin
+  intact — tally re-baselined here); doc-links 0; ops-path trio for the
+  `app/api/ops.py` touch: `test_ops_fencing` green, live-etcd parity 4/4
+  (throwaway :12379), split-brain `run-all` **11/11** (etcd authority,
+  `splitbrain-runall-11.log` banked).
+- **Harness-run environment record (diagnosis before any knob):** first
+  run-all 0/11 = the README's documented token-drift trap (stack brought up
+  without exporting the `.env` `OPS_ADMIN_TOKEN` into the harness shell)
+  plus reset flakiness under the all-failing cadence; token-aligned re-run
+  9/11 with two residuals — s10 required the observability overlay (env),
+  and s06 missed its 30 s (3×TTL) convergence budget. s06 proven
+  slow-not-broken by direct fault replay: cold stop/start of all three
+  etcds → etcd serves health at **65 s**, primary re-elected at **76 s**
+  (product correct at every step: demote on loss, loud mutate refusal,
+  single-primary recovery). Docker Desktop had been updated to 4.84.0 + WSL
+  restarted mid-session — the 3×TTL budget was calibrated on the pre-update
+  engine. Remedy: the harness's existing `OPS_HA_CONVERGENCE_TIMEOUT` knob
+  set to 120 s (~1.6× the measured 76 s) for the gate run only — checked-in
+  defaults unchanged, no harness code touched; a longer wait can only
+  un-mask false timeouts, never mask a split-brain (state-based
+  assertions).
+- **Known behavior (flagged, not changed):** under strict, a chain that
+  routes search fails that branch loudly at the seam raise
+  (`resource_finder` has no catch); graceful degradation needs an
+  eval-gated `app/graph/**` change — filed as follow-up, deliberately out
+  of this PR.
+- **Posture labeling disposition (§(d) closing line):** posture-labeled
+  numbers ride Step 7 traffic-gen JSONL artifacts and Step 8 published
+  charts, NOT Prometheus labels — Step 4 adds no metrics (posture is never
+  a metric label).
+- **Worker-proof scoping:** the ops-readable artifact is web-scoped; the
+  worker's in-process proof is its fail-closed boot canary + the shared
+  factory/search seams + deliberately enumerated compose env.
+
 ### (b) Private network: WireGuard over Hetzner Cloud Network
 
 Hetzner Cloud Networks span locations within a network zone — `fsn1`, `nbg1`, `hel1`

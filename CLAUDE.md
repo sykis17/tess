@@ -271,6 +271,7 @@ split-brain harness:
 | Follow-up generator | `app/graph/follow_up_utils.py` |
 | List format | `app/graph/list_format_utils.py` |
 | Search | `app/search/provider.py` + `app/graph/nodes/resource_*.py` |
+| Runtime posture + egress guard (P2 Step 4) | `app/core/posture.py` + `app/core/egress_guard.py` (guards in `app/llm/factory.py`, `app/search/provider.py`, `app/search/fetcher.py`; artifact `GET /ops/posture`; tests `tests/test_posture_guard.py`) |
 | Ops control-plane HA | `app/ops/consensus.py`, `app/ops/fencing.py`, `app/ops/store.py` |
 | Ops HTTP endpoints + mutation gate | `app/api/ops.py` |
 | Ops fencing invariants (tests) | `tests/test_ops_fencing.py` |

@@ -121,6 +121,30 @@ def test_docstring_mentioning_subprocess_is_not_a_violation() -> None:
     assert _shell_out_violations(clean, "clean") == []
 
 
+def test_scenarios_never_reference_ctx_outside_a_ctx_taking_function() -> None:
+    """A NameError here costs a full harness run to find.
+
+    Scenarios reach the driver through `ctx.drv`, and scenario helpers take `cfg`, not
+    `ctx` — so a mechanical swap of `dk.X(cfg, ...)` to `ctx.drv.X(...)` lands broken
+    inside any helper. Nothing at unit level exercises a scenario body, so the only
+    other detector is the 25-minute docker gate: s10 failed there with
+    "name 'ctx' is not defined" while the other ten scenarios passed, which is precisely
+    the kind of narrow, late signal a static check should be catching instead.
+    """
+    offenders: list[str] = []
+    scenarios = sorted((_PKG / "scenarios").glob("s*.py"))
+    assert len(scenarios) >= 11, f"discovery went vacuous: {len(scenarios)} scenarios"
+    for path in scenarios:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for fn in (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)):
+            if "ctx" in {a.arg for a in fn.args.args}:
+                continue
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Name) and node.id == "ctx":
+                    offenders.append(f"{path.name}:{node.lineno} in {fn.name}()")
+    assert not offenders, "ctx referenced where it is not a parameter: " + "; ".join(offenders)
+
+
 # --- t6: protocol conformance (forward guard for the remote driver) -----------------
 
 

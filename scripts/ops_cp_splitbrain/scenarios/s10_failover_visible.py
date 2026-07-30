@@ -67,7 +67,7 @@ def run(ctx: ScenarioContext) -> None:
 
     # (a) Worker-exposition proof (§3a): a worker-executed ops task increments a counter
     #     that is scraped on the localhost-published :9109 target.
-    _assert_worker_exposition(cfg)
+    _assert_worker_exposition(cfg, ctx.drv)
 
     # (b) Reject on the standby, carrying traceparent T + request id R.
     headers, _trace_id, req_id = obs.gen_trace_headers("s10")
@@ -165,7 +165,7 @@ def run(ctx: ScenarioContext) -> None:
     ctx.drv.docker_start(primary_name)
 
 
-def _assert_worker_exposition(cfg) -> None:
+def _assert_worker_exposition(cfg, drv) -> None:
     """Enqueue a worker-run ops task; assert the :9109 counter increments (proves §3a).
 
     worker_task_total increments regardless of which node is primary (the decorator records
@@ -182,7 +182,7 @@ def _assert_worker_exposition(cfg) -> None:
             f"must publish it and run the worker at --concurrency=1 (§3a): {exc}"
         )
 
-    ctx.drv.exec_in(
+    drv.exec_in(
         cfg.worker_service,
         [
             "python", "-c",

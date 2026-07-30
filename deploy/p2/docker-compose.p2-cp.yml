@@ -1,0 +1,148 @@
+# P2 Step 2 — etcd quorum + CP HA pair across the real cluster
+# (docs/P2_OPENER.md Step 2; as-built record in §(a)).
+#
+# One file for all three nodes: per-node identity from deploy/p2/env/nodeN.env,
+# roles from profiles. Run forms (from /opt/tess-engine):
+#
+#   node1 (etcd-1 + CP-A + redis + worker):
+#     docker compose --env-file .env.prod --env-file deploy/p2/env/node1.env \
+#       -f deploy/p2/docker-compose.p2-cp.yml --profile cp --profile primary up -d --build
+#   node2 (etcd-2 + CP-B):
+#     docker compose --env-file .env.prod --env-file deploy/p2/env/node2.env \
+#       -f deploy/p2/docker-compose.p2-cp.yml --profile cp up -d --build
+#   node3 (witness, etcd-3 only — no .env.prod flag: the witness has none):
+#     docker compose --env-file deploy/p2/env/node3.env \
+#       -f deploy/p2/docker-compose.p2-cp.yml up -d
+#
+# Posture (stated honestly, per the Step 1 ListenPort precedent):
+# - etcd 2379/2380 and redis 6379 publish on the node's wg0 IP + loopback only;
+#   they ride the WireGuard mesh (etcd speaks HTTP *inside* the tunnel — the
+#   encryption claim is WG's, opener §(b) belt-and-braces).
+# - 8000/8001 (CP web) are docker-published on all interfaces; docker bypasses
+#   ufw's FORWARD path, so their reachability rests on the Hetzner Cloud
+#   Firewall alone (scoped to Jesse's IP + the observer).
+# - All etcd/client URLs use wg0 addresses, never compose aliases (the
+#   OPS_LOCAL_BASE_URL heal lesson, deploy/MULTI_CLOUD.md §Provider registry).
+# - HAIRPIN (found live, Step 2 bring-up): a container reaching its OWN host's
+#   wg0-published IP ingresses on the docker bridge, not wg0 — ufw default-deny
+#   drops it, so the local-first etcd endpoint / local redis URL would burn the
+#   consensus ladder's 2 s timeout per call. Fix: the bridge subnet is PINNED
+#   below (172.30.90.0/24) and each cluster node carries the scoped ufw rule
+#     ufw allow from 172.30.90.0/24 to any port 2379,2380,6379 proto tcp
+#   — bridge-source-scoped, no public exposure (the Step 2 firewall delta).
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.90.0/24
+
+services:
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.32
+    restart: unless-stopped
+    environment:
+      ETCD_NAME: ${ETCD_NAME}
+      ETCD_DATA_DIR: /etcd-data
+      ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+      ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+      ETCD_ADVERTISE_CLIENT_URLS: http://${NODE_WG_IP}:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://${NODE_WG_IP}:2380
+      ETCD_INITIAL_CLUSTER: "etcd-1=http://10.8.0.1:2380,etcd-2=http://10.8.0.2:2380,etcd-3=http://10.8.0.3:2380"
+      ETCD_INITIAL_CLUSTER_TOKEN: tess-ops-cp
+      # First-bootstrap value; ignored once the data dir exists. A future
+      # member rebuild uses "existing" + member-add (runbook note, as-built).
+      ETCD_INITIAL_CLUSTER_STATE: new
+      # Raft timing vs measured geography (mesh-verify-20260730T040204Z.txt):
+      # worst pair RTT fsn<->hel 25.7 ms. Heartbeat 100 ms = 3.9x worst RTT
+      # (etcd guidance: ~max peer RTT); election 1000 ms = 10x heartbeat (the
+      # recommended ratio). Stock values hold under this geography — set
+      # explicitly so they are stated, never silently inherited.
+      ETCD_HEARTBEAT_INTERVAL: "100"
+      ETCD_ELECTION_TIMEOUT: "1000"
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+    ports:
+      - "${NODE_WG_IP}:2379:2379"
+      - "${NODE_WG_IP}:2380:2380"
+      - "127.0.0.1:2379:2379"
+    volumes:
+      - etcd_data:/etcd-data
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health", "--endpoints=http://127.0.0.1:2379"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    profiles: ["cp"]
+    build:
+      context: ../..
+    restart: unless-stopped
+    env_file:
+      - ../../.env.prod
+    ports:
+      - "${CP_PUBLISH_PORT}:8000"
+    environment:
+      OPS_HA_ENABLED: "true"
+      OPS_FENCE_AUTHORITY: etcd
+      OPS_ETCD_ENDPOINTS: ${OPS_ETCD_ENDPOINTS}
+      OPS_CP_INSTANCE_ID: ${OPS_CP_INSTANCE_ID}
+      OPS_ETCD_LEASE_TTL_SECONDS: "10"
+      REDIS_URL: ${P2_REDIS_URL}
+      # Registry URL is loopback, never a compose alias (the heal lesson).
+      OPS_LOCAL_BASE_URL: http://127.0.0.1:8000
+    depends_on:
+      # etcd only: a redis dependency would reference a profile-disabled
+      # service on node2 and error; redis ordering rides the per-op 1 s
+      # timeout clients in app/ops/store.py.
+      etcd:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  redis:
+    profiles: ["primary"]
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "${NODE_WG_IP}:6379:6379"
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - p2_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    profiles: ["primary"]
+    build:
+      context: ../..
+    restart: unless-stopped
+    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=1
+    env_file:
+      - ../../.env.prod
+    environment:
+      # Full dev-parity HA env, enumerated deliberately: a partial set leaves
+      # ops_ha_active() False in the worker and check_fence_live() returning
+      # a synthetic self-leader — fencing silently bypassed with nothing in
+      # the Step 2 battery to catch it (cold-review CR2-2).
+      OPS_HA_ENABLED: "true"
+      OPS_FENCE_AUTHORITY: etcd
+      OPS_ETCD_ENDPOINTS: ${OPS_ETCD_ENDPOINTS}
+      OPS_CP_INSTANCE_ID: cp-a
+      REDIS_URL: ${P2_REDIS_URL}
+      OPS_LOCAL_BASE_URL: http://127.0.0.1:8000
+    depends_on:
+      etcd:
+        condition: service_healthy
+
+volumes:
+  etcd_data:
+  p2_redis_data:

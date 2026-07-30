@@ -15,10 +15,15 @@ cd "${REPO_ROOT}"
 
 ENV_FILE="${REPO_ROOT}/.env.prod"
 [ -f "${ENV_FILE}" ] || { echo "Missing ${ENV_FILE}"; exit 1; }
-set -a
-# shellcheck disable=SC1090
-source "${ENV_FILE}"
-set +a
+# Read ONLY the values this script needs — never `set -a; source` the whole
+# file: exported vars beat --env-file in compose interpolation, so sourcing
+# .env.prod here silently overrode the node env file's HA block and disabled
+# HA on both CPs (found live, Step 3 phase A). Compose gets its values from
+# the --env-file flags alone.
+env_get() { sed -n "s/^$1=//p" "${ENV_FILE}" | tail -1 | tr -d '\r'; }
+DOMAIN="$(env_get DOMAIN)"
+OLLAMA_MODEL="$(env_get OLLAMA_MODEL)"
+VITE_FROM_FILE="$(env_get VITE_WS_BASE_URL)"
 
 [ -n "${DOMAIN:-}" ] || { echo "DOMAIN required in .env.prod (node public IP)"; exit 1; }
 if ! [[ "${DOMAIN}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -27,7 +32,7 @@ if ! [[ "${DOMAIN}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 
 cp "${REPO_ROOT}/deploy/Caddyfile.ip" "${REPO_ROOT}/deploy/Caddyfile.active"
-export VITE_WS_BASE_URL="${VITE_WS_BASE_URL:-ws://${DOMAIN}}"
+export VITE_WS_BASE_URL="${VITE_WS_BASE_URL:-${VITE_FROM_FILE:-ws://${DOMAIN}}}"
 echo "Building frontend with VITE_WS_BASE_URL=${VITE_WS_BASE_URL}"
 cd "${REPO_ROOT}/frontend"
 npm ci

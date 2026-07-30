@@ -7,9 +7,9 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Sequence
 
-from .config import HarnessConfig
+from .config import EtcdMember, HarnessConfig
 from . import docker_util as dk
 
 
@@ -168,6 +168,22 @@ def etcd_put_fence_term(cfg: HarnessConfig, term: int) -> None:
     _etcdctl(cfg, "put", ETCD_FENCE_KEY, str(int(term)))
 
 
+def match_leader_member(endpoint: str, members: Sequence[EtcdMember]) -> EtcdMember | None:
+    """Map an etcd ``endpoint status`` Endpoint back to the configured member.
+
+    Pure so it can be proven against topologies no local docker run reaches — notably
+    members that advertise an IP rather than a compose service name.
+    """
+    host = endpoint.split("//")[-1].split(":")[0]
+    for member in members:
+        if host == member.service:
+            return member
+    for member in members:
+        if member.service in endpoint:
+            return member
+    return None
+
+
 def etcd_leader_service(cfg: HarnessConfig) -> str | None:
     """Compose service name (``etcd-N``) of the current etcd RAFT leader, or None.
 
@@ -191,13 +207,8 @@ def etcd_leader_service(cfg: HarnessConfig) -> str | None:
             leader = status.get("leader")
             member_id = header.get("member_id")
             if leader and member_id and int(leader) == int(member_id):
-                endpoint = entry.get("Endpoint") or ""
-                host = endpoint.split("//")[-1].split(":")[0]
-                if host in cfg.etcd_services:
-                    return host
-                for s in cfg.etcd_services:
-                    if s in endpoint:
-                        return s
+                member = match_leader_member(entry.get("Endpoint") or "", cfg.etcd_members)
+                return member.service if member else None
         return None
     return None
 

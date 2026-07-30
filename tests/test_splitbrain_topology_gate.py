@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from scripts.ops_cp_splitbrain import __main__ as cli
 from scripts.ops_cp_splitbrain.config import load_config
 from scripts.ops_cp_splitbrain.harness import ScenarioResult
@@ -120,3 +122,46 @@ def test_run_all_without_flags_keeps_plain_exit_semantics(monkeypatch):
     executed = _fake_suite(monkeypatch, skip_s11=False)
     assert cli.main(["run-all"]) == 0
     assert executed == ["s01", "s02", "s11"]
+
+
+# --- fault-driver selection (P2 Step 5a) ---------------------------------------------
+#
+# OPS_HA_DRIVER picks the fault-injection backend. Selection is validated in
+# load_config() — the earliest point, before any docker call — so a typo fails the run
+# instead of silently driving local docker while the operator believes it is driving the
+# cluster. Seam guards live in tests/test_splitbrain_driver_seam.py.
+
+
+def test_unknown_driver_value_raises(monkeypatch):
+    # The load-bearing one: an unrecognized value must fail closed, never fall back.
+    monkeypatch.setenv("OPS_HA_DRIVER", "banana")
+    with pytest.raises(ValueError, match="banana"):
+        load_config()
+
+
+def test_remote_driver_name_resolves_but_construction_refuses(monkeypatch):
+    # `remote` is a documented value, so rejecting the NAME would make `local|remote` a
+    # lie; constructing it must still refuse loudly until Step 5b lands the driver.
+    from scripts.ops_cp_splitbrain.drivers import get_driver
+
+    monkeypatch.setenv("OPS_HA_DRIVER", "remote")
+    cfg = load_config()
+    assert cfg.driver_name == "remote"
+    with pytest.raises(NotImplementedError, match="5b"):
+        get_driver(cfg)
+
+
+@pytest.mark.parametrize("value", [None, "", "  ", "LOCAL"])
+def test_absent_or_empty_driver_folds_to_local(monkeypatch, value):
+    # verify-egress-blocked.sh uses the `-e VAR=` empty-clear idiom for its harness env;
+    # an empty OPS_HA_DRIVER must mean "default", not "fail the certification chain".
+    from scripts.ops_cp_splitbrain.drivers import get_driver
+    from scripts.ops_cp_splitbrain.drivers.local import LocalComposeDriver
+
+    if value is None:
+        monkeypatch.delenv("OPS_HA_DRIVER", raising=False)
+    else:
+        monkeypatch.setenv("OPS_HA_DRIVER", value)
+    cfg = load_config()
+    assert cfg.driver_name == "local"
+    assert isinstance(get_driver(cfg), LocalComposeDriver)

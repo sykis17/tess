@@ -177,6 +177,66 @@ house's own doctrine — measure before pin:
   from prod; after: 12/12 refused from prod, laptop SSH ×4 admitted); x-bit
   full-circle (fresh clone on node1: all three deploy scripts `-rwxr-xr-x`).
 
+**Step 1 as-built (2026-07-30, this PR — closes opener Step 1):**
+
+- **Bootstrap:** node2/node3/observer bootstrapped with the committed
+  `server-bootstrap.sh` (scp'd + run as root over SSH; Docker 29.6.2 +
+  Node 20.20.2 on each); fresh clones at `/opt/tess-engine` show all three
+  deploy scripts `-rwxr-xr-x` — x-bit full circle now proven on all 4 nodes.
+  Disk as measured (`df -h /`): node1 150 GB (12 GB used), node2 150 GB
+  (2.1 GB), node3 38 GB (2.1 GB), observer 38 GB (2.2 GB).
+- **WireGuard mesh (parameters PROPOSED here, ratified by this PR's merge —
+  §(b) fixed none):** committed `deploy/p2/wireguard-mesh.sh` +
+  `deploy/p2/mesh-inventory.env` (no secrets: keys generated on-node, private
+  keys never left their node). `wg0` on `10.8.0.0/24` — node1 `10.8.0.1`,
+  node2 `10.8.0.2`, node3 `10.8.0.3` — port `51820/udp`, keepalive 25 s;
+  observer excluded per §(b). **MTU 1370, measured** (parent `enp7s0`
+  MTU 1450 − 80 WG overhead; the opener's "~1400" was an estimate), proven
+  two-color on all three pairs: DF payload 1342 passes, 1343 refused —
+  boundary-sharp. Public keys: node1
+  `BaJwtu3qG9IvCIdgoF9b1MZp5qXRV6c1Oe+DQZ7SLEo=`, node2
+  `meFFelSf0uldgB66Y/Q52CmQBT24mBwZIEavONAt01A=`, node3
+  `Ulnb/BB8zgJ4hrIfrQFMTORbP4jk9PFddmyXXxi8+wU=`. Reachability stated
+  honestly: WG's `ListenPort` binds all interfaces (no listen-address option
+  exists) — 51820's non-reachability from outside rests on the Cloud Firewall
+  ("everything else closed", Step 0) plus ufw default-deny with
+  `allow from 10.0.0.0/16` (subnet derived from `ip route`; the address
+  itself is assigned /32) and `allow in on wg0` (Step 2 etcd
+  pre-provisioning — its own PROPOSED line in the PR body). Verify
+  transcript: node1:`/root/p2-artifacts/step1-mesh/mesh-verify-20260730T030415Z.txt`.
+- **Inter-node WG RTT (measure-before-pin; pins Step 2's etcd sanity
+  check):** fsn↔nbg **3.3–3.4 ms** · fsn↔hel **25.6–26.0 ms** · nbg↔hel
+  **24.4–24.6 ms** (`ping -c 4` avg, both directions) — fsn↔hel lands on the
+  opener's ~25 ms expectation; etcd defaults (lease TTL 10 s, campaign 2 s)
+  untouched.
+- **Fence re-probed post-change, all 4 nodes:** from prod (the named
+  non-allowlisted vantage), `22/8000/9109` ×4 = **12/12 refused** — re-proven
+  after this step's firewall deltas (ufw newly enabled on the three
+  bootstrapped nodes; WG ufw rules landed on all three cluster nodes
+  including node1, whose Step 0 result predated them).
+- **Reboot persistence, proven by an actual reboot:** node3 rebooted (boot
+  epoch 1785380977); `wg-quick@wg0` active on return, pings to both peers
+  green, both peer handshakes fresh post-boot (epoch 1785380988) — **PASS**.
+- **Node2 inference probe (instrument parity — an addition beyond the Step 1
+  bullet, which required only one serving node) — FINDING, brought to Jesse,
+  not silently accepted:** mechanism identical to node1's (compose `ollama`
+  profile started alone, `--env-file .env.prod`, pinned `llama3.2`,
+  API-based; raw JSONs at node2:`/root/p2-artifacts/step1-probe/`; prompt
+  text reconstructed to the same seven shapes — the originals were not
+  preserved on-node, and response JSONs carry no prompt field). Result:
+  generation **20.0–24.3 t/s** across the seven shapes vs node1's
+  31–34 t/s — **~32% slower on the same CPX32 class**. Qualified, not noise:
+  simultaneous same-prompt rerun on both nodes = node1 **34.4 t/s** vs node2
+  **23.3 t/s** (`probe-medium-rerun.json` on each), `vmstat` steal 0.0%
+  during generation on both, identical advertised silicon (AMD EPYC-Genoa,
+  4 vCPU) — host-level variance between same-class shared instances.
+  Cache-hit prompt eval (1135 t/s) and 2-concurrent serialization (pair
+  wall 76 s) behave like node1's. Disposition is a console decision (accept
+  and publish per-node envelopes · recreate node2 to land a different host,
+  cheap while nothing rides on it · escalate to Hetzner); **no traffic rate
+  or timeout is pinned from node2's numbers until decided** — (g)'s rates
+  pin from the slowest accepted serving node.
+
 ### (b) Private network: WireGuard over Hetzner Cloud Network
 
 Hetzner Cloud Networks span locations within a network zone — `fsn1`, `nbg1`, `hel1`

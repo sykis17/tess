@@ -2,14 +2,15 @@
 # (docs/P2_OPENER.md Step 2; as-built record in §(a)).
 #
 # One file for all three nodes: per-node identity from deploy/p2/env/nodeN.env,
-# roles from profiles. Run forms (from /opt/tess-engine):
+# roles from profiles. Serving nodes (node1/node2) always enable BOTH profiles
+# together — caddy's depends_on crosses from `stack` to `cp`, which is only
+# valid when both are active. Run forms (from /opt/tess-engine):
 #
-#   node1 (etcd-1 + CP-A + redis + worker):
-#     docker compose --env-file .env.prod --env-file deploy/p2/env/node1.env \
-#       -f deploy/p2/docker-compose.p2-cp.yml --profile cp --profile primary up -d --build
-#   node2 (etcd-2 + CP-B):
-#     docker compose --env-file .env.prod --env-file deploy/p2/env/node2.env \
-#       -f deploy/p2/docker-compose.p2-cp.yml --profile cp up -d --build
+#   node1 / node2 (full stack: etcd + web + redis + worker + ollama + caddy) —
+#   preferred: bash deploy/p2/stack-up.sh deploy/p2/env/nodeN.env
+#   (frontend build + Caddyfile.active + model pull included); raw form:
+#     docker compose --env-file .env.prod --env-file deploy/p2/env/nodeN.env \
+#       -f deploy/p2/docker-compose.p2-cp.yml --profile cp --profile stack up -d --build
 #   node3 (witness, etcd-3 only — no .env.prod flag: the witness has none):
 #     docker compose --env-file deploy/p2/env/node3.env \
 #       -f deploy/p2/docker-compose.p2-cp.yml up -d
@@ -30,6 +31,11 @@
 #   below (172.30.90.0/24) and each cluster node carries the scoped ufw rule
 #     ufw allow from 172.30.90.0/24 to any port 2379,2380,6379 proto tcp
 #   — bridge-source-scoped, no public exposure (the Step 2 firewall delta).
+#   Step 3 extends the same rule to 8000,8001 on the serving nodes: the CP
+#   primary probes provider base_urls on wg0 addresses, including its own
+#   host's (cold-review CR3-1 — the same hairpin, one layer up).
+# - caddy publishes 80/443 (Step 0 enumeration; cloud-firewall-scoped to
+#   Jesse + observer); ollama stays expose-only per stack.
 
 networks:
   default:
@@ -90,8 +96,14 @@ services:
       OPS_CP_INSTANCE_ID: ${OPS_CP_INSTANCE_ID}
       OPS_ETCD_LEASE_TTL_SECONDS: "10"
       REDIS_URL: ${P2_REDIS_URL}
-      # Registry URL is loopback, never a compose alias (the heal lesson).
-      OPS_LOCAL_BASE_URL: http://127.0.0.1:8000
+      # Registry URLs (Step 3, D2): IDENTICAL on both serving nodes so
+      # ensure_default_hetzner's boot refresh converges on hetzner-1 —
+      # per-node values would diverge the standby's local cache and
+      # de-randomize nothing on a fresh reseed. WG address, never a compose
+      # alias (the heal lesson); the CP primary probing its OWN host's wg0
+      # IP needs the 8000/8001 hairpin ufw allow (see header posture note).
+      OPS_LOCAL_BASE_URL: http://10.8.0.1:8000
+      OPS_PUBLIC_WS_BASE_URL: ws://78.47.69.162
     depends_on:
       # etcd only: a redis dependency would reference a profile-disabled
       # service on node2 and error; redis ordering rides the per-op 1 s
@@ -106,7 +118,7 @@ services:
       start_period: 15s
 
   redis:
-    profiles: ["primary"]
+    profiles: ["stack"]
     image: redis:7-alpine
     restart: unless-stopped
     ports:
@@ -121,7 +133,7 @@ services:
       retries: 3
 
   worker:
-    profiles: ["primary"]
+    profiles: ["stack"]
     build:
       context: ../..
     restart: unless-stopped
@@ -136,13 +148,46 @@ services:
       OPS_HA_ENABLED: "true"
       OPS_FENCE_AUTHORITY: etcd
       OPS_ETCD_ENDPOINTS: ${OPS_ETCD_ENDPOINTS}
-      OPS_CP_INSTANCE_ID: cp-a
+      OPS_CP_INSTANCE_ID: ${OPS_CP_INSTANCE_ID}
       REDIS_URL: ${P2_REDIS_URL}
-      OPS_LOCAL_BASE_URL: http://127.0.0.1:8000
+      OPS_LOCAL_BASE_URL: http://10.8.0.1:8000
     depends_on:
       etcd:
+        condition: service_healthy
+
+  ollama:
+    profiles: ["stack"]
+    # Digest-pinned (prod parity — a floating tag is a reproducibility risk).
+    image: ollama/ollama@sha256:f040603c11a11f125660eaf848170780e43b68973fc270e26f168536031ac258
+    restart: unless-stopped
+    expose:
+      - "11434"
+    volumes:
+      - p2_ollama_data:/root/.ollama
+
+  caddy:
+    profiles: ["stack"]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../../deploy/Caddyfile.active:/etc/caddy/Caddyfile:ro
+      - ../../frontend/dist:/srv:ro
+      - p2_caddy_data:/data
+      - p2_caddy_config:/config
+    depends_on:
+      # Crosses profiles (stack -> cp): valid only because serving nodes
+      # always enable both profiles together (see header run forms).
+      web:
         condition: service_healthy
 
 volumes:
   etcd_data:
   p2_redis_data:
+  p2_ollama_data:
+  p2_caddy_data:
+  p2_caddy_config:

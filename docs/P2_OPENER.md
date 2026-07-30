@@ -408,6 +408,24 @@ transcript + driver; laptop archive `p2-artifacts-20260730T082658Z.tar.gz`,
   cadence, scoring folded from Step 7's traffic-generator error rate, or
   accepted-as-scoped for this phase. No pin from here; files to the Step 7
   / P3 boundary alongside the etcd-backup blocker above.
+- **Registry-refresh guard, structural evidence (added 2026-07-30 with the
+  verify-amendment micro-PR):** `OPS_LOCAL_BASE_URL` has exactly one registry
+  consumer — the bootstrap seam `app/ops/bootstrap.py:24-28` →
+  `ensure_default_hetzner()` (`app/ops/store.py:736`; refresh branch
+  :744-760), whose refresh is scoped to `existing[0]` of the HETZNER-type
+  filter, i.e. the bootstrap-created `prov_hetzner_local` — plus the setting's
+  definition at `app/core/config.py:37`. No code path exists for a web
+  restart to rewrite hetzner-2's URLs from env; battery check (e) proved the
+  same live (base_url unchanged through the cp-b restart). This is the
+  structural "why" behind the refresh guard, recorded so the next reader
+  doesn't re-derive it.
+- **Blind-spot disposition (DECIDED — Jesse, 2026-07-30; recorded with the
+  verify-amendment micro-PR):** accept-as-scoped for the P2 remainder.
+  Designed fix: Step 7's traffic-generator error rate folds into provider
+  scoring, so failover keys on real traffic outcomes, not `/health` alone —
+  lands with Step 7. Fallback: a lightweight inference-exercising deep probe
+  on a cadence, if Step 7 slips. **P3 shakedown gate:** one ollama-kill drill
+  must prove the flip before P3's measurement clock starts.
 
 ### (b) Private network: WireGuard over Hetzner Cloud Network
 
@@ -621,10 +639,19 @@ posture matches the enumeration above.**
 
 - Deploy full TESS stacks on node-1/2 (`hetzner-1`, `hetzner-2`); register per (c);
   prober scoring both.
-- **Verify:** kill ollama-1 (then the whole node-1 stack) → `active_provider_id`
-  flips to `hetzner-2`, `provider_changed` published, `/ops/events` +
-  `last_failover_at` artifacts recorded; failover time measured (the local 2.1 s
-  question — PROOF_PROGRAM §P4 — gets its first real-VPS number here, informally).
+- **Verify (AMENDED 2026-07-30 — see note):** kill the whole node-1 stack →
+  `active_provider_id` flips to `hetzner-2`, `provider_changed` published,
+  `/ops/events` + `last_failover_at` artifacts recorded; failover time measured
+  (the local 2.1 s question — PROOF_PROGRAM §P4 — gets its first real-VPS number
+  here, informally).
+  *AMENDED 2026-07-30: the original criterion read "kill ollama-1 (then the
+  whole node-1 stack) → flips". The ollama-kill half cannot flip through the
+  current `/health` contract — proven live in the Step 3 battery (blind-spot
+  artifact: no flip, `/health` 200, four healthy score-95 snapshots with
+  inference dead); ratified retroactively with PR #31's merge, formalized here
+  per the witness-gate amendment precedent (cold-review F1). Stack-kill remains
+  the met criterion; the ollama-kill half's disposition is recorded in the
+  Step 3 as-built (§(a)).*
 
 ### Step 4 — Mode flags + in-process egress guard (product work, red-first)
 

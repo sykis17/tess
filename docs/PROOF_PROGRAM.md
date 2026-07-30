@@ -193,6 +193,12 @@ serving-node classes — deliberate, per the DECIDED budget rationale (avoid the
 mid-program resize clock-reset); peak ≈ €115–120 in the P5 window, at the DECIDED
 €100–120 ceiling's top edge (overshoot at console pricing resolves by resizing at
 Step 0 / the P5 opener, never mid-soak). See [P2_OPENER.md](P2_OPENER.md) §(a).*
+*Superseded by console actuals at Step 0 (the April 2026 Hetzner repricing made
+the estimate stale): as-built fleet **€101.96 net ≈ €128/month gross** (usage
+preview 2026-07-30), CPX32 serving nodes accepted by measurement (31–34 t/s
+Step 1 probe) — **ceiling AMENDED, DECIDED (2026-07-30, Jesse)**; P5 comparison
+footprint (~€90/month gross at current prices, peak ≈ €218) files to the P5
+opener. As-built record: [P2_OPENER.md](P2_OPENER.md) §(a).*
 
 **Size.** ~2–3 sessions + provisioning.
 
@@ -350,6 +356,12 @@ candidate identity for the unnamed educational `product_mode`.
    > classes from the start — a mid-program resize re-baselines every prior
    > latency number (clock-reset by construction); steady-state returns to
    > ~€25–30/month after P5 teardown.
+   >
+   > **AMENDED (2026-07-30, Jesse):** the number was priced on pre-April-2026
+   > catalog data; console actuals: P2–P4 fleet ≈ €128/month gross, serving
+   > class held at CPX32 by **measured acceptance** (Step 1 probe, 31–34 t/s)
+   > rather than upsized to the repriced CPX42 (€87.21/month each). P5 peak
+   > arithmetic files to the P5 opener. See §P2 cost note.
 
 When a phase starts, expand its section into a full opener (arc-context +
 invariants + per-step gates + verification), same shape as the workstream

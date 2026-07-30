@@ -145,6 +145,38 @@ stack whose Ollama lives on a dead peer reports healthy while unable to answer, 
 failing over *to* it would be exactly the wrong move. Two honest serving stacks plus
 one honest witness beats three stacks, one of which lies.
 
+**As-built record (2026-07-30, Step 0 + Step 1 measurement — supersedes the
+price/class arithmetic above, which was training-vintage):** the April 2026
+Hetzner repricing made the ratified classes unaffordable at the ratified ceiling
+(console: CPX42 = €87.21/mo gross), so the class question was resolved by the
+house's own doctrine — measure before pin:
+
+| Node | Location | As-built class | Public IP | Console net €/mo |
+|---|---|---|---|---|
+| tess-p2-node1 | `fsn1` | **CPX32** (4 vCPU/8 GB) | 78.47.69.162 (`10.0.0.2`) | 35.49 + 0.50 IP |
+| tess-p2-node2 | `nbg1` | **CPX32** | 5.75.186.164 (`10.0.0.3`) | 35.49 + 0.50 |
+| tess-p2-node3 | `hel1` | **CPX12** (1 vCPU/2 GB, witness) | 77.42.71.248 (`10.0.0.4`) | 11.49 + 0.50 |
+| tess-p2-observer | `ash` | **CPX11** (2 vCPU/2 GB) | 5.161.245.44 (no private net) | 17.49 + 0.50 |
+
+- **Step 1 inference probe on the as-built CPX32** (node1; ollama via the compose
+  profile, pinned llama3.2; raw JSONs at node1:`/root/p2-artifacts/step1-probe/`):
+  generation **31–34 t/s stable** across 94–645-token answers; prompt eval
+  ~180 t/s; warm load 0.2 s (cold 3.0 s); 2-concurrent serializes at full
+  per-request rate (Ollama default, matching the product's own request lock).
+- **Class — DECIDED (2026-07-30, Jesse): keep CPX32, measured acceptance.**
+  33 t/s serves the gateway traffic profile; the program's headline claim is
+  availability behavior, not throughput; the hardware class is published with
+  every number. (The 7×-slow figure came from a different instrument — a GH
+  runner; this is the number on *this* instrument.)
+- **Ceiling — AMENDED, DECIDED (2026-07-30, Jesse):** P2–P4 fleet =
+  **€101.96 net ≈ €128/mo gross** (source: Hetzner usage preview, 2026-07-30 —
+  per-row "max €/month" × 25.5 % VAT). The P5 comparison serving footprint
+  (2× CPX32 + IPs ≈ €72 net ≈ €90 gross at current prices → peak ≈ €218/mo
+  gross) **files to the P5 opener**, per this opener's pre-authorization.
+- **Step 0 gate evidence banked:** fence red/green pair (before: `:22` OPEN ×4
+  from prod; after: 12/12 refused from prod, laptop SSH ×4 admitted); x-bit
+  full-circle (fresh clone on node1: all three deploy scripts `-rwxr-xr-x`).
+
 ### (b) Private network: WireGuard over Hetzner Cloud Network
 
 Hetzner Cloud Networks span locations within a network zone — `fsn1`, `nbg1`, `hel1`

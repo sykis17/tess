@@ -43,7 +43,35 @@ class LocalComposeDriver:
     """
 
     def __init__(self, cfg: HarnessConfig) -> None:
+        self._assert_single_node(cfg)
         self.cfg = cfg
+
+    @staticmethod
+    def _assert_single_node(cfg: HarnessConfig) -> None:
+        """Refuse a topology this driver cannot actually reach.
+
+        Every service resolves to a node, and this driver only ever talks to the local
+        docker daemon. Accepting a remote node here would run the whole suite against
+        localhost while reporting on a cluster — faults injected nowhere, assertions
+        passing, and no signal that anything was wrong. Fail closed instead.
+        """
+        services = (
+            *(m.service for m in cfg.etcd_members),
+            cfg.web_service,
+            cfg.standby_service,
+            cfg.redis_service,
+            cfg.worker_service,
+            cfg.collector_service,
+        )
+        remote = sorted(
+            {s: cfg.node_for(s) for s in services if cfg.node_for(s) != cfg.default_node}.items()
+        )
+        if remote:
+            detail = ", ".join(f"{svc} on node {node!r}" for svc, node in remote)
+            raise ValueError(
+                f"LocalComposeDriver cannot reach a non-default node ({detail}); "
+                f"default_node={cfg.default_node!r}. Use OPS_HA_DRIVER=remote (P2 Step 5b)."
+            )
 
     # --- compose / lifecycle ---
     def compose(self, *compose_cmd: str, check: bool = True) -> str:

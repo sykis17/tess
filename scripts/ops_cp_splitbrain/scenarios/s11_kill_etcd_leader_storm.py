@@ -39,10 +39,10 @@ def skip_reason(cfg: HarnessConfig) -> str | None:
     (the offline stack ships a single `etcd`). Keyed on the configured topology so a
     3-node run always executes — never a blanket skip.
     """
-    if len(cfg.etcd_services) < 3:
+    if len(cfg.etcd_members) < 3:
         return (
             "topology: quorum-only scenario — needs >=3 etcd members, "
-            f"{len(cfg.etcd_services)} configured keeps no surviving quorum after a leader kill"
+            f"{len(cfg.etcd_members)} configured keeps no surviving quorum after a leader kill"
         )
     return None
 

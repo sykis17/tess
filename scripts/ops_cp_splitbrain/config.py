@@ -99,8 +99,14 @@ class HarnessConfig:
         return named.get(service, self.default_node)
 
     def etcd_majority_members(self) -> tuple[EtcdMember, ...]:
-        """The members whose loss costs the cluster quorum (s06 stops exactly these)."""
-        return self.etcd_members[:2]
+        """The members whose loss costs the cluster quorum (s06 stops exactly these).
+
+        ceil(n/2), not a fixed two: on the dev 3-member topology that is the same first
+        two services the pre-seam slice took, but on 5 members a fixed two leaves quorum
+        intact and s06's "the sitting primary must demote" premise silently evaporates —
+        the scenario would pass while testing nothing.
+        """
+        return self.etcd_members[: len(self.etcd_members) // 2 + 1]
 
 
 def _parse_etcd_members(raw: str, default_node: str) -> tuple[EtcdMember, ...]:

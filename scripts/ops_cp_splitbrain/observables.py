@@ -179,6 +179,13 @@ def match_leader_member(endpoint: str, members: Sequence[EtcdMember]) -> EtcdMem
     for member in members:
         if host == member.service:
             return member
+    # Real members advertise an address, not a compose service name. Without this the
+    # lookup returns None on any non-dev topology and s11 raises "could not identify
+    # etcd raft leader" before it ever injects its fault — a scenario failing for a
+    # topology reason while looking like a product failure.
+    for member in members:
+        if host == member.node:
+            return member
     for member in members:
         if member.service in endpoint:
             return member

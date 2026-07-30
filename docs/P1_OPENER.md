@@ -559,9 +559,15 @@ out of scope.
   extrapolation fits the window; until then full stays a local pre-PR gate.
 - **Manual interrupt→resume live smoke automation** — needs a WS session-control
   driver; P3-adjacent (chaos harness territory), explicitly not delivered by P1.
-- **First post-merge scheduled/dispatch run verified green** — next-morning check +
-  an immediate `workflow_dispatch` after merge; the PR itself cannot prove the
-  schedule fires.
+- ~~**First post-merge scheduled/dispatch run verified green**~~ — **CLOSED
+  2026-07-30.** Both halves proven from the Actions history: `workflow_dispatch`
+  run `30488937682` (2026-07-29T20:33:47Z, branch `main`) → `success`, and
+  `schedule` run `30518145995` (2026-07-30T05:58:18Z) → `success`. The cron is
+  `17 3 * * *` and the scheduled run fired at 05:58Z, ~2h40m late: **GitHub
+  queues scheduled workflows under load and a delay of hours is normal, not a
+  miss** — recorded here so a future reader checking "did the nightly fire at
+  03:17?" does not read the offset as a failure. The 60-day auto-disable risk
+  and the heartbeat-visibility follow-up below are unaffected.
 - **`redis-parity` → required checks** — Jesse-step after its first few days green
   (settled decision 2).
 - **Nightly heartbeat visibility** — an absent run is invisible in the issues list

@@ -23,6 +23,19 @@
 #   Firewall alone (scoped to Jesse's IP + the observer).
 # - All etcd/client URLs use wg0 addresses, never compose aliases (the
 #   OPS_LOCAL_BASE_URL heal lesson, deploy/MULTI_CLOUD.md §Provider registry).
+# - HAIRPIN (found live, Step 2 bring-up): a container reaching its OWN host's
+#   wg0-published IP ingresses on the docker bridge, not wg0 — ufw default-deny
+#   drops it, so the local-first etcd endpoint / local redis URL would burn the
+#   consensus ladder's 2 s timeout per call. Fix: the bridge subnet is PINNED
+#   below (172.30.90.0/24) and each cluster node carries the scoped ufw rule
+#     ufw allow from 172.30.90.0/24 to any port 2379,2380,6379 proto tcp
+#   — bridge-source-scoped, no public exposure (the Step 2 firewall delta).
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.90.0/24
 
 services:
   etcd:

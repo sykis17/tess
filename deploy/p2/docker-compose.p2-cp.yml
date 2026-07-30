@@ -104,6 +104,11 @@ services:
       # IP needs the 8000/8001 hairpin ufw allow (see header posture note).
       OPS_LOCAL_BASE_URL: http://10.8.0.1:8000
       OPS_PUBLIC_WS_BASE_URL: ws://78.47.69.162
+      # Runtime posture (Step 4): sovereign-strict refuses third-party egress
+      # in-process (LLM factory + search seams) and must prove it via the boot
+      # canary — artifact at GET /ops/posture. Enumerated in BOTH web and
+      # worker blocks (partial-set lesson below); unknown values fail startup.
+      TESS_RUNTIME_POSTURE: ${TESS_RUNTIME_POSTURE:-availability-first}
     depends_on:
       # etcd only: a redis dependency would reference a profile-disabled
       # service on node2 and error; redis ordering rides the per-op 1 s
@@ -151,6 +156,9 @@ services:
       OPS_CP_INSTANCE_ID: ${OPS_CP_INSTANCE_ID}
       REDIS_URL: ${P2_REDIS_URL}
       OPS_LOCAL_BASE_URL: http://10.8.0.1:8000
+      # Posture enumerated here too — the worker proves it independently at
+      # worker_process_init (fail-closed), it must never inherit-by-accident.
+      TESS_RUNTIME_POSTURE: ${TESS_RUNTIME_POSTURE:-availability-first}
     depends_on:
       etcd:
         condition: service_healthy

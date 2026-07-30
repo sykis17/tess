@@ -11,6 +11,7 @@ from celery.exceptions import SoftTimeLimitExceeded
 from celery.signals import worker_process_init
 
 from app.core.config import settings
+from app.core.egress_guard import verify_posture_or_raise
 from app.ops import metrics
 from app.core.conversation import append_conversation_turn, load_conversation_history
 from app.core.redis import create_sync_redis, session_channel
@@ -39,6 +40,18 @@ celery_app = Celery(
     broker=settings.redis_url,
     backend=settings.redis_url,
 )
+
+
+@worker_process_init.connect
+def _verify_runtime_posture(**_kwargs: object) -> None:
+    """Fail-closed: a sovereign-strict worker must prove its egress guard at boot.
+
+    The worker shares the guarded factory/search seams with the web process,
+    but its posture proof cannot ride the web lifespan — so the canary runs
+    here too, and an unproven strict posture raises so the worker child
+    refuses to start. Availability-first records not-applicable and returns.
+    """
+    verify_posture_or_raise()
 
 
 @worker_process_init.connect

@@ -1,6 +1,8 @@
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.posture import RuntimePosture, resolve_posture
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -19,6 +21,20 @@ class Settings(BaseSettings):
     ollama_request_timeout_seconds: float = 300.0
 
     default_llm_provider: str = "gemini"
+
+    # Runtime posture (P2 Step 4). "availability-first" is the historical
+    # behavior, unchanged. "sovereign-strict" refuses third-party egress
+    # in-process at the LLM-factory and search seams and proves it via the
+    # egress canary (app/core/egress_guard.py). Plain str per house convention
+    # (cf. ops_fence_authority), but unlike the fold-permissive mode/profile
+    # validators an unknown value RAISES at Settings() construction — in both
+    # the web and worker processes — because posture must fail closed.
+    tess_runtime_posture: str = "availability-first"
+
+    @field_validator("tess_runtime_posture")
+    @classmethod
+    def _posture_must_be_known(cls, value: str) -> str:
+        return resolve_posture(value).value
 
     tavily_api_key: str | None = None
     search_max_urls: int = 3
@@ -109,6 +125,14 @@ class Settings(BaseSettings):
         if not self.ops_ha_enabled:
             return False
         return bool(self.ops_etcd_endpoints.strip())
+
+    def runtime_posture(self) -> RuntimePosture:
+        """The validated runtime posture (reads the live attr, so tests can patch)."""
+        return resolve_posture(self.tess_runtime_posture)
+
+    def posture_is_strict(self) -> bool:
+        """True under sovereign-strict — the branch every egress guard keys on."""
+        return self.runtime_posture() is RuntimePosture.SOVEREIGN_STRICT
 
     def ops_tracing_active(self) -> bool:
         """True when tracing is enabled and an OTLP endpoint is configured."""

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from .. import docker_util as dk
 from .. import observables as obs
 from ..harness import ScenarioContext
 
@@ -18,9 +17,9 @@ def run(ctx: ScenarioContext) -> None:
     # Under a 3-node quorum, stopping ONE node leaves the cluster serving (the client
     # fails over). Stop a MAJORITY (2 of 3) so quorum is genuinely lost — the condition
     # this scenario asserts on: no member can serve keepalive / leader reads.
-    down_names = [dk.container_name(cfg, s) for s in cfg.etcd_services[:2]]
+    down_names = [ctx.drv.container_name(s) for s in cfg.etcd_services[:2]]
     for name in down_names:
-        dk.docker_stop(name)
+        ctx.drv.docker_stop(name)
 
     def _primary_demoted():
         try:
@@ -77,7 +76,7 @@ def run(ctx: ScenarioContext) -> None:
         )
 
     for name in down_names:
-        dk.docker_start(name)
+        ctx.drv.docker_start(name)
 
     def _relected():
         try:

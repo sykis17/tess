@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .config import HarnessConfig, load_config
-from . import docker_util as dk
+from .drivers import DriverError, FaultDriver, get_driver
 from . import observables as obs
 
 
@@ -17,6 +17,9 @@ class ScenarioContext:
     topo: obs.Topology
     other_provider_id: str | None
     active_provider_id: str | None
+    # Every fault a scenario injects goes through here, so the same scenario body runs
+    # against local compose or a remote cluster without knowing which.
+    drv: FaultDriver
 
 
 ScenarioFn = Callable[[ScenarioContext], None]
@@ -36,11 +39,11 @@ class ScenarioResult:
 
 def reset_stack(cfg: HarnessConfig) -> None:
     """Restore known-clean state: heal faults, recreate CP+etcd, flush Redis keys."""
-    dk.heal_all(cfg)
+    drv = get_driver(cfg)
+    drv.heal_all()
     # Recreate etcd members + webs so lease state is fresh; keep redis but wipe CP keys.
     try:
-        dk.compose_recreate(
-            cfg,
+        drv.compose_recreate(
             *cfg.etcd_services,
             cfg.web_service,
             cfg.standby_service,
@@ -50,24 +53,24 @@ def reset_stack(cfg: HarnessConfig) -> None:
         # fails on worker-metrics reachability. Worker is the sentinel (it exists in
         # every compose file set and is never recreated above): no container -> fall
         # through to the full up.
-        dk.container_name(cfg, cfg.worker_service)
-    except dk.DockerError:
+        drv.container_name(cfg.worker_service)
+    except DriverError:
         # Stack may not be up yet (or only partially, from a torn-down start).
-        dk.compose_up(cfg)
+        drv.compose_up()
 
     # Ensure redis is up and wipe fencing keys (scenario isolation).
     try:
-        redis_name = dk.container_name(cfg, cfg.redis_service)
-        dk.docker_start(redis_name)
-    except dk.DockerError:
-        dk.compose(cfg, "up", "-d", cfg.redis_service, check=False)
+        redis_name = drv.container_name(cfg.redis_service)
+        drv.docker_start(redis_name)
+    except DriverError:
+        drv.compose("up", "-d", cfg.redis_service, check=False)
 
     time.sleep(2.0)
     try:
         obs.redis_del(cfg, obs.REDIS_FENCE_KEY, obs.REDIS_BLOB_KEY)
     except Exception:
         # Redis may still be starting; retry once after compose up.
-        dk.compose_up(cfg)
+        drv.compose_up()
         time.sleep(3.0)
         obs.redis_del(cfg, obs.REDIS_FENCE_KEY, obs.REDIS_BLOB_KEY)
 
@@ -82,29 +85,22 @@ def reset_stack(cfg: HarnessConfig) -> None:
 
     # Ensure redis-only network exists and webs/redis are attached (scenario 4).
     try:
-        dk.ensure_network(cfg.redis_only_network)
+        drv.ensure_network(cfg.redis_only_network)
         for service in (cfg.redis_service, cfg.web_service, cfg.standby_service):
-            name = dk.container_name(cfg, service)
-            if cfg.redis_only_network not in dk.docker_inspect_networks(name):
-                dk.network_connect(cfg.redis_only_network, name)
-    except dk.DockerError:
+            name = drv.container_name(service)
+            if cfg.redis_only_network not in drv.docker_inspect_networks(name):
+                drv.network_connect(cfg.redis_only_network, name)
+    except DriverError:
         pass
 
 
 def verify_clean_baseline(cfg: HarnessConfig) -> obs.Topology:
     """Assert single primary, redis fence+blob consistent, no leftover faults."""
+    drv = get_driver(cfg)
     # No paused containers among CP services.
     for service in (cfg.web_service, cfg.standby_service, *cfg.etcd_services, cfg.redis_service):
-        name = dk.container_name(cfg, service)
-        # Status via inspect State.Status
-        import json
-        import subprocess
-
-        raw = subprocess.check_output(
-            ["docker", "inspect", "-f", "{{json .State}}", name],
-            text=True,
-        )
-        state = json.loads(raw)
+        name = drv.container_name(service)
+        state = drv.inspect_state(name)
         if state.get("Status") != "running" or state.get("Paused"):
             raise obs.AssertionError_(
                 f"baseline unclean: {service} state={state}"
@@ -205,6 +201,7 @@ def prepare_scenario(cfg: HarnessConfig) -> ScenarioContext:
         topo=topo,
         other_provider_id=other,
         active_provider_id=active,
+        drv=get_driver(cfg),
     )
 
 
@@ -221,7 +218,7 @@ def run_scenario(
         ctx = prepare_scenario(cfg)
         fn(ctx)
         # Heal leftovers so next scenario's reset is cheaper / safer.
-        dk.heal_all(cfg)
+        ctx.drv.heal_all()
         return ScenarioResult(
             scenario_id=scenario_id,
             title=title,
@@ -231,7 +228,7 @@ def run_scenario(
         )
     except Exception as exc:
         try:
-            dk.heal_all(cfg)
+            get_driver(cfg).heal_all()
         except Exception:
             pass
         return ScenarioResult(

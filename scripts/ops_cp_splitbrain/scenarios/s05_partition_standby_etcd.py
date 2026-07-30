@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import time
 
-from .. import docker_util as dk
 from .. import observables as obs
 from ..harness import ScenarioContext
 
@@ -17,12 +16,12 @@ def run(ctx: ScenarioContext) -> None:
     topo = ctx.topo
     old_term = topo.pre_fault_term
     primary_id = topo.primary_id
-    standby_name = dk.container_name(cfg, topo.standby_service)
-    net = dk.default_compose_network(cfg, topo.standby_service)
+    standby_name = ctx.drv.container_name(topo.standby_service)
+    net = ctx.drv.default_compose_network(topo.standby_service)
 
     fence_before = obs.durable_fence_term(cfg)
 
-    dk.network_disconnect(net, standby_name)
+    ctx.drv.network_disconnect(net, standby_name)
 
     # Hold partition for one convergence window; primary must remain sole writer.
     deadline = time.time() + min(cfg.convergence_timeout, cfg.lease_ttl_seconds * 2)
@@ -46,7 +45,7 @@ def run(ctx: ScenarioContext) -> None:
     if obs.durable_fence_term(cfg) < fence_before:
         raise obs.AssertionError_("fence term decreased")
 
-    dk.network_connect(net, standby_name)
+    ctx.drv.network_connect(net, standby_name)
 
     def _single():
         try:

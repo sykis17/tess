@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 from .config import EtcdMember, HarnessConfig
-from . import docker_util as dk
+from .drivers import DriverError, get_driver
 
 
 REDIS_FENCE_KEY = "ops:control_plane:fence_term"
@@ -86,19 +86,19 @@ def ha_both(cfg: HarnessConfig) -> tuple[dict[str, Any], dict[str, Any]]:
 
 
 def redis_get(cfg: HarnessConfig, key: str) -> str | None:
-    out = dk.redis_cli(cfg, "GET", key)
+    out = get_driver(cfg).redis_cli("GET", key)
     if out in ("", "(nil)"):
         return None
     return out
 
 
 def redis_set(cfg: HarnessConfig, key: str, value: str) -> None:
-    dk.redis_cli(cfg, "SET", key, value)
+    get_driver(cfg).redis_cli("SET", key, value)
 
 
 def redis_del(cfg: HarnessConfig, *keys: str) -> None:
     if keys:
-        dk.redis_cli(cfg, "DEL", *keys)
+        get_driver(cfg).redis_cli("DEL", *keys)
 
 
 def redis_fence_term(cfg: HarnessConfig) -> int:
@@ -123,10 +123,11 @@ def active_provider_id(cfg: HarnessConfig) -> str | None:
 
 def _etcdctl(cfg: HarnessConfig, *args: str) -> str | None:
     """Run etcdctl on the first reachable etcd member; None if all are down."""
-    for service in cfg.etcd_services:
+    drv = get_driver(cfg)
+    for member in cfg.etcd_members:
         try:
-            return dk.etcdctl(cfg, service, *args)
-        except dk.DockerError:
+            return drv.etcdctl(member.service, *args)
+        except DriverError:
             continue
     return None
 
@@ -192,10 +193,11 @@ def etcd_leader_service(cfg: HarnessConfig) -> str | None:
     leader is the entry whose own ``member_id`` equals the reported ``leader`` id. Used by the
     leader-kill storm (s11) to target the Raft leader specifically.
     """
-    for svc in cfg.etcd_services:
+    drv = get_driver(cfg)
+    for member in cfg.etcd_members:
         try:
-            out = dk.etcdctl(cfg, svc, "endpoint", "status", "--cluster", "-w", "json")
-        except dk.DockerError:
+            out = drv.etcdctl(member.service, "endpoint", "status", "--cluster", "-w", "json")
+        except DriverError:
             continue
         try:
             entries = json.loads(out)
@@ -207,8 +209,8 @@ def etcd_leader_service(cfg: HarnessConfig) -> str | None:
             leader = status.get("leader")
             member_id = header.get("member_id")
             if leader and member_id and int(leader) == int(member_id):
-                member = match_leader_member(entry.get("Endpoint") or "", cfg.etcd_members)
-                return member.service if member else None
+                leader = match_leader_member(entry.get("Endpoint") or "", cfg.etcd_members)
+                return leader.service if leader else None
         return None
     return None
 
@@ -220,10 +222,11 @@ def etcd_raft_term(cfg: HarnessConfig) -> int:
     it, so ``after > before`` across a leader kill proves a real re-election happened — the
     deterministic non-vacuity signal for s11 (the gap was genuinely opened).
     """
-    for svc in cfg.etcd_services:
+    drv = get_driver(cfg)
+    for member in cfg.etcd_members:
         try:
-            out = dk.etcdctl(cfg, svc, "endpoint", "status", "-w", "json")
-        except dk.DockerError:
+            out = drv.etcdctl(member.service, "endpoint", "status", "-w", "json")
+        except DriverError:
             continue
         try:
             entries = json.loads(out)
@@ -471,51 +474,44 @@ def peek_provider_changed(
 ) -> tuple[tuple[int, Any], int]:
     """SUBSCRIBE briefly around a mutate; return (mutate_result, message_count).
 
-    Uses redis-cli --csv SUBSCRIBE in a short docker exec window is awkward;
-    instead compare pubsub channel message counter via PUBSUB NUMSUB before/after
-    is also weak. Prefer: snapshot active + fence, run mutate, re-check artifacts.
-    For publish detection we use a background redis-cli SUBSCRIBE with timeout.
+    Counting published messages beats the alternatives: a PUBSUB NUMSUB delta is weak,
+    and MONITOR is too noisy. So a short-lived redis-cli SUBSCRIBE runs alongside the
+    mutate and its output lines are counted.
+
+    The subscriber must be LIVE before the mutate fires, which is why the stream context
+    is entered here in the main thread rather than inside the reader: entering resolves
+    the container, which can cost a second or more, and s09's only pub/sub assertion is
+    negative (it fails when messages appear). A subscriber that attached late would count
+    zero and pass — the failure mode this ordering exists to prevent.
     """
-    # Best-effort: run subscribe with timeout in parallel via redis-cli --raw
-    # For portability, count messages by wrapping mutate and checking redis
-    # MONITOR is too noisy. Use a short SUBSCRIBE via docker exec with timeout.
-    cid = dk.container_id(cfg, cfg.redis_service)
-    import subprocess
     import threading
 
     messages: list[str] = []
 
-    def _listen() -> None:
-        proc = subprocess.Popen(
-            [
-                "docker",
-                "exec",
-                "-i",
-                cid,
-                "timeout",
-                str(max(1, int(listen_seconds) + 1)),
-                "redis-cli",
-                "SUBSCRIBE",
-                REDIS_PROVIDER_CHANGED,
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-        )
-        assert proc.stdout is not None
-        deadline = time.time() + listen_seconds + 1
-        while time.time() < deadline:
-            line = proc.stdout.readline()
-            if not line:
-                break
-            messages.append(line.strip())
-        proc.kill()
+    with get_driver(cfg).stream_exec(
+        cfg.redis_service,
+        [
+            "timeout",
+            str(max(1, int(listen_seconds) + 1)),
+            "redis-cli",
+            "SUBSCRIBE",
+            REDIS_PROVIDER_CHANGED,
+        ],
+    ) as stream:
 
-    t = threading.Thread(target=_listen, daemon=True)
-    t.start()
-    time.sleep(0.3)
-    result = mutate_fn()
-    t.join(timeout=listen_seconds + 2)
+        def _listen() -> None:
+            deadline = time.time() + listen_seconds + 1
+            while time.time() < deadline:
+                line = stream.readline()
+                if not line:
+                    break
+                messages.append(line.strip())
+
+        t = threading.Thread(target=_listen, daemon=True)
+        t.start()
+        time.sleep(0.3)
+        result = mutate_fn()
+        t.join(timeout=listen_seconds + 2)
     # redis-cli subscribe prints message type lines; count "message" entries
     msg_count = sum(1 for m in messages if m == "message")
     return result, msg_count
@@ -620,9 +616,11 @@ def read_exported_spans(cfg: HarnessConfig) -> list[dict[str, Any]]:
     import os
     import tempfile
 
-    cid = dk.container_id(cfg, cfg.collector_service)
     tmp = os.path.join(tempfile.gettempdir(), "ops_cp_spans.json")
-    dk._run(["docker", "cp", f"{cid}:{cfg.spans_file}", tmp], check=False)
+    # Return deliberately ignored: a missing file is handled below, and acting on the
+    # copy's exit code would change s10's failure mode (today a stale copy from an
+    # earlier run is silently reused). Behavior preserved through the seam change.
+    get_driver(cfg).copy_out(cfg.collector_service, cfg.spans_file, tmp)
     spans: list[dict[str, Any]] = []
     try:
         with open(tmp, encoding="utf-8") as fh:

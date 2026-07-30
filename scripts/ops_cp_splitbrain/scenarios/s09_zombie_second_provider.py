@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from .. import docker_util as dk
 from .. import observables as obs
 from ..harness import ScenarioContext
 
@@ -20,11 +19,11 @@ def run(ctx: ScenarioContext) -> None:
         raise obs.AssertionError_("other provider must differ from active")
 
     old_term = topo.pre_fault_term
-    primary_name = dk.container_name(cfg, topo.primary_service)
+    primary_name = ctx.drv.container_name(topo.primary_service)
     standby_base = topo.standby_base
     old_primary_base = topo.primary_base
 
-    dk.docker_stop(primary_name)
+    ctx.drv.docker_stop(primary_name)
 
     def _promoted():
         try:
@@ -43,7 +42,7 @@ def run(ctx: ScenarioContext) -> None:
         label="standby promote for zombie test",
     )
 
-    dk.docker_start(primary_name)
+    ctx.drv.docker_start(primary_name)
 
     def _zombie_ready():
         try:

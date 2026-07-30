@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from .. import docker_util as dk
 from .. import observables as obs
 from ..harness import ScenarioContext
 
@@ -14,12 +13,12 @@ def run(ctx: ScenarioContext) -> None:
     cfg = ctx.cfg
     topo = ctx.topo
     old_term = topo.pre_fault_term
-    primary_name = dk.container_name(cfg, topo.primary_service)
+    primary_name = ctx.drv.container_name(topo.primary_service)
     standby_base = topo.standby_base
-    net = dk.default_compose_network(cfg, topo.primary_service)
+    net = ctx.drv.default_compose_network(topo.primary_service)
 
     # Full disconnect isolates etcd (and Redis on single-network setups).
-    dk.network_disconnect(net, primary_name)
+    ctx.drv.network_disconnect(net, primary_name)
 
     def _promoted():
         try:
@@ -40,7 +39,7 @@ def run(ctx: ScenarioContext) -> None:
         label="standby promote after primary<->etcd partition",
     )
 
-    dk.network_connect(net, primary_name)
+    ctx.drv.network_connect(net, primary_name)
 
     def _single():
         try:

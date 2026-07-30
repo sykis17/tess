@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import time
 
-from .. import docker_util as dk
 from .. import observables as obs
 from ..harness import ScenarioContext
 
@@ -31,7 +30,7 @@ def run(ctx: ScenarioContext) -> None:
     other_id = ctx.other_provider_id
     assert other_id
 
-    redis_name = dk.container_name(cfg, cfg.redis_service)
+    redis_name = ctx.drv.container_name(cfg.redis_service)
     fence_before = obs.durable_fence_term(cfg)
     active_before = obs.durable_active_provider_id(cfg)
 
@@ -46,7 +45,7 @@ def _run_redis(ctx, redis_name, fence_before, active_before) -> None:
     topo = ctx.topo
     other_id = ctx.other_provider_id
 
-    dk.docker_pause(redis_name)
+    ctx.drv.docker_pause(redis_name)
     try:
         # Mutate while Redis is frozen — must not silently succeed a durable switch.
         # HTTP may hang briefly; urllib timeout returns status 0.
@@ -58,7 +57,7 @@ def _run_redis(ctx, redis_name, fence_before, active_before) -> None:
                 f"primary mutate succeeded while Redis paused status={code} body={body}"
             )
     finally:
-        dk.docker_unpause(redis_name)
+        ctx.drv.docker_unpause(redis_name)
 
     # Give Redis a moment after unpause before reading keys.
     time.sleep(1.0)
@@ -80,7 +79,7 @@ def _run_etcd(ctx, redis_name, fence_before, active_before) -> None:
     topo = ctx.topo
     other_id = ctx.other_provider_id
 
-    dk.docker_pause(redis_name)
+    ctx.drv.docker_pause(redis_name)
     try:
         # Durable authority is etcd; Redis loss must not block the durable switch.
         code, body = obs.mutate_set_active(
@@ -100,7 +99,7 @@ def _run_etcd(ctx, redis_name, fence_before, active_before) -> None:
                 f"{etcd_active!r} != {other_id!r}"
             )
     finally:
-        dk.docker_unpause(redis_name)
+        ctx.drv.docker_unpause(redis_name)
 
     time.sleep(1.0)
     _converge_single_primary(cfg, "single primary after Redis pause heal (etcd authority)")

@@ -341,6 +341,74 @@ node1:`/root/p2-artifacts/step2-cp/`, 26 files incl. full battery transcript):**
   the durable CP blob with no recovery story. Files to the P3 opener as a
   blocker, not a nicety.
 
+**Step 3 as-built (2026-07-30, this PR — closes opener Step 3; artifacts at
+node1:`/root/p2-artifacts/step3-stacks/`, 20 files incl. full battery
+transcript + driver; laptop archive `p2-artifacts-20260730T082658Z.tar.gz`,
+63 entries):**
+
+- **Stacks live:** full TESS stacks (redis + worker + ollama + caddy) joined
+  the CP compose as the `stack` profile — still one file
+  (`deploy/p2/docker-compose.p2-cp.yml`), brought up by
+  `deploy/p2/stack-up.sh` (mirrors deploy.sh's IP-mode steps: Caddyfile
+  selection, frontend build with the node's public ws URL baked in, dist
+  assertions, pinned model pull). **Found live (phase A):** `set -a; source
+  .env.prod` in the bring-up wrapper silently disabled HA on both CPs —
+  exported vars beat `--env-file` in compose interpolation, so the node
+  env's HA block lost — fixed as the script's read-only `env_get` rule
+  (never source `.env.prod` into compose's namespace; comment in the
+  script cites this incident).
+- **Shared-redis shape retired (phase C):** node2's stack cut to its own
+  redis (`redis://10.8.0.2:6379/0` over wg0) — hetzner-2 now survives
+  node1's death, the restructure Step 2's battery-scope bullet deferred
+  here. The CP pair rode through the cutover undisturbed (fence term 7 both
+  sides, roles unchanged); post-cutover WS smoke green on both stacks
+  (completed panel 6.2 s node2 / 8.5 s node1).
+- **Registry per (c):** `hetzner-1` = `prov_hetzner_local`
+  (`http://10.8.0.1:8000`, ws `ws://78.47.69.162`, fsn1); `hetzner-2` =
+  `prov_07ddcf4f7064` (`http://10.8.0.2:8001`, ws `ws://5.75.186.164`,
+  nbg1). Base URLs are WG IPs, ws URLs public IPs — the
+  `OPS_LOCAL_BASE_URL` loopback lesson honored, not re-learned. Prober
+  scoring both at 30 s cadence (h-1 at 100 banked snapshots, both healthy
+  score 95 pre-battery).
+- **Battery — 15 checks PASS, 0 failed** (`battery-transcript.txt` +
+  `battery-driver.sh` banked; baseline policy: `active_only`, preferred
+  h-1, auto_failover on, failure_threshold 3 / recovery_threshold 2):
+  **(a)** baseline: full-body policy PUT 200, force-active h-1 200,
+  active=h-1; **(b)** blind-spot proven red-first — ollama stopped on the
+  active stack → **no flip**, `/health` 200, and **4 consecutive healthy
+  score-95 snapshots inside the stop window** (prober demonstrably alive;
+  timestamps banked) — finding bullet below; **(c)** stack-kill flip:
+  pub/sub subscriber **fire-drilled before the kill** (positive signal
+  proven, per the monitors house rule); node1 stack killed 07:58:31Z
+  (etcd-1 left running — witness quorum intact) → CP failover cp-a→cp-b
+  (fence term **7 → 8**) and provider flip to h-2 with measured
+  kill→`last_failover_at` = **76.0 s** — inside the policy arithmetic's
+  60–90 s detection window (failure_threshold 3 × 30 s cadence), and the
+  kill took the CP primary with it, so cp-b's lease takeover sits inside
+  the same 76 s; **the P4 "local 2.1 s" question's first real-VPS number,
+  informally.** Failover event banked from `/ops/events`
+  (`prov_hetzner_local → prov_07ddcf4f7064`, `sessions_dropped: 0`); the
+  public notice stayed the two-field body (`ws_base_url` flipped to node2,
+  stamp advanced); **(d)** failback: node1 stack restarted → preferred
+  failback to h-1 in **44.2 s** (inside recovery_threshold 2 × 30 s);
+  `provider_changed` captured live for **both** transitions on the
+  subscriber (capture banked — `ws_base_url` swaps
+  `5.75.186.164` ↔ `78.47.69.162` across the two payloads); **(e)** CP
+  handover + registry-refresh guard: cp-b (CP primary since the kill) web
+  restarted → cp-a promoted, term **8 → 9**, exactly one leader; the
+  provider registry rode both handovers blob-durable (h-2 base_url
+  unchanged, h-1 name/URL intact); **(f)** fence sweep from prod grew to
+  **0 open of 40** (80/443/11434 join the enumeration — the full stacks
+  added caddy and ollama listener classes; all-refused).
+- **Finding — prober inference blind spot (disposition = Jesse):**
+  same-class failover triggers on `/health` scoring only, and `/health`
+  never exercises inference — a provider with dead ollama keeps scoring 95
+  and is never failed away from (proven live in (b), not inferred).
+  Candidate dispositions: a deep probe that exercises inference on a
+  cadence, scoring folded from Step 7's traffic-generator error rate, or
+  accepted-as-scoped for this phase. No pin from here; files to the Step 7
+  / P3 boundary alongside the etcd-backup blocker above.
+
 ### (b) Private network: WireGuard over Hetzner Cloud Network
 
 Hetzner Cloud Networks span locations within a network zone — `fsn1`, `nbg1`, `hel1`

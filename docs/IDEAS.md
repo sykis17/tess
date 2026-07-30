@@ -34,3 +34,12 @@ until they rot.
   observer's external pinger came from exactly this question ("who watches the
   witness"). Gate: none for the review itself (it is a question, not a change);
   each finding files here or as an issue with its own gate.
+
+- **Per-node probe as admission gate — never assume class = performance.**
+  Two same-class CPX32 draws measured 34 vs 23 t/s (steal 0, identical
+  advertised silicon — host lottery). Already a house habit via
+  `deploy/p2/inference-probe.sh`; this entry is the candidate to make it a
+  *gate*: no node serves traffic until its own probe is banked. Origin:
+  Jesse, 2026-07-30 (P2 Step 1 node2 finding, PR #26). Gate: P3+ — if/when
+  node admission is automated, the probe becomes a required admission step;
+  until then it rides the runbooks.

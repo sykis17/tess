@@ -236,6 +236,34 @@ house's own doctrine — measure before pin:
   cheap while nothing rides on it · escalate to Hetzner); **no traffic rate
   or timeout is pinned from node2's numbers until decided** — (g)'s rates
   pin from the slowest accepted serving node.
+- **Node2 disposition — RESOLVED (2026-07-30, Jesse's ladder, PR #26 review):
+  recreated to a nominal host.** The pre-registered ladder: (1) console
+  power-cycle (~03:37 UTC) → **no movement**, mean 23.4 t/s (20.1–27.1) —
+  host retained across stop/start; (2) delete + recreate, same
+  name/class/location, same IPs re-landed (public 5.75.186.164, private
+  10.0.0.3 — inventory unchanged) → bootstrap + mesh + probe re-run entirely
+  from the committed scripts (**the idempotency claim, field-proven**:
+  node1/node3 kept their keys, node2 rekeyed, all confs re-rendered, VERIFY
+  OK, MTU 1370 again, RTTs consistent — transcript
+  node1:`/root/p2-artifacts/step1-mesh/mesh-verify-20260730T040204Z.txt`).
+  New draw: **32.1–36.9 t/s, mean 34.4** — inside node1's band; class
+  homogeneity restored. One retry used per the one-retry rule. Fence
+  re-probed post-recreate from prod: **12/12 refused**. Node2's WG public
+  key is now `T0YmAhGfTjk78IBDqdd3uJfEF8ySZYJFw0RFoRLLB0I=` (supersedes the
+  `meFF…t01A=` key above — the old server is gone). The two-draw variance
+  observation (34 / 23 / 34 t/s on one class) is filed in
+  [IDEAS.md](IDEAS.md) as the per-node-probe admission-gate entry.
+- **Artifact-durability lesson (recorded, not hidden):** the old node2's
+  on-node artifacts (`step1-probe/` incl. the rerun pair,
+  `ladder-rung1-probe/`) were destroyed with the server; their summaries are
+  preserved at node1:`/root/p2-artifacts/ladder/old-node2-summaries.txt` and
+  in PR #26/#27 bodies. Fleet artifacts now copy to node1 (the durable
+  artifact home) — a node's own disk is not provenance storage.
+- **Probe instrument committed (from the reconstruction lesson):**
+  `deploy/p2/inference-probe.sh` — the seven shapes with every request JSON
+  saved alongside its response (`probe-*.request.json`); no future probe can
+  need prompt reconstruction. New node2's nominal probe ran with it
+  (node2:`/root/p2-artifacts/step1-probe/`, requests included).
 
 ### (b) Private network: WireGuard over Hetzner Cloud Network
 

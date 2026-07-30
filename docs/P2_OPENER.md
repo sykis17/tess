@@ -265,6 +265,82 @@ house's own doctrine — measure before pin:
   need prompt reconstruction. New node2's nominal probe ran with it
   (node2:`/root/p2-artifacts/step1-probe/`, requests included).
 
+**Step 2 as-built (2026-07-30, this PR — closes opener Step 2; artifacts at
+node1:`/root/p2-artifacts/step2-cp/`, 26 files incl. full battery transcript):**
+
+- **Topology live:** etcd-1/2/3 across fsn1/nbg1/hel1 peering over wg0
+  (`10.8.0.1/.2/.3:2380`), CP-A on node1 (:8000, + redis + worker
+  `--concurrency=1`), CP-B on node2 (:8001→8000); `ops_fence_authority=etcd`
+  untouched. Committed: `deploy/p2/docker-compose.p2-cp.yml` (one file,
+  identity via `deploy/p2/env/node{1,2,3}.env`, roles via profiles) +
+  `deploy/p2/cp-env-sync.sh`. First campaign went to CP-B (build-order
+  artifact — roles are symmetric by design; the battery ran role-aware).
+- **Timing vs geography (checklist §1, arithmetic in the compose comments):**
+  heartbeat 100 ms = 3.9× worst measured RTT (25.7 ms fsn↔hel), election
+  1000 ms = 10× heartbeat — stock values hold, set explicitly, never
+  inherited. App layer verified live: ladder worst case 6 s < TTL 10 s;
+  re-election after quorum restore took **≤ 8 s**; CP takeover within bound.
+  Harness convergence budgets (3× TTL) survive geography unchanged; the
+  real-cluster harness profile decision travels to Step 5.
+- **Hairpin finding (live, own bullet — it revises the plan's CR2-4):** a
+  container reaching its *own* host's wg0-published IP ingresses on the
+  docker bridge, not wg0 — ufw default-deny dropped it, which would have
+  burned the consensus ladder's 2 s timeout on every local-first call. Fix:
+  bridge subnet pinned (`172.30.90.0/24`) + scoped ufw allow
+  (2379/2380/6379 from that subnet only) = **the Step 2 firewall delta,
+  zero public exposure**. Honesty per the ListenPort precedent: 8000/8001
+  are docker-published and docker bypasses ufw's FORWARD path — their
+  non-reachability rests on the **Cloud Firewall alone**.
+- **Token single-sourcing (checklist §5):** `cp-env-sync.sh` generated once,
+  synced over SSH, never printed; fingerprints equal on both CP nodes
+  (`sha256:810de315b84e59e5`); battery driver acquired it over SSH at drive
+  time, fingerprint-only in transcripts.
+- **Battery — all green, artifact-asserted** (`battery-transcript.txt`; every
+  proof's HTTP bodies + `/ops/ha` + `etcdctl` JSON banked): **(a)** primary
+  mutation 200 · standby **503 with fence body** · unauthenticated-on-standby
+  503 not 401 (**fence-before-auth proven**) · bogus-token-on-primary 403 ·
+  worker resolved-env artifact (HA vars present — the silent-unfence hole
+  closed); **(b)** witness-kill boring-green: primary unaffected, writes
+  continue, etcd-3 rejoins 3/3; **(b′)** the primary's *own local-first*
+  member killed → keepalive failed over across the ladder, primary retained,
+  writes continued — the endpoint-failover ladder proven on real geography;
+  **(c)** quorum loss (both non-local members stopped) → primary **demoted
+  within TTL** ("authority is the lease") → mutation 503 with fence body;
+  **(d)** one member restarted → re-elect ≤ 8 s, fence term **3 → 4 strictly
+  monotonic**, mutation 200; full 3/3 restore with raft indexes converged
+  (1007/1007/1007 — catch-up artifact). Recovery-delay attribution: etcd
+  refreshes lease TTLs on leader re-election, so up to a full TTL of leader-key
+  persistence after quorum restore is lease-refresh behavior, not a campaign
+  miss; **(e)** CP failover: primary web stopped → standby took over within
+  bound, mutation 200, term **4 → 5**, restarted web stands by — exactly one
+  leader; **(f)** node3 actually rebooted → etcd-3 back via restart policy
+  (the wg0-bind boot race resolves as designed), 3/3, CPs undisturbed;
+  **(g)** extended fence probe from prod: **0 open of 28**
+  (22/8000/8001/9109/2379/2380/6379 × 4 nodes — the three new listener
+  classes join the enumeration, 6379 included per review).
+- **Witness 2 GB reality (checklist §4):** etcd RSS measured **17–37 MiB**
+  of 1.87 GiB (docker stats, baseline + storm windows) — two orders below
+  the RAM; quota-backend 2 GB is disk (38 GB available). Swap recipe
+  (`deploy/SERVER_CHECKLIST.md` §Fix OOM) remains the named contingency —
+  not applied, no pressure observed.
+- **Battery scope, stated so evidence never implies more than it proved:**
+  service-level faults only (containers stopped/started; one witness
+  reboot). **Node-level kill drills are deferred to the post-Step-3
+  topology / P3 chaos schedule**, where the Step 2 shared-Redis-on-node1
+  shape (CP-B reads `redis://10.8.0.1:6379/0` over WG — caches + pub/sub
+  only under etcd authority) is restructured per-node.
+- **etcd speaks HTTP inside the WG tunnel** — the encryption claim is
+  WireGuard's (§(b) belt-and-braces), stated here so the reviewer question
+  is preempted. A driver defect during the first battery run (uppercase
+  enum → 422 on the mutation payload) was fixed and the battery re-run
+  clean end-to-end — fence checks were unaffected either way (the 503/demote
+  legs never depended on the payload).
+- **Follow-up, P3-BLOCKING (Jesse, 2026-07-30):** etcd snapshot/backup
+  cadence is an open gap — `deploy/MULTI_CLOUD.md` has no etcd durability
+  doctrine, and a soak without etcd backups means a corrupted quorum loses
+  the durable CP blob with no recovery story. Files to the P3 opener as a
+  blocker, not a nicety.
+
 ### (b) Private network: WireGuard over Hetzner Cloud Network
 
 Hetzner Cloud Networks span locations within a network zone — `fsn1`, `nbg1`, `hel1`
@@ -581,6 +657,10 @@ identity are untouched this phase.
 
 ## Follow-ups filed (not P2 blockers)
 
+- **etcd snapshot/backup cadence — P3-BLOCKING (Jesse, 2026-07-30, Step 2
+  review):** no etcd durability doctrine exists; a soak without backups
+  risks the durable CP blob on a corrupted quorum with no recovery story.
+  First act of the P3 opener alongside the chaos schedule.
 - **P1 carry-overs, unchanged owners:** s11 single-node variant; full-20 eval
   nightly; manual interrupt→resume smoke automation (P3-adjacent — the chaos
   schedule will want it); nightly heartbeat visibility (60-day auto-disable).

@@ -13,7 +13,6 @@ invariant: no split-brain, monotonic term, no durable corruption.
 
 from __future__ import annotations
 
-from .. import docker_util as dk
 from .. import observables as obs
 from ..harness import ScenarioContext
 
@@ -60,7 +59,7 @@ def run(ctx: ScenarioContext) -> None:
 
     # Part (b) leaves the durable term ahead of nothing electable in some paths; the
     # (a)/(b) artifact checks are the pass criteria. Heal containers only.
-    dk.heal_all(cfg)
+    ctx.drv.heal_all()
 
 
 def _run_b_redis(ctx, active_before, blob_before, bumped: int) -> None:

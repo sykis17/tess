@@ -15,7 +15,6 @@ flakiness; see the s04/s08 precedent).
 
 from __future__ import annotations
 
-from .. import docker_util as dk
 from .. import observables as obs
 from ..harness import ScenarioContext
 
@@ -39,7 +38,7 @@ def run(ctx: ScenarioContext) -> None:
     cfg = ctx.cfg
     topo = ctx.topo
     old_term = topo.pre_fault_term
-    primary_name = dk.container_name(cfg, topo.primary_service)
+    primary_name = ctx.drv.container_name(topo.primary_service)
     standby_base = topo.standby_base
 
     _require_obs(standby_base)
@@ -68,7 +67,7 @@ def run(ctx: ScenarioContext) -> None:
 
     # (a) Worker-exposition proof (§3a): a worker-executed ops task increments a counter
     #     that is scraped on the localhost-published :9109 target.
-    _assert_worker_exposition(cfg)
+    _assert_worker_exposition(cfg, ctx.drv)
 
     # (b) Reject on the standby, carrying traceparent T + request id R.
     headers, _trace_id, req_id = obs.gen_trace_headers("s10")
@@ -79,7 +78,7 @@ def run(ctx: ScenarioContext) -> None:
         )
 
     # (c) Kill the primary; wait for the standby to promote.
-    dk.docker_stop(primary_name)
+    ctx.drv.docker_stop(primary_name)
 
     def _promoted():
         try:
@@ -163,10 +162,10 @@ def run(ctx: ScenarioContext) -> None:
     )
 
     # (g) Heal: restart the old primary (heal_all also does this best-effort).
-    dk.docker_start(primary_name)
+    ctx.drv.docker_start(primary_name)
 
 
-def _assert_worker_exposition(cfg) -> None:
+def _assert_worker_exposition(cfg, drv) -> None:
     """Enqueue a worker-run ops task; assert the :9109 counter increments (proves §3a).
 
     worker_task_total increments regardless of which node is primary (the decorator records
@@ -183,10 +182,10 @@ def _assert_worker_exposition(cfg) -> None:
             f"must publish it and run the worker at --concurrency=1 (§3a): {exc}"
         )
 
-    worker_cid = dk.container_id(cfg, cfg.worker_service)
-    dk._run(
+    drv.exec_in(
+        cfg.worker_service,
         [
-            "docker", "exec", worker_cid, "python", "-c",
+            "python", "-c",
             "from app.worker import ops_probe_providers; ops_probe_providers.delay()",
         ],
         check=False,

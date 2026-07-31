@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import time
 
-from .. import docker_util as dk
 from .. import observables as obs
 from ..harness import ScenarioContext
 
@@ -16,7 +15,7 @@ def run(ctx: ScenarioContext) -> None:
     cfg = ctx.cfg
     topo = ctx.topo
     old_term = topo.pre_fault_term
-    primary_name = dk.container_name(cfg, topo.primary_service)
+    primary_name = ctx.drv.container_name(topo.primary_service)
     frozen_base = topo.primary_base
     standby_base = topo.standby_base
     other_id = ctx.other_provider_id
@@ -25,7 +24,7 @@ def run(ctx: ScenarioContext) -> None:
     fence_before_pause = obs.durable_fence_term(cfg)
     active_before = obs.durable_active_provider_id(cfg)
 
-    dk.docker_pause(primary_name)
+    ctx.drv.docker_pause(primary_name)
 
     def _promoted():
         try:
@@ -52,7 +51,7 @@ def run(ctx: ScenarioContext) -> None:
 
     # Strongest assert: mutate immediately after unpause — may still have cached
     # primary role, so status may be 503 OR fence-error 5xx; artifacts must not move.
-    dk.docker_unpause(primary_name)
+    ctx.drv.docker_unpause(primary_name)
     time.sleep(0.05)  # fire in the stale-cache window
 
     code, body = obs.mutate_set_active(

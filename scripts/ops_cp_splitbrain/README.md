@@ -37,6 +37,30 @@ stale writers, but `promote_fence` requires `etcd_term > redis_term`, so
 the next scenario reset (key wipe) is what restores electability. That is
 intentional isolation, not a silent pass.
 
+## Fault drivers
+
+Faults are injected through a `FaultDriver` (`drivers/`), so the same scenario bodies run
+against local compose or, from Step 5b, the real cluster. `OPS_HA_DRIVER` selects:
+
+| value | driver | notes |
+|---|---|---|
+| `local` (default) | `LocalComposeDriver` | docker compose on this host — the behavior every existing invocation already had |
+| `remote` | `RemoteSshDriver` | **P2 Step 5b**; the name is accepted today and construction refuses loudly |
+
+An unrecognized value raises at config load, before any docker call — a typo must never
+fall back to driving this laptop while the operator believes they are driving the cluster.
+Absent or empty means `local` (the offline verifier clears harness env with `-e VAR=`).
+
+Nodes: every service resolves to a node via `OPS_HA_DEFAULT_NODE` (default `local`) plus
+per-service overrides `OPS_HA_{WEB,STANDBY,REDIS,WORKER,COLLECTOR}_NODE`. etcd members
+carry their own node — `OPS_HA_ETCD_SERVICES` accepts both `etcd-1,etcd-2,etcd-3` (all on
+the default node) and the `node:service` form. `LocalComposeDriver` refuses any service on
+a non-default node rather than silently injecting faults into the wrong docker daemon.
+
+Also configurable: `OPS_HA_SECOND_PROVIDER_BASE_URL` (default `http://127.0.0.1:18099`) —
+the seeded second provider's base URL, which on a real cluster is a live peer rather than
+a dead local port.
+
 ## Timeouts
 
 `CONVERGENCE_TIMEOUT = 3 × OPS_ETCD_LEASE_TTL_SECONDS` (default 30s). Override with

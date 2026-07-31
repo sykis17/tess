@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import time
 
-from .. import docker_util as dk
 from .. import observables as obs
 from ..config import HarnessConfig
 from ..harness import ScenarioContext
@@ -40,10 +39,10 @@ def skip_reason(cfg: HarnessConfig) -> str | None:
     (the offline stack ships a single `etcd`). Keyed on the configured topology so a
     3-node run always executes — never a blanket skip.
     """
-    if len(cfg.etcd_services) < 3:
+    if len(cfg.etcd_members) < 3:
         return (
             "topology: quorum-only scenario — needs >=3 etcd members, "
-            f"{len(cfg.etcd_services)} configured keeps no surviving quorum after a leader kill"
+            f"{len(cfg.etcd_members)} configured keeps no surviving quorum after a leader kill"
         )
     return None
 
@@ -65,11 +64,11 @@ def run(ctx: ScenarioContext) -> None:
     leader_svc = obs.etcd_leader_service(cfg)
     if leader_svc is None:
         raise obs.AssertionError_("could not identify etcd raft leader before storm")
-    leader_name = dk.container_name(cfg, leader_svc)
+    leader_name = ctx.drv.container_name(leader_svc)
     raft_before = obs.etcd_raft_term(cfg)
     # SIGKILL, not stop: SIGTERM lets etcd hand off leadership (near-zero gap, vacuous).
     # An ungraceful kill forces the survivors to ride out the election timeout — the real gap.
-    dk.docker_kill(leader_name)
+    ctx.drv.docker_kill(leader_name)
 
     # --- Storm through the re-election gap: keep firing until a durable write RESUMES.
     resumed = False
@@ -95,7 +94,7 @@ def run(ctx: ScenarioContext) -> None:
                 f"killing etcd leader {leader_svc}; codes={codes}"
             )
     finally:
-        dk.docker_start(leader_name)
+        ctx.drv.docker_start(leader_name)
 
     # --- Heal: whole etcd cluster back, single CP primary.
     obs.wait_until(

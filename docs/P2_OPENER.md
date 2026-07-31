@@ -518,6 +518,114 @@ node1:`/root/p2-artifacts/step4-posture/`, 13 files; laptop archive
   worker's in-process proof is its fail-closed boot canary + the shared
   factory/search seams + deliberately enumerated compose env.
 
+**Step 5a as-built (2026-07-30/31, this PR — the LOCAL half of opener Step 5; the
+remote driver and the against-the-cluster headline gate remain Step 5b):**
+
+- **The seam.** `scripts/ops_cp_splitbrain/drivers/` — a `FaultDriver` protocol
+  (the **18** public `docker_util` primitives, plus four that absorb pre-existing
+  bypasses) and `LocalComposeDriver` delegating to an **untouched** `docker_util`
+  (`git diff main -- .../docker_util.py` = **0 lines**; the path is verified
+  tracked first, so a pathspec typo cannot fake the proof). Protocol methods take
+  no `cfg` — drivers bind it at construction, because `docker_util`'s split
+  convention (some functions take the config, the lifecycle/network verbs take a
+  bare container name) cannot survive a topology where every primitive must know
+  which node's dockerd to reach.
+- **Four leaks absorbed**, each a real primitive a remote driver would have failed
+  to intercept: `harness.verify_clean_baseline`'s inline `subprocess docker
+  inspect` → `inspect_state`; `observables.peek_provider_changed`'s SUBSCRIBE
+  `Popen` → `stream_exec`; `read_exported_spans`' `dk._run docker cp` →
+  `copy_out`; `s10._assert_worker_exposition`'s `dk._run docker exec` →
+  `exec_in`. An AST source guard now makes `drivers/local.py` the only module in
+  the package permitted to shell out.
+- **Fail-closed selection.** `OPS_HA_DRIVER=local|remote`, default `local`;
+  absent/empty/whitespace folds to `local` (the offline verifier clears harness
+  env with the `-e VAR=` idiom). Unknown value raises at `load_config()`, before
+  any docker call — `OPS_HA_DRIVER=banana … list` exits **1** naming the value
+  and the accepted set. `remote` resolves as a name and refuses at construction:
+  rejecting the name would make the documented value set a lie, and accepting it
+  as local would drive the laptop while the operator believed they were driving
+  the cluster — the failure this seam exists to prevent.
+- **Config generalizations, local-identical by construction.** `etcd_members`
+  (`EtcdMember(node, service)`) with `etcd_services` kept as a **derived
+  property** — forced, not chosen: `docker_util.heal_all` reads that attribute
+  and the file may not be edited. `node_for()` resolves etcd members FIRST (etcd
+  is the fault target in five of eleven scenarios); `LocalComposeDriver` refuses
+  any service on a non-default node. `etcd_majority_members()` is ceil(n/2);
+  `OPS_HA_SECOND_PROVIDER_BASE_URL` replaces the hardcoded `127.0.0.1:18099`.
+- **The finding this step exists to produce.** A unit test proved the Raft-leader
+  lookup returned `None` for any member advertising an address rather than a
+  compose service name — so on the real cluster s11 would have raised "could not
+  identify etcd raft leader" *before injecting its fault*: a topology failure
+  wearing a product failure's clothes. Found locally for the price of a unit
+  test instead of on the cluster in S3. Fixed by matching the endpoint host
+  against a member's node.
+- **Red-first ladder (deliberate two-phase commits).** Subjects landed first as
+  verbatim extractions so each guard failed on the *real defect*, never on a
+  missing import: the source guard named all four leaks by file; the node checks
+  reported `DID NOT RAISE`; majority reported `assert 2 == 3` at five members;
+  the leader matcher reported `assert None == EtcdMember(node='10.8.0.2',
+  service='etcd-2')`. Two tests are **green by construction and labeled as such**
+  (protocol conformance — a forward guard for 5b, made non-vacuous by a planted
+  incomplete driver; and config hashability, which pins the `lru_cache` hazard at
+  unit level instead of twenty minutes into a run).
+- **What the docker gate caught that units could not.** The first full run failed
+  s10 with `name 'ctx' is not defined`: the mechanical swap had rewritten a call
+  inside `_assert_worker_exposition(cfg)`, a helper with no `ctx` in scope. Fixed,
+  and a static guard for the whole class landed with its red observed first
+  (it named `s10_failover_visible.py:185` exactly). Without it the only detector
+  is a ~25-minute run reporting one scenario in eleven.
+- **Gates:** suite **520 passed / 6 skipped** (was 495/6: +25, skip pin intact —
+  tally re-baselined here); doc-links 0; `docker_util.py` diff **0 lines**; dev
+  `run-all --expect-pass 11 --expect-skip 0` → **11/11, exit 0**; offline chain
+  `verify-egress-blocked.sh` → **10 PASS + 1 topology-SKIP, exit 0**, against a
+  bundle whose `bundle-lock.txt` records `git_commit=c8486d1` (the seam commit —
+  this as-built commits on top of it, so the certified tree is the code, not the
+  docs). The offline leg is the load-bearing one: it exercises the config
+  generalizations under a **single-etcd** topology, and s11's skip message now
+  reads "1 configured" from `len(cfg.etcd_members)`.
+- **s09 pub/sub fire-drill (new, and overdue).** s09's only pub/sub assertion is
+  negative (`msg_count > 0` fails), so a subscriber that never attached would
+  report 0 and PASS. The extraction therefore enters the stream context in the
+  **main thread** — container resolution costs a compose-ps round trip, and the
+  subscriber must be live before the mutate fires. Proven both ways for the first
+  time: forced publish → `msg_count=1`; no publish → `0`.
+- **Harness-run environment record.** Two non-product failures, both diagnosed
+  rather than retried blind. (1) A `docker compose up --build` inside `reset_stack`
+  hit `docker_util._run`'s hardcoded 120 s subprocess timeout — that code is
+  byte-identical to main, and the trigger is that every commit invalidates the
+  image's COPY layer, so the run right after a commit pays a cold rebuild. With
+  the cache warmed (`compose build` = 3.9 s, `up --build -d` = 15 s) the full run
+  is clean; checked-in timeouts untouched. (2) An earlier run was killed on a
+  false read: its log was block-buffered, so a healthy run was indistinguishable
+  from a wedged one and the silence was acted on. Re-run with `python -u`; the
+  buffering, not the harness, was the fault. Both are the same lesson the repo
+  already carries about instruments and silence.
+- **Mapping-decision table — PROPOSED, ratified by this merge.** Eight rows; the
+  arc plan anticipated seven and the eighth surfaced in cold review, disclosed
+  rather than dropped to preserve a number.
+
+| # | Item | Disposition |
+|---|---|---|
+| 1 | s10 observability overlay vs the real cluster | **Explicit skip** — pre-ratified (decision 1) |
+| 2 | `reset_stack` remote semantics (no `--build`, `ops-ha-redis` network-create no-op, worker sentinel absent on node3) | S3 |
+| 3 | Container-name addressing over compose discovery (project name unpinned on nodes) | S3 |
+| 4 | `copy_out` host-local temp path under remote `docker cp` | Works over `DOCKER_HOST=ssh://`; confirm in S3. Bool return deliberately unused, preserving today's stale-file behavior |
+| 5 | **`stream_exec` — SUBSCRIBE must target the primary's node** | Config generalization lands here; asserted in S3 |
+| 6 | **Partition primitives have no remote analogue → firewall rules** | S3, with the self-lockout guard: the driver manipulates the firewall that admits it |
+| 7 | `DriverError` is an alias of `DockerError`, not a subclass | Deliberate — keeps `docker_util.py` byte-identical; the remote driver raises the same class |
+| 8 | **`heal_all` cannot be delegated remotely** — it calls its own module-level functions, so the seam never intercepts it; 5b must reimplement it, and the node fail-closed check cannot cover anything it does | S3 (new, cold review) |
+
+- **S3 headline, not a table cell.** Rows 6 and 8 are one safety surface. On the
+  real cluster `heal_all` is what un-partitions the network after a scenario — so
+  the single primitive that restores connectivity is precisely the one the seam
+  cannot guard, directly adjacent to the self-lockout risk where a scenario
+  failure could become a console-recovery incident. The S3 opener must design
+  `heal_all`'s reimplementation and the revert-on-exit guard **together**.
+- **Deviations from the ratified sketch (footnoted, not re-ratified):** the fourth
+  absorber is `stream_exec`, not `subscribe` — the honest primitive is a streaming
+  exec, and SUBSCRIBE semantics belong in `observables`; and `docker_util` exposes
+  **18** public names, not the arc plan's 15 (verified by enumeration).
+
 ### (b) Private network: WireGuard over Hetzner Cloud Network
 
 Hetzner Cloud Networks span locations within a network zone — `fsn1`, `nbg1`, `hel1`
